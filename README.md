@@ -371,25 +371,58 @@ The contracts in this repo are responsible for:
 |---|---|
 | [README.md](README.md) | This file — high-level overview, diagrams, getting started. |
 | [docs/TRD.md](docs/TRD.md) | Full Technical Requirements Document. Source of truth for every design decision, permission grant, address, deployment phase, and open question. |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | End-to-end project roadmap: 13 phases with deliverables, exit criteria, and the project-wide quality bars (≥ 90 % coverage, Hardhat fork tests, local fork-sync dev workflow). |
 
-When the contracts land, additional docs will be added (per-plugin specs, deployment runbook, security model deep-dive, threat model).
+When the contracts land, additional docs will be added under `docs/plugins/` (per-plugin specs), `docs/THREAT_MODEL.md`, `docs/FRONTEND_INTEGRATION.md`, and `docs/PROPOSAL_METADATA.md`. The full set is enumerated in the roadmap.
 
 ---
 
 ## Roadmap
 
-- [ ] Scaffolding: `foundry.toml`, `hardhat.config.ts`, OSx submodule, OZ imports, TypeChain wiring.
-- [ ] `UniswapV4Plugin` + setup + unit tests + fork tests (mainnet + Base).
-- [ ] `AaveLendingPlugin` + v3 adapter + setup + tests.
-- [ ] `PayrollPlugin` + setup + tests with `time.setNextBlockTimestamp` multi-month scenarios.
-- [ ] `DeployCyberdyneDao.s.sol` bootstrap script + e2e fork test on mainnet, Base, Sepolia.
-- [ ] CI matrix: parallel fork test runs on Ethereum + Base.
-- [ ] Internal security review.
-- [ ] External audit (Halborn or equivalent).
-- [ ] Mainnet deployment.
-- [ ] Custom UI integration (separate repo).
+Full phase-by-phase plan with deliverables and exit criteria: **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.
 
-Estimated engineering: ~3–4 weeks to a fork-tested, mainnet-deployable build, excluding audit. See [TRD §17](docs/TRD.md#17-estimated-effort).
+```mermaid
+flowchart LR
+    P0[P0 Foundation] --> P1[P1 Interfaces]
+    P1 --> P2[P2 Payroll]
+    P1 --> P3[P3 Uniswap V4]
+    P1 --> P4[P4 AAVE]
+    P2 --> P5[P5 Bootstrap + E2E]
+    P3 --> P5
+    P4 --> P5
+    P5 --> P6[P6 Frontend artifacts]
+    P5 --> P7[P7 Internal review]
+    P7 --> P8[P8 External audit]
+    P8 --> P9[P9 Remediation]
+    P9 --> P10[P10 Testnet + bounty]
+    P10 --> P11[P11 Mainnet]
+    P11 --> P12[P12 V1.1 hardening]
+
+    style P0 fill:#e8eaf6
+    style P1 fill:#e8eaf6
+    style P2 fill:#fff3cd
+    style P3 fill:#fff3cd
+    style P4 fill:#fff3cd
+    style P5 fill:#d1ecf1
+    style P6 fill:#d1ecf1
+    style P7 fill:#f8d7da
+    style P8 fill:#f8d7da
+    style P9 fill:#f8d7da
+    style P10 fill:#d4edda
+    style P11 fill:#d4edda
+    style P12 fill:#e2e3e5
+```
+
+**Project-wide quality bars** (enforced in CI on every PR — see [ROADMAP §"Project-wide quality bars"](docs/ROADMAP.md#project-wide-quality-bars-non-negotiable)):
+
+- **≥ 90 % unit-test coverage** on lines AND branches for all files under `src/plugins/**`, enforced by `solidity-coverage`.
+- **Integration tests are Hardhat fork tests** against real deployed networks. Every plugin has `*.fork.test.ts` running on `mainnetFork` and `baseFork` minimum.
+- **Local dev = persistent fork of live network** via `npx hardhat node --fork $RPC_MAINNET` — gives sub-second feedback against mainnet state with `hardhat_impersonateAccount` for spoofing whales / DAO.
+- **CI matrix runs fork tests in parallel** on Ethereum + Base; other Aragon-supported chains opt-in via `RPC_<NAME>` secrets.
+- **Block pinning in CI** (`PIN_MAINNET`, `PIN_BASE`) for deterministic runs; local dev runs unpinned for freshness.
+- **`solc 0.8.17` + `optimizer-runs = 2000`** identical to Aragon OSx v1.4.0 audited bytecode.
+
+Engineering estimate: ~3–4 weeks of dev work to mainnet-ready code (P0–P5), then ~5–8 weeks of calendar time for review, audit, remediation, testnet bounty period, mainnet ceremony (P6–P11). See [ROADMAP](docs/ROADMAP.md) for per-phase day estimates.
 
 ---
 
