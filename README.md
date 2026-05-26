@@ -323,32 +323,28 @@ cyberdyne_dao_contracts/
 
 ## Getting started
 
-> Once contracts are implemented. Currently this is a documentation-only repo.
-
 ```bash
-# Clone with submodules (OSx is a submodule, pinned to v1.5.0)
+# Clone with submodules (OSx + osx-commons + OZ + forge-std)
 git clone --recurse-submodules https://github.com/CyberdyneCorp/cyberdyne_dao_contracts.git
 cd cyberdyne_dao_contracts
 
-# Install deps
-forge install
-npm install
+# Install Foundry if you don't have it
+curl -L https://foundry.paradigm.xyz | bash && foundryup
 
-# Build
-forge build              # Foundry build
-npx hardhat compile      # Hardhat build (for tests + TypeChain)
+# Install npm deps + build the package artifacts the frontend consumes
+npm install --legacy-peer-deps
+npm run build:package      # forge + hardhat compile + ABIs + addresses.json
 
 # Test
-npx hardhat test                                    # unit tests
-npx hardhat test --network mainnetFork              # fork tests against Ethereum
-npx hardhat test --network baseFork                 # fork tests against Base
+npx hardhat test                                    # unit + invariant (~6s)
+forge test --match-path 'test/invariants/*.t.sol'   # invariant suite alone
 
-# Local persistent fork (great for iteration)
-npx hardhat node --fork $RPC_MAINNET                # terminal 1
-npx hardhat test --network localFork                # terminal 2
+# Fork tests (need an RPC URL)
+export RPC_MAINNET=https://eth-mainnet.alchemyapi.io/v2/<KEY>
+npx hardhat test --network mainnetFork              # fork tests against Ethereum
 ```
 
-Required env vars (see `.env.example` when scaffolded):
+Required env vars (see `.env.example`):
 
 ```
 RPC_MAINNET=
@@ -360,6 +356,141 @@ ETHERSCAN_API_KEY=
 PIN_MAINNET=                # optional — block number to pin fork to (CI determinism)
 PIN_BASE=
 ```
+
+---
+
+## Run the full local stack
+
+Spin up a local mainnet fork, deploy the full DAO with all 3 plugins, start the toy frontend, and connect a wallet — entire flow takes ~5 minutes once you have the prereqs.
+
+### Prereqs
+
+- Node 20+
+- Foundry on PATH (`~/.foundry/bin`)
+- An archive RPC URL for Ethereum mainnet (Alchemy / Infura free tier works for short sessions)
+- MetaMask in your browser
+
+### 1. Start a local mainnet fork
+
+Terminal 1:
+
+```bash
+export RPC_MAINNET=https://eth-mainnet.alchemyapi.io/v2/<YOUR_KEY>
+npx hardhat node --fork $RPC_MAINNET --chain-id 1
+```
+
+This serves a node at `127.0.0.1:8545` that mirrors live mainnet state (USDC balances, AAVE v3 Pool, Uniswap V4 PoolManager, OSx framework — all real). The `--chain-id 1` flag makes the node report `chainId = 1` so the deploy scripts find the right OSx framework addresses via `scripts/lib/OsxAddresses.sol`.
+
+### 2. Deploy the DAO
+
+Terminal 2:
+
+```bash
+export PATH="$HOME/.foundry/bin:$PATH"
+
+# Anvil/Hardhat's first default account — has 10000 ETH on the local fork.
+# DO NOT use this key on a real network.
+DEPLOYER=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+
+forge script scripts/DeployCyberdyneDao.s.sol \
+  --rpc-url http://127.0.0.1:8545 \
+  --broadcast \
+  --slow \
+  --private-key $DEPLOYER
+```
+
+Output prints (and also writes `deployments/1-<timestamp>.json`):
+
+```
+DAO:                0x...
+Payroll repo:       0x...
+Uniswap V4 repo:    0x...
+AAVE repo:          0x...
+AAVE adapter:       0x...
+```
+
+The DAO address + plugin addresses (Payroll / Uniswap V4 / AAVE — pull from `installedPlugins` in the broadcast log under `broadcast/DeployCyberdyneDao.s.sol/1/run-latest.json`) are what the frontend needs.
+
+### 3. Start the frontend
+
+Terminal 3:
+
+```bash
+cd frontend/
+npm install --legacy-peer-deps    # first time only
+cp .env.example .env.local
+```
+
+Edit `.env.local` and set:
+
+```
+PUBLIC_WC_PROJECT_ID=              # optional — leave blank for injected-only
+PUBLIC_RPC_MAINNET=http://127.0.0.1:8545
+PUBLIC_DAO_MAINNET=<dao>,<payroll>,<uniswap>,<aave>
+```
+
+Use the addresses from step 2, comma-separated in that exact order.
+
+```bash
+npm run dev      # http://localhost:5173
+```
+
+### 4. Connect your wallet
+
+1. Open `http://localhost:5173` with MetaMask installed.
+2. Add a custom network in MetaMask:
+   - Name: `Local fork`
+   - RPC URL: `http://127.0.0.1:8545`
+   - Chain ID: `1`
+   - Currency symbol: `ETH`
+   - (Yes, chain ID 1 — your local fork pretends to be mainnet so addresses resolve.)
+3. Import the deployer key from step 2 into MetaMask (it has 10000 ETH on the local fork; **never** import this key on a real network).
+4. Click **Connect injected** in the toy frontend's wallet bar.
+
+The DAO overview page should load with treasury balance + plugin addresses. Use the nav (`Overview` / `Proposals` / `Payroll` / `Lending` / `Swaps`) to walk through the plugins.
+
+### 5. Drive the DAO
+
+The frontend's read views work immediately. For writes:
+
+- **`executePayroll()`** is permissionless — just click the button on `/payroll`. Will revert until you've added a recipient and time-travelled to pay day (see below).
+- **Vote-gated actions** (add recipient, set router, etc.) require TokenVoting which isn't wired into the bootstrap script yet (see P5 commit notes). For local-fork testing, impersonate the DAO via `cast` to drive the plugins directly:
+
+```bash
+DAO=0x...           # from step 2
+PAYROLL=0x...
+PAYEE=0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045   # any addr you control
+
+cast rpc anvil_impersonateAccount $DAO
+cast rpc anvil_setBalance $DAO 0x56BC75E2D63100000   # 100 ETH for gas
+cast send $PAYROLL "addRecipient(address,address,uint256)" \
+  $PAYEE 0x0000000000000000000000000000000000000000 1000000000000000000 \
+  --from $DAO --unlocked --rpc-url http://127.0.0.1:8545
+```
+
+Time-travel to next pay day + run the crank:
+
+```bash
+# 15th of next month at 12:00 UTC (default PAY_DAY is 15)
+PAYDAY=$(date -u -v+1m -v15d -v12H -v0M -v0S +%s)
+cast rpc evm_setNextBlockTimestamp $PAYDAY
+cast send $PAYROLL "executePayroll()" \
+  --private-key $DEPLOYER --rpc-url http://127.0.0.1:8545
+```
+
+Refresh `/payroll` in the frontend — `lastPayoutPeriod` will have advanced and the payee's ETH balance will reflect the payment.
+
+For AAVE supplies / Uniswap swaps: seed the DAO with USDC by impersonating a whale (see `test/plugins/payroll/PayrollPlugin.fork.test.ts` for the whale address pattern), then call `aave.supply(...)` or `uniswap.swap(...)` from the DAO the same way.
+
+### Tear down
+
+```bash
+# Terminal 1: Ctrl+C the hardhat node
+# Terminal 3: Ctrl+C the vite dev server
+rm frontend/.env.local         # so the next run doesn't reuse stale addresses
+```
+
+The local fork has no persistent state; every restart starts fresh from the pinned mainnet block.
 
 ---
 

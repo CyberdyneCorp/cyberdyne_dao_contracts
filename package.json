@@ -3,14 +3,17 @@
   "version": "0.0.1",
   "description": "Cyberdyne DAO — Aragon OSx plugins for Uniswap V4 swaps, AAVE lending, and monthly payroll.",
   "license": "AGPL-3.0-or-later",
-  "main": "./index.js",
+  "main": "./index.mjs",
+  "module": "./index.mjs",
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "default": "./index.mjs"
+    },
     "./addresses": "./addresses.json",
     "./abis/*": "./frontend-abi/*.json"
   },
   "files": [
-    "index.js",
+    "index.mjs",
     "addresses.json",
     "frontend-abi/",
     "README.md"

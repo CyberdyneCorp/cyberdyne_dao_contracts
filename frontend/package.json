@@ -1,0 +1,30 @@
+{
+  "name": "cyberdyne-dao-toy-frontend",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Dev/inspector tool for the Cyberdyne DAO. NOT the production UI (TRD §3b).",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
+  },
+  "dependencies": {
+    "@cyberdyne/dao-contracts": "file:..",
+    "@walletconnect/ethereum-provider": "^2.17.0",
+    "ethers": "^5.7.2"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^3.0.5",
+    "@sveltejs/kit": "^2.5.27",
+    "@sveltejs/vite-plugin-svelte": "^3.1.2",
+    "@types/node": "^20.14.10",
+    "svelte": "^4.2.19",
+    "svelte-check": "^4.0.2",
+    "tslib": "^2.7.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.6"
+  }
+}
