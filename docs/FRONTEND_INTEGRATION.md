@@ -1,12 +1,22 @@
 # Frontend Integration
 
-How the UI (production custom UI in a sibling repo, plus the in-repo toy frontend at `frontend/`) consumes this contracts package end-to-end.
+How a custom UI — production app in a sibling repo, or any third-party — consumes the Cyberdyne DAO contracts end-to-end.
 
 | | |
 |---|---|
 | npm package | `@cyberdyne/dao-contracts` (this repo's published artifact) |
 | Subgraph | per-DAO, manifest template in `subgraph/` |
 | IPFS proposal metadata | `scripts/pin-metadata.js`, schema in `docs/PROPOSAL_METADATA.md` |
+| Worked example | The toy frontend at [`frontend/`](../frontend) is the reference implementation — every pattern in this doc has a corresponding file there |
+
+## Where to start
+
+1. **Want a working DAO to integrate against right now?** Follow [`docs/LOCAL_STACK.md`](LOCAL_STACK.md) to spin one up on a local mainnet fork in ~5 minutes, then point your UI at `http://127.0.0.1:8545`.
+2. **Just need addresses + ABIs?** `npm install @cyberdyne/dao-contracts` and read §2 below.
+3. **Building proposal flows?** §3 has create / vote / execute / executePayroll / plugin-admin snippets.
+4. **Indexing for a history view?** §1 explains why direct-RPC and subgraph are split; `subgraph/README.md` has the deploy recipe.
+
+The Cyberdyne plugins do NOT publish Aragon-App-compatible metadata (no per-action decoder JSON, no UI schemas — see TRD §3a). The contract surface is the integration contract; this document describes how to consume it cleanly.
 
 ---
 
