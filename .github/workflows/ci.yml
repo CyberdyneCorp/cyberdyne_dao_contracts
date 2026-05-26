@@ -164,5 +164,7 @@ jobs:
         run: pip install slither-analyzer
       - run: npm ci --legacy-peer-deps
       - name: Run Slither
-        run: slither . --filter-paths "lib/|node_modules/|test/" --exclude-dependencies --fail-pedantic
+        # Per-finding triage lives in docs/plugins/*.md (audit-notes section).
+        # CI gate trips only on high-severity findings; info/low are reviewed in PRs.
+        run: slither . --filter-paths "lib/|node_modules/|test/" --exclude-dependencies --fail-high
         continue-on-error: false

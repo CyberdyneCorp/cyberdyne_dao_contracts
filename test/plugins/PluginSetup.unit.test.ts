@@ -117,6 +117,23 @@ describe("PluginSetup (TRD §9 permission-matrix compliance)", () => {
     assertGrant(permissions[2], plugin, FAKE_DAO, UPGRADE_PLUGIN_PERMISSION_ID);
   });
 
+  it("prepareUpdate on build 1 reverts InvalidUpdatePath(0, 1)", async () => {
+    const [deployer] = await ethers.getSigners();
+
+    const uniSetup = await new UniswapV4PluginSetup__factory(deployer).deploy();
+    const aaveSetup = await new AaveLendingPluginSetup__factory(deployer).deploy();
+    const payrollSetup = await new PayrollPluginSetup__factory(deployer).deploy();
+
+    const fakePlugin = ethers.Wallet.createRandom().address;
+    const payload = {plugin: fakePlugin, currentHelpers: [], data: "0x"};
+
+    for (const setup of [uniSetup, aaveSetup, payrollSetup]) {
+      await expect(setup.prepareUpdate(FAKE_DAO, 0, payload))
+        .to.be.revertedWithCustomError(setup, "InvalidUpdatePath")
+        .withArgs(0, 1);
+    }
+  });
+
   it("Every PluginSetup's uninstall produces the inverse Revoke set", async () => {
     const [deployer] = await ethers.getSigners();
 

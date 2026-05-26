@@ -32,6 +32,10 @@ interface IPayrollPlugin {
     error AlreadyPaidThisPeriod(uint256 period);
     error NotYetDueThisMonth(uint8 currentDay, uint8 payDay);
     error InvalidPayDayOfMonth(uint8 day);
+    error ZeroAddress();
+    error ZeroAmount();
+    error NoActiveRecipients();
+    error RecipientLimitExceeded(uint256 max);
     error NotImplemented();
 
     // --- Vote-gated mutators ---
@@ -59,6 +63,12 @@ interface IPayrollPlugin {
 
     function recipientCount() external view returns (uint256);
 
+    /// @notice Read a single recipient slot by index (active or soft-deleted).
+    function getRecipientAt(uint256 index) external view returns (Recipient memory);
+
     /// @notice One-RPC-roundtrip view for the toy frontend (TRD §3a/§3b).
     function allActiveRecipients() external view returns (Recipient[] memory);
+
+    /// @notice The hard cap on `recipientCount()` per TRD §11 security note.
+    function MAX_RECIPIENTS() external view returns (uint256);
 }

@@ -11,7 +11,12 @@ module.exports = {
     "plugins/aave/adapters/IAaveAdapter.sol",
     "plugins/payroll/IPayrollPlugin.sol",
     // Vendored 3rd-party math lib.
-    "plugins/payroll/lib/BokkyPooBahDateTime.sol",
+    "plugins/payroll/lib/BokkyPooBahsDateTimeLibrary.sol",
+    // Test-only mocks. Live under src/ so Hardhat compiles them, but they
+    // don't ship and don't count toward coverage.
+    "test/mocks/MinimalDAO.sol",
+    "test/mocks/TestERC20.sol",
+    "test/mocks/RevertingRecipient.sol",
   ],
   istanbulFolder: "./coverage",
   istanbulReporter: ["html", "lcov", "text", "json-summary"],

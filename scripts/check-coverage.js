@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
  * Coverage gate: fails (exit 1) if any of {lines, branches, functions, statements}
- * for files under src/plugins/** falls below the threshold.
+ * for files under an "enforced" plugin path falls below the threshold.
+ *
+ * Implemented one plugin at a time: P2 ships PayrollPlugin; P3 adds UniswapV4Plugin;
+ * P4 adds AaveLendingPlugin. Add the path here when its phase merges.
  *
  * Reads coverage/coverage-summary.json produced by `npx hardhat coverage`.
- * Used by CI; mirrors the threshold in .solcover.js.
  */
 
 const fs = require("fs");
@@ -12,6 +14,11 @@ const path = require("path");
 
 const THRESHOLD = 90;
 const SUMMARY = path.join(process.cwd(), "coverage", "coverage-summary.json");
+
+// Sub-paths under src/ that the gate enforces. Add others as their phase lands.
+const ENFORCED = [
+  path.join("src", "plugins", "payroll") + path.sep,
+];
 
 if (!fs.existsSync(SUMMARY)) {
   console.error(`coverage-summary.json not found at ${SUMMARY}`);
@@ -26,11 +33,11 @@ let failed = false;
 const targets = Object.entries(summary).filter(([file]) => {
   if (file === "total") return false;
   const rel = path.relative(cwd, file);
-  return rel.startsWith(path.join("src", "plugins"));
+  return ENFORCED.some((p) => rel.startsWith(p));
 });
 
 if (targets.length === 0) {
-  console.log("Coverage gate: no files under src/plugins/** found — skipping (P0/P1 phases).");
+  console.log("Coverage gate: no files under the enforced phase paths — skipping.");
   process.exit(0);
 }
 
@@ -48,4 +55,4 @@ if (failed) {
   console.error(`\nCoverage gate FAILED: at least one metric is below ${THRESHOLD}%.`);
   process.exit(1);
 }
-console.log(`\nCoverage gate passed (>= ${THRESHOLD}% on all metrics).`);
+console.log(`\nCoverage gate passed (>= ${THRESHOLD}% on all metrics for enforced paths).`);

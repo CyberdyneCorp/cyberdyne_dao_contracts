@@ -28,6 +28,9 @@ function walk(dir) {
   for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      // Skip test-only mocks — they live under src/test/ to get Hardhat-compiled
+      // but should never ship in the frontend artifact.
+      if (full.includes(path.join("src", "test"))) continue;
       walk(full);
       continue;
     }
