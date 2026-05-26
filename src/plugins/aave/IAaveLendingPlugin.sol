@@ -43,4 +43,6 @@ interface IAaveLendingPlugin {
     function allowedAsset(address asset) external view returns (bool);
 
     function allowlistEnforced() external view returns (bool);
+
+    function opNonce() external view returns (uint256);
 }
