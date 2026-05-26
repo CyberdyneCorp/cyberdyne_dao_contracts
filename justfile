@@ -71,6 +71,26 @@ storage contract:
 deploy-dry script network='mainnetFork':
     forge script scripts/{{script}}.s.sol --rpc-url "$RPC_{{uppercase(network)}}" -vvv
 
+# One-shot ceremony: publish 3 plugin repos + DAOFactory.createDao in one run.
+# Pass --broadcast to send for real. Default is a dry-run.
+# Optional env: TOKEN_VOTING_REPO (splices TokenVoting as plugins[0]),
+# TOKEN_VOTING_DATA (pre-encoded init bytes), TOKEN_VOTING_BUILD,
+# PAY_DAY, MAINTAINER, SUBDOMAIN_DAO.
+deploy-cyberdyne-dao rpc='localFork' *FLAGS='':
+    forge script scripts/DeployCyberdyneDao.s.sol \
+        --rpc-url "$RPC_{{uppercase(rpc)}}" \
+        --slow \
+        -vvv \
+        {{FLAGS}}
+
+# Publish a single plugin's PluginRepo (useful for shipping a new build later).
+deploy-plugin name rpc='localFork' *FLAGS='':
+    forge script scripts/Deploy{{name}}Plugin.s.sol \
+        --rpc-url "$RPC_{{uppercase(rpc)}}" \
+        --slow \
+        -vvv \
+        {{FLAGS}}
+
 # --- Cleanup ---
 
 clean:
