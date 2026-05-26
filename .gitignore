@@ -49,6 +49,12 @@ deployments/*-tmp-*
 # Frontend ABI export (built fresh by `npm run build:abi`; published per-release)
 frontend-abi/
 
+# Consolidated addresses (built fresh by `npm run build:addresses`)
+addresses.json
+
+# npm pack output
+*.tgz
+
 # Logs
 logs/
 *.log

@@ -1,0 +1,115 @@
+# Cyberdyne DAO subgraph manifest — one subgraph per deployed DAO.
+#
+# Operators MUST replace the {{...}} placeholders below with values from the
+# deployments/<chain>-<timestamp>.json manifest produced by
+# `just deploy-cyberdyne-dao`. See subgraph/README.md for the exact recipe.
+#
+# `network` follows The Graph's naming (mainnet | base | sepolia | ...). The
+# Graph CLI's mustache template substitution lets this file double as a
+# template — operators run `graph build --network <name>` after dropping in
+# a config JSON, or `sed` the placeholders directly.
+
+specVersion: 1.0.0
+description: Cyberdyne DAO — Payroll + Uniswap V4 swaps + AAVE lending
+repository: https://github.com/CyberdyneCorp/cyberdyne_dao_contracts
+schema:
+  file: ./schema.graphql
+
+dataSources:
+  - kind: ethereum
+    name: PayrollPlugin
+    network: "{{NETWORK}}"
+    source:
+      address: "{{PAYROLL_ADDRESS}}"
+      abi: PayrollPlugin
+      startBlock: {{PAYROLL_START_BLOCK}}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/payroll.ts
+      entities:
+        - PayrollPlugin
+        - PayrollRecipient
+        - PayrollPayout
+        - PayrollPayoutItem
+        - RecipientAmountChange
+        - Dao
+      abis:
+        - name: PayrollPlugin
+          file: ./abis/PayrollPlugin.json
+      eventHandlers:
+        - event: RecipientAdded(indexed address,indexed address,uint256)
+          handler: handleRecipientAdded
+        - event: RecipientRemoved(indexed address)
+          handler: handleRecipientRemoved
+        - event: RecipientAmountUpdated(indexed address,uint256,uint256)
+          handler: handleRecipientAmountUpdated
+        - event: PayDayUpdated(uint8,uint8)
+          handler: handlePayDayUpdated
+        - event: PayrollExecuted(indexed uint256,uint256,uint256)
+          handler: handlePayrollExecuted
+
+  - kind: ethereum
+    name: UniswapV4Plugin
+    network: "{{NETWORK}}"
+    source:
+      address: "{{UNISWAP_ADDRESS}}"
+      abi: UniswapV4Plugin
+      startBlock: {{UNISWAP_START_BLOCK}}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/uniswap.ts
+      entities:
+        - UniswapV4Plugin
+        - Swap
+        - RouterMigration
+        - TokenAllowlistEntry
+        - Dao
+      abis:
+        - name: UniswapV4Plugin
+          file: ./abis/UniswapV4Plugin.json
+      eventHandlers:
+        - event: SwapExecuted(indexed address,uint256,indexed address,uint256)
+          handler: handleSwapExecuted
+        - event: AllowedTokenSet(indexed address,bool)
+          handler: handleAllowedTokenSet
+        - event: UniversalRouterUpdated(indexed address,indexed address)
+          handler: handleUniversalRouterUpdated
+
+  - kind: ethereum
+    name: AaveLendingPlugin
+    network: "{{NETWORK}}"
+    source:
+      address: "{{AAVE_ADDRESS}}"
+      abi: AaveLendingPlugin
+      startBlock: {{AAVE_START_BLOCK}}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/aave.ts
+      entities:
+        - AaveLendingPlugin
+        - LendingAction
+        - AdapterMigration
+        - AssetAllowlistEntry
+        - Dao
+      abis:
+        - name: AaveLendingPlugin
+          file: ./abis/AaveLendingPlugin.json
+      eventHandlers:
+        - event: Supplied(indexed address,uint256)
+          handler: handleSupplied
+        - event: Withdrawn(indexed address,uint256,uint256)
+          handler: handleWithdrawn
+        - event: Borrowed(indexed address,uint256,uint256)
+          handler: handleBorrowed
+        - event: Repaid(indexed address,uint256,uint256,uint256)
+          handler: handleRepaid
+        - event: AdapterUpdated(indexed address,indexed address)
+          handler: handleAdapterUpdated
+        - event: AllowedAssetSet(indexed address,bool)
+          handler: handleAllowedAssetSet

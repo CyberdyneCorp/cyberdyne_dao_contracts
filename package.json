@@ -2,11 +2,32 @@
   "name": "@cyberdyne/dao-contracts",
   "version": "0.0.1",
   "description": "Cyberdyne DAO — Aragon OSx plugins for Uniswap V4 swaps, AAVE lending, and monthly payroll.",
-  "private": true,
   "license": "AGPL-3.0-or-later",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./addresses": "./addresses.json",
+    "./abis/*": "./frontend-abi/*.json"
+  },
+  "files": [
+    "index.js",
+    "addresses.json",
+    "frontend-abi/",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CyberdyneCorp/cyberdyne_dao_contracts.git"
+  },
   "scripts": {
     "build": "hardhat compile",
     "build:abi": "node scripts/export-abis.js",
+    "build:addresses": "node scripts/build-addresses.js",
+    "build:package": "npm run build && npm run build:abi && npm run build:addresses",
+    "prepublishOnly": "npm run build:package",
     "test": "hardhat test",
     "test:unit": "hardhat test --grep '^(?!.*\\[fork\\])'",
     "test:fork:mainnet": "hardhat test --network mainnetFork",

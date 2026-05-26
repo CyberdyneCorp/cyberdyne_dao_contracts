@@ -1,0 +1,171 @@
+# Cyberdyne DAO subgraph schema. Mirrors the event surface mapped in
+# docs/EVENTS.md. One subgraph per deployed DAO (template); operators
+# fill placeholders in subgraph.yaml at deploy time.
+
+type Dao @entity {
+  id: ID!                                        # DAO address
+  createdAt: BigInt!
+  payrollPlugin: PayrollPlugin
+  uniswapPlugin: UniswapV4Plugin
+  aavePlugin: AaveLendingPlugin
+  swaps: [Swap!]! @derivedFrom(field: "dao")
+  lendingActions: [LendingAction!]! @derivedFrom(field: "dao")
+  payouts: [PayrollPayout!]! @derivedFrom(field: "dao")
+  payrollRecipients: [PayrollRecipient!]! @derivedFrom(field: "dao")
+}
+
+# ---- Plugin singletons ----
+
+type PayrollPlugin @entity {
+  id: ID!                                        # plugin address
+  dao: Dao!
+  payDayOfMonth: Int!
+  lastPayoutPeriod: BigInt!
+  recipients: [PayrollRecipient!]! @derivedFrom(field: "plugin")
+  payouts: [PayrollPayout!]! @derivedFrom(field: "plugin")
+}
+
+type UniswapV4Plugin @entity {
+  id: ID!                                        # plugin address
+  dao: Dao!
+  universalRouter: Bytes!
+  permit2: Bytes!
+  poolManager: Bytes!
+  allowlistEnforced: Boolean!
+  swapNonce: BigInt!
+  swaps: [Swap!]! @derivedFrom(field: "plugin")
+}
+
+type AaveLendingPlugin @entity {
+  id: ID!                                        # plugin address
+  dao: Dao!
+  adapter: Bytes!
+  allowlistEnforced: Boolean!
+  opNonce: BigInt!
+  actions: [LendingAction!]! @derivedFrom(field: "plugin")
+}
+
+# ---- Payroll ----
+
+type PayrollRecipient @entity {
+  id: ID!                                        # dao-address . payee-address
+  dao: Dao!
+  plugin: PayrollPlugin!
+  payee: Bytes!
+  token: Bytes!                                  # 0x0 = native ETH
+  amount: BigInt!
+  active: Boolean!
+  addedAt: BigInt!
+  removedAt: BigInt
+  amountHistory: [RecipientAmountChange!]! @derivedFrom(field: "recipient")
+}
+
+type RecipientAmountChange @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  recipient: PayrollRecipient!
+  oldAmount: BigInt!
+  newAmount: BigInt!
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
+}
+
+type PayrollPayout @entity {
+  id: ID!                                        # dao-address . period
+  dao: Dao!
+  plugin: PayrollPlugin!
+  period: BigInt!                                # packed year*12+month
+  recipientCount: Int!
+  failureMap: BigInt!                            # bitmap, bit i = action i failed
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
+  items: [PayrollPayoutItem!]! @derivedFrom(field: "payout")
+}
+
+# Derived per-recipient breakdown of a PayrollExecuted. Created in the
+# mapping handler by zipping the failureMap bits against the on-chain
+# recipient ordering at the time of the run.
+type PayrollPayoutItem @entity(immutable: true) {
+  id: ID!                                        # dao-address . period . payee
+  payout: PayrollPayout!
+  recipient: PayrollRecipient!
+  amount: BigInt!
+  failed: Boolean!
+}
+
+# ---- Uniswap ----
+
+type Swap @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  dao: Dao!
+  plugin: UniswapV4Plugin!
+  tokenIn: Bytes!
+  amountIn: BigInt!
+  tokenOut: Bytes!
+  amountOutActual: BigInt!
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
+}
+
+# ---- AAVE ----
+
+enum LendingActionKind {
+  SUPPLY
+  WITHDRAW
+  BORROW
+  REPAY
+}
+
+type LendingAction @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  dao: Dao!
+  plugin: AaveLendingPlugin!
+  kind: LendingActionKind!
+  asset: Bytes!
+  amount: BigInt!
+  amountActual: BigInt                           # populated for WITHDRAW (received) + REPAY (paid)
+  interestRateMode: BigInt                       # populated for BORROW + REPAY
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
+}
+
+# ---- Audit trail ----
+
+type AdapterMigration @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  plugin: AaveLendingPlugin!
+  previous: Bytes!
+  current: Bytes!
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
+}
+
+type RouterMigration @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  plugin: UniswapV4Plugin!
+  previous: Bytes!
+  current: Bytes!
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
+}
+
+type TokenAllowlistEntry @entity {
+  id: ID!                                        # plugin-address . token-address
+  plugin: UniswapV4Plugin!
+  token: Bytes!
+  allowed: Boolean!
+  updatedAt: BigInt!
+}
+
+type AssetAllowlistEntry @entity {
+  id: ID!                                        # plugin-address . asset-address
+  plugin: AaveLendingPlugin!
+  asset: Bytes!
+  allowed: Boolean!
+  updatedAt: BigInt!
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@cyberdyne/dao-subgraph",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Graph Protocol subgraph indexing the Cyberdyne DAO plugins (Payroll, Uniswap V4 swaps, AAVE lending).",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "prepare:abis": "node scripts/copy-abis.js",
+    "codegen": "graph codegen",
+    "build": "npm run prepare:abis && npm run codegen && graph build",
+    "deploy:goldsky": "goldsky subgraph deploy cyberdyne-dao/$npm_package_version build",
+    "deploy:hosted": "graph deploy --product hosted-service $SUBGRAPH_SLUG",
+    "deploy:studio": "graph deploy --studio $SUBGRAPH_NAME",
+    "test": "graph test"
+  },
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "^0.80.0",
+    "@graphprotocol/graph-ts": "^0.35.1",
+    "matchstick-as": "^0.6.0"
+  }
+}
