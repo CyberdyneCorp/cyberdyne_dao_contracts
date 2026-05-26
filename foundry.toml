@@ -23,7 +23,10 @@ remappings = [
 
 [profile.ci]
 fuzz = { runs = 1000 }
-invariant = { runs = 256, depth = 50 }
+# 1000 runs * 50 depth = 50_000 invariant sequences per the ROADMAP P8 exit
+# criterion. Each handler call is a sequence step; one invariant assertion
+# is checked after every step.
+invariant = { runs = 1000, depth = 50 }
 
 [fmt]
 line_length = 100

@@ -147,11 +147,16 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
     }
 
     /// @inheritdoc IAaveLendingPlugin
-    /// @dev Two-action batch:
+    /// @dev Three-action batch:
     ///         1. `IERC20(asset).approve(pool, amount)` — exact-amount approval.
     ///         2. `adapter.repay(asset, amount, mode, dao)` — debt burned.
-    ///      `paid` is the DAO's `asset` balance delta (before - after) so the
-    ///      event reflects what the pool actually pulled (≤ amount).
+    ///         3. `IERC20(asset).approve(pool, 0)` — reset residual.
+    ///      AAVE's `repay` caps at outstanding debt: if `amount` exceeds debt,
+    ///      `transferFrom` pulls only `min(amount, debt)`, leaving a residual
+    ///      DAO->pool allowance. Action 3 resets it to 0 so no orphan approval
+    ///      survives the call (caught by `invariant_zeroResidualPoolAllowance`).
+    ///      `paid` is the DAO's `asset` balance delta so the event reflects
+    ///      what the pool actually pulled (<= amount).
     function repay(
         address asset,
         uint256 amount,
@@ -162,7 +167,7 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
         IAaveAdapter _adapter = adapter;
         address pool = _adapter.poolAddress();
 
-        Action[] memory actions = new Action[](2);
+        Action[] memory actions = new Action[](3);
         actions[0] = Action({
             to: asset,
             value: 0,
@@ -175,6 +180,11 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
                 IAaveAdapter.repay,
                 (asset, amount, interestRateMode, address(dao()))
             )
+        });
+        actions[2] = Action({
+            to: asset,
+            value: 0,
+            data: abi.encodeCall(IERC20.approve, (pool, 0))
         });
 
         uint256 before = IERC20(asset).balanceOf(address(dao()));
