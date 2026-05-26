@@ -1,0 +1,12 @@
+lib/
+out/
+artifacts/
+cache/
+cache_hardhat/
+typechain-types/
+node_modules/
+coverage/
+deployments/
+package-lock.json
+frontend/.svelte-kit/
+frontend/build/

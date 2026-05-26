@@ -1,0 +1,168 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  FOUNDRY_PROFILE: ci
+  NODE_VERSION: "20"
+
+jobs:
+  lint:
+    name: Lint (solhint + prettier)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - run: npm run lint:sol
+      - run: npm run format:check
+
+  forge-build:
+    name: forge build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - run: forge --version
+      - run: forge build --sizes
+
+  hardhat-build:
+    name: hardhat compile + typechain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - run: npm ci --legacy-peer-deps
+      - run: npx hardhat compile
+      - name: Export ABIs (build:abi)
+        run: npm run build:abi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-abi
+          path: frontend-abi/
+          if-no-files-found: ignore
+
+  unit:
+    name: Unit tests (no fork)
+    runs-on: ubuntu-latest
+    needs: [hardhat-build]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - run: npm ci --legacy-peer-deps
+      - run: npx hardhat test
+      - name: forge test (unit, no fork)
+        run: forge test --no-match-path 'test/**/*.fork.t.sol' -vv
+
+  fork:
+    name: Fork tests (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    needs: [hardhat-build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mainnetFork
+            rpc_secret: RPC_MAINNET
+            pin_secret: PIN_MAINNET
+          - target: baseFork
+            rpc_secret: RPC_BASE
+            pin_secret: PIN_BASE
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - run: npm ci --legacy-peer-deps
+      - name: Run fork tests
+        env:
+          RPC_MAINNET: ${{ secrets[matrix.rpc_secret] }}
+          RPC_BASE: ${{ secrets[matrix.rpc_secret] }}
+          PIN_MAINNET: ${{ vars[matrix.pin_secret] }}
+          PIN_BASE: ${{ vars[matrix.pin_secret] }}
+        run: |
+          if [ -z "$RPC_MAINNET$RPC_BASE" ]; then
+            echo "::warning::No RPC secret configured for ${{ matrix.target }} — skipping"
+            exit 0
+          fi
+          npx hardhat test --network ${{ matrix.target }}
+
+  coverage:
+    name: Coverage (gate >=90% on src/plugins/**)
+    runs-on: ubuntu-latest
+    needs: [hardhat-build]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - run: npm ci --legacy-peer-deps
+      - run: npx hardhat coverage
+      - run: node scripts/check-coverage.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: ignore
+
+  slither:
+    name: Slither static analysis
+    runs-on: ubuntu-latest
+    needs: [forge-build]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Install Slither
+        run: pip install slither-analyzer
+      - run: npm ci --legacy-peer-deps
+      - name: Run Slither
+        run: slither . --filter-paths "lib/|node_modules/|test/" --exclude-dependencies --fail-pedantic
+        continue-on-error: false

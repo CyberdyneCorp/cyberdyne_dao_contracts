@@ -1,0 +1,32 @@
+[profile.default]
+src = "src"
+test = "test"
+script = "scripts"
+out = "out"
+libs = ["lib"]
+solc = "0.8.17"
+optimizer = true
+optimizer_runs = 2000
+extra_output = ["storageLayout"]
+extra_output_files = ["storageLayout"]
+fs_permissions = [
+    { access = "write", path = "./deployments" },
+    { access = "read", path = "./lib/osx/npm-artifacts" },
+]
+remappings = [
+    "forge-std/=lib/forge-std/src/",
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
+    "@aragon/osx-commons-contracts/=lib/osx-commons/contracts/",
+    "@aragon/osx/=lib/osx/packages/contracts/src/",
+]
+
+[profile.ci]
+fuzz = { runs = 1000 }
+invariant = { runs = 256, depth = 50 }
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = false
+int_types = "long"

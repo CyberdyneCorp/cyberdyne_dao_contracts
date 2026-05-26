@@ -1,0 +1,8 @@
+lib/
+out/
+artifacts/
+cache/
+cache_hardhat/
+typechain-types/
+node_modules/
+coverage/
