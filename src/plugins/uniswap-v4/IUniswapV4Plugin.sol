@@ -76,4 +76,9 @@ interface IUniswapV4Plugin {
 
     /// @notice True if the allowlist is enforced. False = no restriction.
     function allowlistEnforced() external view returns (bool);
+
+    /// @notice Monotonically-increasing counter used to derive a unique `callId`
+    ///         per swap when invoking `IExecutor.execute`. Useful for the
+    ///         subgraph to correlate `SwapExecuted` ↔ `Executed` 1:1.
+    function swapNonce() external view returns (uint256);
 }

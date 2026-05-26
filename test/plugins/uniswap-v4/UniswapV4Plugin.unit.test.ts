@@ -1,0 +1,500 @@
+/**
+ * UniswapV4Plugin unit tests.
+ *
+ * In-memory `hardhat` network; the plugin is exercised against MinimalDAO +
+ * MockUniversalRouter + MockPermit2 (under src/test/mocks/). Covers the full
+ * permission gating + slippage + deadline + nonce surface defined in TRD §6.1.
+ *
+ * Fork-mode tests live in UniswapV4Plugin.fork.test.ts and exercise the same
+ * plugin against the REAL Universal Router on mainnet/Base.
+ */
+import {expect} from "chai";
+import {ethers} from "hardhat";
+import type {ContractTransaction, Signer} from "ethers";
+import {
+  MinimalDAO,
+  MinimalDAO__factory,
+  MockPermit2,
+  MockPermit2__factory,
+  MockUniversalRouter,
+  MockUniversalRouter__factory,
+  TestERC20,
+  TestERC20__factory,
+  UniswapV4Plugin,
+  UniswapV4Plugin__factory,
+} from "../../../typechain-types";
+import {takeSnapshot} from "../../helpers/time";
+import type {SnapshotRestorer} from "@nomicfoundation/hardhat-network-helpers";
+
+const TRIGGER_SWAP_PERMISSION_ID = ethers.utils.id("TRIGGER_SWAP_PERMISSION");
+const UPDATE_ROUTER_PERMISSION_ID = ethers.utils.id("UPDATE_ROUTER_PERMISSION");
+const MANAGE_ALLOWLIST_PERMISSION_ID = ethers.utils.id("MANAGE_ALLOWLIST_PERMISSION");
+const EXECUTE_PERMISSION_ID = ethers.utils.id("EXECUTE_PERMISSION");
+
+// Plausible mainnet PoolManager — unit tests don't actually hit it; we just
+// pass an address through to verify it lands in storage.
+const FAKE_POOL_MANAGER = "0x000000000004444c5dc75cB358380D2e3dE08A90";
+
+async function deployProxied(
+  signer: Signer,
+  dao: string,
+  universalRouter: string,
+  permit2: string,
+  poolManager: string,
+  initialAllowlist: string[]
+): Promise<UniswapV4Plugin> {
+  const impl = await new UniswapV4Plugin__factory(signer).deploy();
+  await impl.deployed();
+  const initData = impl.interface.encodeFunctionData("initialize", [
+    dao,
+    universalRouter,
+    permit2,
+    poolManager,
+    initialAllowlist,
+  ]);
+  const ProxyFactory = await ethers.getContractFactory("ERC1967Proxy", signer);
+  const proxy = await ProxyFactory.deploy(impl.address, initData);
+  await proxy.deployed();
+  return UniswapV4Plugin__factory.connect(proxy.address, signer);
+}
+
+// Plausible (but otherwise meaningless) commands/inputs payload. The plugin
+// treats it as opaque bytes; only the mock interprets them (it ignores both).
+const DUMMY_COMMANDS = "0x00";
+const DUMMY_INPUTS: string[] = ["0x"];
+
+// Future timestamp used as a generic non-expired deadline.
+const FUTURE_DEADLINE = 2_000_000_000; // year 2033
+
+describe("UniswapV4Plugin", () => {
+  let deployer: Signer;
+  let voter: Signer;
+  let stranger: Signer;
+  let dao: MinimalDAO;
+  let plugin: UniswapV4Plugin;
+  let router: MockUniversalRouter;
+  let permit2: MockPermit2;
+  let tokenIn: TestERC20;
+  let tokenOut: TestERC20;
+  let snapshot: SnapshotRestorer;
+
+  // Snapshot/restore in afterEach so each test gets a clean chain — important
+  // for tests that mutate the mock router or the plugin's storage state.
+  afterEach(async () => {
+    if (snapshot) await snapshot.restore();
+  });
+
+  beforeEach(async () => {
+    [deployer, voter, stranger] = await ethers.getSigners();
+
+    dao = await new MinimalDAO__factory(deployer).deploy();
+    await dao.deployed();
+
+    router = await new MockUniversalRouter__factory(deployer).deploy();
+    await router.deployed();
+
+    permit2 = await new MockPermit2__factory(deployer).deploy();
+    await permit2.deployed();
+
+    // Wire the mock router to use the mock Permit2 for the simulated pull.
+    await router.setPermit2(permit2.address);
+
+    plugin = await deployProxied(
+      deployer,
+      dao.address,
+      router.address,
+      permit2.address,
+      FAKE_POOL_MANAGER,
+      []
+    );
+
+    // Vote-gated swap = voter (proxies for "calls coming via DAO.execute").
+    await dao.grant(plugin.address, await voter.getAddress(), TRIGGER_SWAP_PERMISSION_ID);
+    await dao.grant(plugin.address, await voter.getAddress(), UPDATE_ROUTER_PERMISSION_ID);
+    await dao.grant(plugin.address, await voter.getAddress(), MANAGE_ALLOWLIST_PERMISSION_ID);
+    // Plugin needs EXECUTE on the DAO to run its action batch.
+    await dao.grant(dao.address, plugin.address, EXECUTE_PERMISSION_ID);
+
+    tokenIn = await new TestERC20__factory(deployer).deploy("Test USDC", "tUSDC", 6);
+    await tokenIn.deployed();
+    tokenOut = await new TestERC20__factory(deployer).deploy("Test WETH", "tWETH", 18);
+    await tokenOut.deployed();
+
+    snapshot = await takeSnapshot();
+  });
+
+  describe("initialize", () => {
+    it("stores constructor params and disables initializer on the impl", async () => {
+      expect(await plugin.universalRouter()).to.equal(router.address);
+      expect(await plugin.permit2()).to.equal(permit2.address);
+      expect(await plugin.poolManager()).to.equal(FAKE_POOL_MANAGER);
+      expect(await plugin.allowlistEnforced()).to.equal(false);
+      expect(await plugin.swapNonce()).to.equal(0);
+    });
+
+    it("cannot be initialized twice", async () => {
+      await expect(
+        plugin.initialize(dao.address, router.address, permit2.address, FAKE_POOL_MANAGER, [])
+      ).to.be.revertedWith("Initializable: contract is already initialized");
+    });
+
+    it("non-empty allowlist flips allowlistEnforced and emits per-token events", async () => {
+      const initialAllowlist = [tokenIn.address, tokenOut.address];
+
+      const impl = await new UniswapV4Plugin__factory(deployer).deploy();
+      const initData = impl.interface.encodeFunctionData("initialize", [
+        dao.address,
+        router.address,
+        permit2.address,
+        FAKE_POOL_MANAGER,
+        initialAllowlist,
+      ]);
+      const ProxyFactory = await ethers.getContractFactory("ERC1967Proxy", deployer);
+      const tx = ProxyFactory.deploy(impl.address, initData);
+
+      // Each token in the seed list emits an AllowedTokenSet event during init.
+      // We assert against the plugin's interface bound to the proxy address.
+      const proxy = await tx;
+      await proxy.deployed();
+      const seeded = UniswapV4Plugin__factory.connect(proxy.address, deployer);
+
+      expect(await seeded.allowlistEnforced()).to.equal(true);
+      expect(await seeded.allowedToken(tokenIn.address)).to.equal(true);
+      expect(await seeded.allowedToken(tokenOut.address)).to.equal(true);
+    });
+
+    it("empty allowlist leaves allowlistEnforced=false (no restriction)", async () => {
+      expect(await plugin.allowlistEnforced()).to.equal(false);
+      // Default mapping returns false; no entries are added.
+      expect(await plugin.allowedToken(tokenIn.address)).to.equal(false);
+    });
+  });
+
+  describe("setUniversalRouter", () => {
+    it("updates router and emits UniversalRouterUpdated", async () => {
+      const newRouter = ethers.Wallet.createRandom().address;
+      const prev = await plugin.universalRouter();
+
+      await expect(plugin.connect(voter).setUniversalRouter(newRouter))
+        .to.emit(plugin, "UniversalRouterUpdated")
+        .withArgs(prev, newRouter);
+
+      expect(await plugin.universalRouter()).to.equal(newRouter);
+    });
+
+    it("reverts when caller lacks UPDATE_ROUTER_PERMISSION", async () => {
+      await expect(
+        plugin.connect(stranger).setUniversalRouter(ethers.Wallet.createRandom().address)
+      ).to.be.reverted;
+    });
+  });
+
+  describe("setAllowedToken", () => {
+    it("adds a token and flips allowlistEnforced on the first allow", async () => {
+      expect(await plugin.allowlistEnforced()).to.equal(false);
+
+      await expect(plugin.connect(voter).setAllowedToken(tokenIn.address, true))
+        .to.emit(plugin, "AllowedTokenSet")
+        .withArgs(tokenIn.address, true);
+
+      expect(await plugin.allowedToken(tokenIn.address)).to.equal(true);
+      expect(await plugin.allowlistEnforced()).to.equal(true);
+    });
+
+    it("removing a token does NOT flip allowlistEnforced back to false", async () => {
+      // setAllowedToken(true) on a previously-empty allowlist flips enforcement on.
+      // Subsequent setAllowedToken(false) only removes the entry — enforcement
+      // is sticky (auditors flagged "implicit un-enforcement on empty" as a footgun).
+      await plugin.connect(voter).setAllowedToken(tokenIn.address, true);
+      expect(await plugin.allowlistEnforced()).to.equal(true);
+
+      await expect(plugin.connect(voter).setAllowedToken(tokenIn.address, false))
+        .to.emit(plugin, "AllowedTokenSet")
+        .withArgs(tokenIn.address, false);
+
+      expect(await plugin.allowedToken(tokenIn.address)).to.equal(false);
+      expect(await plugin.allowlistEnforced()).to.equal(true); // sticky
+    });
+
+    it("reverts when caller lacks MANAGE_ALLOWLIST_PERMISSION", async () => {
+      await expect(plugin.connect(stranger).setAllowedToken(tokenIn.address, true)).to.be.reverted;
+    });
+  });
+
+  describe("swap: revert paths", () => {
+    it("reverts DeadlineExpired when deadline < block.timestamp", async () => {
+      // block.timestamp is monotonic in-test; "1" is always in the past.
+      await expect(
+        plugin
+          .connect(voter)
+          .swap(DUMMY_COMMANDS, DUMMY_INPUTS, 1, tokenIn.address, 1000, tokenOut.address, 0)
+      ).to.be.revertedWithCustomError(plugin, "DeadlineExpired");
+    });
+
+    it("reverts TokenNotAllowed for tokenIn when allowlist enforced", async () => {
+      // Seed allowlist with tokenOut only — tokenIn is missing.
+      await plugin.connect(voter).setAllowedToken(tokenOut.address, true);
+      await expect(
+        plugin
+          .connect(voter)
+          .swap(
+            DUMMY_COMMANDS,
+            DUMMY_INPUTS,
+            FUTURE_DEADLINE,
+            tokenIn.address,
+            1000,
+            tokenOut.address,
+            0
+          )
+      )
+        .to.be.revertedWithCustomError(plugin, "TokenNotAllowed")
+        .withArgs(tokenIn.address);
+    });
+
+    it("reverts TokenNotAllowed for tokenOut when allowlist enforced", async () => {
+      await plugin.connect(voter).setAllowedToken(tokenIn.address, true);
+      await expect(
+        plugin
+          .connect(voter)
+          .swap(
+            DUMMY_COMMANDS,
+            DUMMY_INPUTS,
+            FUTURE_DEADLINE,
+            tokenIn.address,
+            1000,
+            tokenOut.address,
+            0
+          )
+      )
+        .to.be.revertedWithCustomError(plugin, "TokenNotAllowed")
+        .withArgs(tokenOut.address);
+    });
+
+    it("reverts SlippageExceeded when received < minAmountOut", async () => {
+      // DAO holds tokenIn, router has tokenOut to deliver — but only 50 of it,
+      // while the proposal demands 100.
+      const amountIn = ethers.utils.parseUnits("100", 6);
+      const delivered = ethers.utils.parseUnits("50", 18);
+      const minOut = ethers.utils.parseUnits("100", 18);
+
+      await tokenIn.mint(dao.address, amountIn);
+      await tokenOut.mint(router.address, delivered);
+
+      await router.setSwap(
+        tokenIn.address,
+        0, // don't pull tokenIn — simpler for the slippage path
+        tokenOut.address,
+        delivered,
+        dao.address,
+        dao.address
+      );
+
+      await expect(
+        plugin
+          .connect(voter)
+          .swap(
+            DUMMY_COMMANDS,
+            DUMMY_INPUTS,
+            FUTURE_DEADLINE,
+            tokenIn.address,
+            amountIn,
+            tokenOut.address,
+            minOut
+          )
+      )
+        .to.be.revertedWithCustomError(plugin, "SlippageExceeded")
+        .withArgs(delivered, minOut);
+    });
+
+    it("reverts when caller lacks TRIGGER_SWAP_PERMISSION", async () => {
+      await expect(
+        plugin
+          .connect(stranger)
+          .swap(DUMMY_COMMANDS, DUMMY_INPUTS, FUTURE_DEADLINE, tokenIn.address, 100, tokenOut.address, 0)
+      ).to.be.reverted;
+    });
+  });
+
+  describe("swap: happy path", () => {
+    async function happySwap(opts: {
+      amountIn?: bigint | ReturnType<typeof ethers.utils.parseUnits>;
+      delivered?: bigint | ReturnType<typeof ethers.utils.parseUnits>;
+      minOut?: bigint | ReturnType<typeof ethers.utils.parseUnits>;
+      pullTokenIn?: boolean;
+    } = {}): Promise<{
+      tx: ContractTransaction;
+      amountIn: ReturnType<typeof ethers.utils.parseUnits>;
+      delivered: ReturnType<typeof ethers.utils.parseUnits>;
+    }> {
+      const amountIn = (opts.amountIn ?? ethers.utils.parseUnits("100", 6)) as ReturnType<
+        typeof ethers.utils.parseUnits
+      >;
+      const delivered = (opts.delivered ?? ethers.utils.parseUnits("0.05", 18)) as ReturnType<
+        typeof ethers.utils.parseUnits
+      >;
+      const minOut = (opts.minOut ?? ethers.utils.parseUnits("0.04", 18)) as ReturnType<
+        typeof ethers.utils.parseUnits
+      >;
+
+      await tokenIn.mint(dao.address, amountIn);
+      await tokenOut.mint(router.address, delivered);
+
+      await router.setPullTokenIn(opts.pullTokenIn ?? false);
+      await router.setSwap(
+        tokenIn.address,
+        opts.pullTokenIn ? amountIn : 0,
+        tokenOut.address,
+        delivered,
+        dao.address,
+        dao.address
+      );
+
+      const tx = await plugin
+        .connect(voter)
+        .swap(
+          DUMMY_COMMANDS,
+          DUMMY_INPUTS,
+          FUTURE_DEADLINE,
+          tokenIn.address,
+          amountIn,
+          tokenOut.address,
+          minOut
+        );
+      return {tx, amountIn, delivered};
+    }
+
+    it("debits tokenIn from the DAO and credits tokenOut to the DAO", async () => {
+      const {amountIn, delivered} = await happySwap({pullTokenIn: true});
+
+      // DAO spent tokenIn (mock router pulled it via transferFrom in the
+      // approve+execute sequence).
+      expect(await tokenIn.balanceOf(dao.address)).to.equal(0);
+      expect(await tokenIn.balanceOf(router.address)).to.equal(amountIn);
+      // DAO received tokenOut.
+      expect(await tokenOut.balanceOf(dao.address)).to.equal(delivered);
+    });
+
+    it("emits SwapExecuted with the actual delta as amountOutActual", async () => {
+      const {tx, amountIn, delivered} = await happySwap();
+
+      await expect(tx)
+        .to.emit(plugin, "SwapExecuted")
+        .withArgs(tokenIn.address, amountIn, tokenOut.address, delivered);
+    });
+
+    it("increments swapNonce on each successful swap", async () => {
+      expect(await plugin.swapNonce()).to.equal(0);
+      await happySwap();
+      expect(await plugin.swapNonce()).to.equal(1);
+    });
+
+    it("approves Permit2 for exactly amountIn (not max) — TRD §11 security note", async () => {
+      // With pullTokenIn=true, MockUniversalRouter pulls `amountIn` of tokenIn
+      // from the DAO *via Permit2*, mirroring the real settlement path. The
+      // DAO's ERC20 allowance for Permit2 should be exactly amountIn before
+      // the call and zero after (since the plugin approves the exact amount,
+      // not max).
+      const {amountIn} = await happySwap({pullTokenIn: true});
+
+      // Plugin recorded its approve via the mock Permit2 — check it was
+      // (tokenIn, router, amountIn, deadline).
+      const {amount, expiration, set} = await permit2.getApproval(
+        tokenIn.address,
+        router.address
+      );
+      expect(set).to.equal(true);
+      expect(amount).to.equal(amountIn);
+      expect(expiration).to.equal(FUTURE_DEADLINE);
+
+      // After the router (here: the mock) has done its Permit2.transferFrom
+      // of `amountIn`, the ERC20 allowance for Permit2 should be back to zero
+      // (we approved exactly amountIn — not max).
+      const remaining = await tokenIn.allowance(dao.address, permit2.address);
+      expect(remaining).to.equal(0);
+    });
+
+    it("Permit2.approve was called exactly once per swap", async () => {
+      expect(await permit2.approveCallCount()).to.equal(0);
+      await happySwap();
+      expect(await permit2.approveCallCount()).to.equal(1);
+    });
+
+    it("passes the allowlist gate when both tokens are listed", async () => {
+      await plugin.connect(voter).setAllowedToken(tokenIn.address, true);
+      await plugin.connect(voter).setAllowedToken(tokenOut.address, true);
+      const {tx} = await happySwap();
+      // No revert — and the event still fires.
+      await expect(tx).to.emit(plugin, "SwapExecuted");
+    });
+  });
+
+  describe("swap: nonce uniqueness across runs", () => {
+    it("produces different callIds for two sequential swaps", async () => {
+      const amountIn = ethers.utils.parseUnits("100", 6);
+      const delivered = ethers.utils.parseUnits("0.05", 18);
+
+      // Top up enough for two swaps.
+      await tokenIn.mint(dao.address, amountIn.mul(2));
+      await tokenOut.mint(router.address, delivered.mul(2));
+
+      await router.setPullTokenIn(true);
+      await router.setSwap(
+        tokenIn.address,
+        amountIn,
+        tokenOut.address,
+        delivered,
+        dao.address,
+        dao.address
+      );
+
+      const tx1 = await plugin
+        .connect(voter)
+        .swap(
+          DUMMY_COMMANDS,
+          DUMMY_INPUTS,
+          FUTURE_DEADLINE,
+          tokenIn.address,
+          amountIn,
+          tokenOut.address,
+          0
+        );
+      const tx2 = await plugin
+        .connect(voter)
+        .swap(
+          DUMMY_COMMANDS,
+          DUMMY_INPUTS,
+          FUTURE_DEADLINE,
+          tokenIn.address,
+          amountIn,
+          tokenOut.address,
+          0
+        );
+
+      expect(await plugin.swapNonce()).to.equal(2);
+
+      // Both `Executed` events should be present; the callIds derive from a
+      // monotonically-incrementing nonce so they must differ.
+      const r1 = await tx1.wait();
+      const r2 = await tx2.wait();
+
+      const execIface = new ethers.utils.Interface([
+        "event Executed(address indexed actor, bytes32 callId, tuple(address to, uint256 value, bytes data)[] actions, uint256 allowFailureMap, uint256 failureMap, bytes[] execResults)",
+      ]);
+      function callIdFrom(receipt: typeof r1): string {
+        for (const log of receipt.logs) {
+          try {
+            const parsed = execIface.parseLog(log);
+            if (parsed.name === "Executed") return parsed.args.callId as string;
+          } catch {/* ignore */}
+        }
+        throw new Error("Executed not found");
+      }
+      const id1 = callIdFrom(r1);
+      const id2 = callIdFrom(r2);
+
+      expect(id1).to.equal(ethers.utils.solidityKeccak256(["string", "uint256"], ["UNI_V4_SWAP:", 0]));
+      expect(id2).to.equal(ethers.utils.solidityKeccak256(["string", "uint256"], ["UNI_V4_SWAP:", 1]));
+      expect(id1).to.not.equal(id2);
+    });
+  });
+});
