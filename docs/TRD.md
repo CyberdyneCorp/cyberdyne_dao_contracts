@@ -112,6 +112,72 @@ What we **do** still need from the contracts side to make the custom UI nice:
 
 The frontend repo, its component library, design, hosting, analytics, off-chain proposal pre-staging, draft storage, etc. — all out of scope here. This TRD ends at "the plugins expose the events, views, and external functions the UI needs."
 
+## 3b. Toy frontend (in-repo dev/test tool)
+
+To support development, manual testing, audit walkthroughs, and the testnet bug-bounty period, this repository ships a **minimal Svelte frontend** alongside the contracts. It is explicitly **not** the production UI (§3a) — it is a developer/inspector tool with the smallest possible surface area, optimized for "see the state, push the buttons" rather than end-user UX.
+
+### Stack
+
+| Layer | Tool |
+|---|---|
+| UI framework | **Svelte** (via SvelteKit for routing + dev tooling) |
+| Ethereum client | **ethers.js v5** (matches the test stack and TypeChain output) |
+| Wallet connectivity | **WalletConnect v2** (`@walletconnect/ethereum-provider`) + injected wallet (MetaMask) fallback |
+| Build / dev server | Vite (built into SvelteKit) |
+| Styling | Default Svelte components only — no design system, no Tailwind, no marketing copy |
+| Data sources | Direct RPC reads via ethers + JSON ABIs from the `frontend-abi/` artifact. Subgraph optional. |
+
+### Location
+
+`frontend/` at the root of this repo. Target size ≤ ~1k LOC. Build artifact is a static SPA.
+
+### Scope — what it must do
+
+**Read views:**
+- DAO overview: treasury balances (ETH + tracked ERC20s), installed plugin addresses, total voting power, `ProtocolVersion`.
+- Proposal list + proposal detail (title + description fetched from IPFS metadata, decoded `Action[]`, vote tallies, status).
+- Payroll schedule: active recipients, amounts, pay day, next payout countdown, last-paid period.
+- Lending positions: AAVE supplies (aToken balances), debts (variable + stable), health factor.
+- Swap history: recent `SwapExecuted` events with token in/out + amount.
+
+**Write actions** (one minimal form per action):
+- Create proposal (build `Action[]` via plugin-specific helper forms or paste raw).
+- Vote on a proposal / execute a passed proposal.
+- Add / remove / update payroll recipient (vote-gated → submits as a proposal).
+- Trigger `executePayroll()` (permissionless crank — just a button).
+- Update Uniswap router / AAVE adapter / allowlists (vote-gated admin actions).
+
+**Network handling:**
+- Chain switcher driven by the contracts artifact's `addresses.json`.
+- Works against `localFork`, `mainnetFork`, `baseFork`, `sepoliaFork`, `baseSepoliaFork`, and live networks without code changes.
+- Prominent banner: "Dev / inspector tool — not the production UI" on every screen.
+
+### Scope — what it must NOT do
+
+- No design polish. No animations. No theming. No light/dark mode.
+- No off-chain backend or proxy.
+- No analytics, telemetry, or user accounts.
+- No proposal drafts / pre-staging — straight to on-chain create.
+- No authentication beyond the on-chain wallet signature.
+- No mobile-first responsive work.
+
+### Why in-repo (not a sibling repo)
+
+- ABI/address drift surfaces immediately on every contracts PR.
+- Auditors and reviewers can run it locally against `localFork` without cloning another repo.
+- The testnet bug bounty (roadmap P11) needs a working UI — the toy frontend is the cheapest path to one.
+- Small enough not to bloat the repo or its CI surface.
+
+### Implications for the contracts in this TRD
+
+Same as §3a for the production UI, plus:
+- The `frontend-abi/` artifact must include **plain JSON ABIs** alongside TypeChain types so a vanilla Svelte project can consume them without TypeScript-only tooling.
+- The artifact must be importable from a Svelte component with no extra build steps (`addresses.json` is plain JSON, not a `.ts` file).
+
+### Lifetime
+
+Maintained through roadmap P11 (mainnet deployment). After production-UI rollout (sibling repo), the toy frontend stays as a permanent admin/inspector tool — no deprecation planned.
+
 ## 4. What we reuse from Aragon OSx
 
 | Component | OSx contract | Why we don't rebuild it |
@@ -712,7 +778,10 @@ The Hardhat test tree is rooted at top-level `test/` rather than `packages/contr
 | AaveLendingPlugin + v3 adapter + setup + unit + fork tests (mainnet + base) | 5–7 days |
 | PayrollPlugin + setup + unit + fork tests with time-travel (incl. date-math vendoring) | 6–8 days |
 | Bootstrap script + e2e fork test across mainnet + base + sepolia | 3–4 days |
+| Toy frontend (Svelte + ethers.js v5 + WalletConnect v2; read + write screens for all plugins) | 5–7 days |
+| Frontend integration artifacts (npm package, subgraph, IPFS metadata) | 4–5 days |
+| Internal security review + fuzz / invariant testing | 5–7 days |
 | External audit (recommended before mainnet) | 4–6 weeks calendar (Halborn or similar) |
 | Internal hardening + fixes from audit | 1–2 weeks |
 
-**Total engineering**: ~3–4 weeks to a fork-tested, mainnet-deployable build, excluding audit. Add audit calendar time before any real funds touch the DAO.
+**Total engineering**: ~4–5 weeks to a fork-tested, mainnet-deployable build including the toy frontend, excluding audit calendar time. Add audit + testnet bounty period before any real funds touch the DAO. Full phase-by-phase plan lives in [ROADMAP.md](ROADMAP.md).

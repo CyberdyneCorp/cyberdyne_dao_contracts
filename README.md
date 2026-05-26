@@ -301,6 +301,16 @@ cyberdyne_dao_contracts/
 │   ├── DeployAavePlugin.s.sol
 │   ├── DeployPayrollPlugin.s.sol
 │   └── DeployCyberdyneDao.s.sol
+├── frontend/                      ← Toy frontend (Svelte + ethers.js + WalletConnect)
+│   ├── src/
+│   │   ├── routes/                (SvelteKit pages: dao, proposals, payroll, lending, swaps)
+│   │   ├── lib/                   (wallet, contracts, abi loaders)
+│   │   └── app.html
+│   ├── static/
+│   ├── package.json
+│   ├── svelte.config.js
+│   ├── vite.config.ts
+│   └── README.md
 ├── lib/                           ← Foundry deps (OSx submodule, OZ, forge-std)
 ├── foundry.toml
 ├── hardhat.config.ts
@@ -355,13 +365,25 @@ PIN_BASE=
 
 ## Frontend
 
-This DAO is operated through our **own custom UI**, tracked in a sibling repository. The Aragon App is explicitly **not** a deployment target. See [TRD §3a](docs/TRD.md#3a-frontend--ux-policy-custom-ui-only).
+Two UIs, two scopes:
+
+| | Production UI | Toy frontend (in this repo) |
+|---|---|---|
+| Where | Sibling repository | `frontend/` directory here |
+| Stack | Project-chosen (e.g. React + wagmi + viem) | Svelte + ethers.js v5 + WalletConnect v2 |
+| Purpose | End-user DAO operation | Dev / audit / testnet inspection + manual testing |
+| Polish | Full design system | None — default Svelte components only |
+| Spec | TRD §3a | TRD §3b |
+
+The toy frontend exists so developers, auditors, and testnet bug-bounty participants can interact with every plugin action end-to-end without depending on the production UI being ready. It connects to `localFork`, `mainnetFork`, `baseFork`, `sepoliaFork`, `baseSepoliaFork`, and live networks via a chain switcher driven by `addresses.json`. See [TRD §3b](docs/TRD.md#3b-toy-frontend-in-repo-devtest-tool) for full scope; built in roadmap [P6](docs/ROADMAP.md#phase-6--toy-frontend-in-repo-devtest-tool).
+
+The Aragon App is explicitly **not** a deployment target for either UI.
 
 The contracts in this repo are responsible for:
-- Emitting granular events (`SwapExecuted`, `Supplied`, `RecipientAdded`, `PayrollExecuted`, …) for the UI + subgraph.
+- Emitting granular events (`SwapExecuted`, `Supplied`, `RecipientAdded`, `PayrollExecuted`, …) for both UIs + subgraph.
 - Stable external signatures for clean TypeChain bindings.
 - Batch-friendly view functions (one RPC round-trip per UI screen where reasonable).
-- Publishing a `frontend-abi/` artifact at release time for the UI repo to consume.
+- Publishing a `frontend-abi/` artifact at release time — must include plain JSON ABIs (consumable by the Svelte toy frontend) **and** TypeChain types (consumable by the production UI).
 
 ---
 
@@ -390,13 +412,15 @@ flowchart LR
     P2 --> P5[P5 Bootstrap + E2E]
     P3 --> P5
     P4 --> P5
-    P5 --> P6[P6 Frontend artifacts]
-    P5 --> P7[P7 Internal review]
-    P7 --> P8[P8 External audit]
-    P8 --> P9[P9 Remediation]
-    P9 --> P10[P10 Testnet + bounty]
-    P10 --> P11[P11 Mainnet]
-    P11 --> P12[P12 V1.1 hardening]
+    P5 --> P6["P6 Toy frontend<br/>(Svelte + ethers + WC)"]
+    P5 --> P7[P7 Frontend artifacts]
+    P5 --> P8[P8 Internal review]
+    P8 --> P9[P9 External audit]
+    P9 --> P10[P10 Remediation]
+    P10 --> P11[P11 Testnet + bounty]
+    P6 --> P11
+    P11 --> P12[P12 Mainnet]
+    P12 --> P13[P13 V1.1 hardening]
 
     style P0 fill:#e8eaf6
     style P1 fill:#e8eaf6
@@ -404,13 +428,14 @@ flowchart LR
     style P3 fill:#fff3cd
     style P4 fill:#fff3cd
     style P5 fill:#d1ecf1
-    style P6 fill:#d1ecf1
-    style P7 fill:#f8d7da
+    style P6 fill:#ffe4b5
+    style P7 fill:#d1ecf1
     style P8 fill:#f8d7da
     style P9 fill:#f8d7da
-    style P10 fill:#d4edda
+    style P10 fill:#f8d7da
     style P11 fill:#d4edda
-    style P12 fill:#e2e3e5
+    style P12 fill:#d4edda
+    style P13 fill:#e2e3e5
 ```
 
 **Project-wide quality bars** (enforced in CI on every PR — see [ROADMAP §"Project-wide quality bars"](docs/ROADMAP.md#project-wide-quality-bars-non-negotiable)):

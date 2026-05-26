@@ -31,32 +31,33 @@ gantt
     axisFormat %b %d
 
     section Foundation
-    P0 Scaffolding             :p0, 2026-06-01, 5d
+    P0 Scaffolding              :p0, 2026-06-01, 5d
     section Specs
-    P1 Interfaces & stubs      :p1, after p0, 3d
+    P1 Interfaces & stubs       :p1, after p0, 3d
 
     section Plugins
-    P2 PayrollPlugin           :p2, after p1, 8d
-    P3 UniswapV4Plugin         :p3, after p1, 7d
-    P4 AaveLendingPlugin       :p4, after p1, 7d
+    P2 PayrollPlugin            :p2, after p1, 8d
+    P3 UniswapV4Plugin          :p3, after p1, 7d
+    P4 AaveLendingPlugin        :p4, after p1, 7d
 
     section Bootstrap
     P5 DeployCyberdyneDao + e2e :p5, after p2 p3 p4, 4d
 
-    section Frontend integration
-    P6 ABI/subgraph/metadata    :p6, after p5, 5d
+    section Frontend
+    P6 Toy frontend (Svelte)    :p6, after p5, 7d
+    P7 ABI/subgraph/metadata    :p7, after p5, 5d
 
     section Security
-    P7 Internal review + fuzz   :p7, after p5, 7d
-    P8 External audit           :p8, after p7, 35d
-    P9 Audit remediation        :p9, after p8, 10d
+    P8 Internal review + fuzz   :p8, after p5, 7d
+    P9 External audit           :p9, after p8, 35d
+    P10 Audit remediation       :p10, after p9, 10d
 
     section Deploy
-    P10 Testnet (Sepolia+BaseS) :p10, after p9, 14d
-    P11 Mainnet deployment      :p11, after p10, 3d
+    P11 Testnet (Sepolia+BaseS) :p11, after p10 p6, 14d
+    P12 Mainnet deployment      :p12, after p11, 3d
 
     section Post-launch
-    P12 V1.1 hardening          :p12, after p11, 20d
+    P13 V1.1 hardening          :p13, after p12, 20d
 ```
 
 ```mermaid
@@ -68,13 +69,15 @@ flowchart LR
     P2 --> P5[P5 Bootstrap + E2E]
     P3 --> P5
     P4 --> P5
-    P5 --> P6[P6 Frontend artifacts]
-    P5 --> P7[P7 Internal review]
-    P7 --> P8[P8 External audit]
-    P8 --> P9[P9 Remediation]
-    P9 --> P10[P10 Testnet]
-    P10 --> P11[P11 Mainnet]
-    P11 --> P12[P12 V1.1]
+    P5 --> P6["P6 Toy frontend<br/>(Svelte + ethers + WC)"]
+    P5 --> P7[P7 Frontend artifacts]
+    P5 --> P8[P8 Internal review]
+    P8 --> P9[P9 External audit]
+    P9 --> P10[P10 Remediation]
+    P10 --> P11[P11 Testnet]
+    P6 --> P11
+    P11 --> P12[P12 Mainnet]
+    P12 --> P13[P13 V1.1]
 
     style P0 fill:#e8eaf6
     style P1 fill:#e8eaf6
@@ -82,13 +85,14 @@ flowchart LR
     style P3 fill:#fff3cd
     style P4 fill:#fff3cd
     style P5 fill:#d1ecf1
-    style P6 fill:#d1ecf1
-    style P7 fill:#f8d7da
+    style P6 fill:#ffe4b5
+    style P7 fill:#d1ecf1
     style P8 fill:#f8d7da
     style P9 fill:#f8d7da
-    style P10 fill:#d4edda
+    style P10 fill:#f8d7da
     style P11 fill:#d4edda
-    style P12 fill:#e2e3e5
+    style P12 fill:#d4edda
+    style P13 fill:#e2e3e5
 ```
 
 ---
@@ -252,9 +256,51 @@ The first time all four plugins exist in the same DAO.
 
 ---
 
-## Phase 6 — Frontend integration artifacts
+## Phase 6 — Toy frontend (in-repo dev/test tool)
 
-**Duration estimate:** 4–5 days. **Depends on:** P5. **Can run in parallel with P7.**
+**Duration estimate:** 5–7 days. **Depends on:** P5. **Can run in parallel with P7 and P8.**
+
+A minimal Svelte + ethers.js + WalletConnect UI living in `frontend/` of this repo. Exists solely to inspect and exercise the DAO during development, audit walkthroughs, and the testnet bug bounty (P11). **Not** the production UI — that lives in a sibling repo, see TRD §3a. Full scope and constraints in TRD §3b.
+
+**Deliverables**
+- `frontend/` directory: SvelteKit project, Vite dev server, npm scripts (`dev`, `build`, `preview`, `check`).
+- Wallet connectivity: `@walletconnect/ethereum-provider` v2 + injected wallet (MetaMask) fallback. Project ID configured via env.
+- Ethereum client: ethers.js v5 (matches the test stack and TypeChain output).
+- Network switcher driven by `addresses.json` from the contracts artifact (`localFork`, `mainnetFork`, `baseFork`, `sepoliaFork`, `baseSepoliaFork`, live nets — no code changes per chain).
+- **Read views:**
+  - DAO overview: treasury balances (ETH + tracked ERC20s), installed plugin addresses, total voting power, `ProtocolVersion`.
+  - Proposal list + proposal detail (title/description from IPFS metadata, decoded `Action[]`, vote tallies, status, `canExecute`).
+  - Payroll schedule: active recipients, amounts, pay day, next-payout countdown, last-paid period.
+  - Lending positions: AAVE supplies (aToken balances), debts (variable + stable), health factor.
+  - Swap history: recent `SwapExecuted` events.
+- **Write actions** (one minimal form per action):
+  - Create proposal (raw `Action[]` paste + plugin-specific helper forms).
+  - Vote / execute proposal.
+  - Add / remove / update payroll recipient (vote-gated → builds proposal).
+  - Trigger `executePayroll()` (permissionless crank — a single button).
+  - Update Uniswap router / AAVE adapter / allowlists (vote-gated admin actions).
+- Prominent banner on every screen: *"Dev / inspector tool — not the production UI"*.
+- `frontend/README.md` — setup, run, and test instructions.
+- CI job: `npm run check` (svelte-check) + `npm run build` to catch breakage on every contracts PR. ABI/address drift surfaces here first.
+
+**Stack constraints (per TRD §3b)**
+- No design polish; default Svelte components only.
+- No off-chain backend, no analytics, no auth beyond on-chain wallet signature.
+- Target size ≤ ~1k LOC.
+
+**Exit criteria**
+- [ ] Connects to `localFork`, `mainnetFork`, `baseFork`, `sepoliaFork`, `baseSepoliaFork` without code changes — chain switcher works.
+- [ ] All read views render real fork-state data within ≤ 2 seconds of wallet connect.
+- [ ] Every write action submits successfully via WalletConnect against a test wallet on `localFork`.
+- [ ] An auditor can walk through every plugin action end-to-end via the UI alone.
+- [ ] CI build job green; svelte-check zero errors.
+- [ ] Consumes ABIs + addresses directly from the contracts artifact (P7) — no duplicated address tables in the frontend.
+
+---
+
+## Phase 7 — Frontend integration artifacts
+
+**Duration estimate:** 4–5 days. **Depends on:** P5. **Can run in parallel with P6 and P8.**
 
 Everything the custom UI repo needs to consume the contracts. (UI itself lives in a sibling repo and is out of scope here.)
 
@@ -279,9 +325,9 @@ Everything the custom UI repo needs to consume the contracts. (UI itself lives i
 
 ---
 
-## Phase 7 — Internal security review + fuzz / invariant testing
+## Phase 8 — Internal security review + fuzz / invariant testing
 
-**Duration estimate:** 5–7 days. **Depends on:** P5. **Runs in parallel with P6.**
+**Duration estimate:** 5–7 days. **Depends on:** P5. **Runs in parallel with P6 and P7.**
 
 Catches issues *before* external auditors see the code (cheaper, faster).
 
@@ -306,7 +352,7 @@ Catches issues *before* external auditors see the code (cheaper, faster).
 
 ---
 
-## Phase 8 — External audit
+## Phase 9 — External audit
 
 **Duration estimate:** 4–6 weeks calendar (engineering side is ~2–3 days of audit prep + ongoing Q&A).
 
@@ -325,7 +371,7 @@ Catches issues *before* external auditors see the code (cheaper, faster).
 
 ---
 
-## Phase 9 — Audit remediation
+## Phase 10 — Audit remediation
 
 **Duration estimate:** 1–2 weeks.
 
@@ -341,7 +387,7 @@ Catches issues *before* external auditors see the code (cheaper, faster).
 
 ---
 
-## Phase 10 — Testnet deployment + bug bounty
+## Phase 11 — Testnet deployment + bug bounty
 
 **Duration estimate:** 2–4 weeks (mostly observation time, not engineering time).
 
@@ -360,7 +406,7 @@ Catches issues *before* external auditors see the code (cheaper, faster).
 
 ---
 
-## Phase 11 — Mainnet deployment
+## Phase 12 — Mainnet deployment
 
 **Duration estimate:** 2–3 days (one-shot ceremony + verification).
 
@@ -384,7 +430,7 @@ Catches issues *before* external auditors see the code (cheaper, faster).
 
 ---
 
-## Phase 12 — V1.1 hardening (post-launch)
+## Phase 13 — V1.1 hardening (post-launch)
 
 **Duration estimate:** 2–4 weeks. Scoped after mainnet operation reveals real priorities.
 
@@ -396,7 +442,7 @@ Catches issues *before* external auditors see the code (cheaper, faster).
 5. **Uniswap V4 LP plugin** — provide liquidity, collect fees, gated by vote.
 6. **DAO sub-treasuries** — child DAOs with capped budgets allocated via parent vote.
 
-Each item goes through P1–P9 cycle as a self-contained sub-roadmap.
+Each item goes through P1–P10 cycle as a self-contained sub-roadmap.
 
 ---
 
@@ -476,12 +522,12 @@ await payroll.connect(keeper).executePayroll();
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Auditor calendar slips | P8 stretches; mainnet delayed | Book auditor before P5 completes; have a backup auditor lined up. |
+| Auditor calendar slips | P9 stretches; mainnet delayed | Book auditor before P5 completes; have a backup auditor lined up. |
 | RPC archive-node cost (fork tests need historical state) | CI bill spikes | Block pinning reduces unique queries; cache layer on Alchemy or self-hosted archive node. |
-| AAVE v4 launches mid-roadmap | Tempting to redo P4 | Adapter pattern already isolates this; v4 lands in P12 only. |
+| AAVE v4 launches mid-roadmap | Tempting to redo P4 | Adapter pattern already isolates this; v4 lands in P13 only. |
 | Uniswap Universal Router redeploy | Breaks fork test pinning | Pin tests to a block before the redeploy; bump separately. |
 | `aragon/osx` ships v1.6 with breaking changes | Re-audit triggered | OSx version policy (TRD §3) requires audit before adoption — v1.5/1.4 stays in production. |
-| Frontend team can't consume the npm artifact format | P6 churn | Lock the artifact shape in P1's `docs/EVENTS.md` review with UI team present. |
+| Frontend team can't consume the npm artifact format | P7 churn | Lock the artifact shape in P1's `docs/EVENTS.md` review with UI team present. |
 
 ---
 
