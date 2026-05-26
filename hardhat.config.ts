@@ -9,25 +9,12 @@ dotenv.config();
 
 const {
   RPC_MAINNET,
-  RPC_BASE,
   RPC_SEPOLIA,
   RPC_BASE_SEPOLIA,
-  RPC_POLYGON,
-  RPC_ARBITRUM,
-  RPC_OPTIMISM,
-  PIN_MAINNET,
-  PIN_BASE,
   DEPLOYER_KEY,
   ETHERSCAN_API_KEY,
   BASESCAN_API_KEY,
 } = process.env;
-
-// Allow undefined RPCs at config-load time so `hardhat compile` works without secrets.
-// Tests that target a given fork will fail fast at runtime if the RPC isn't set.
-const optionalFork = (url: string | undefined, pin?: string) =>
-  url
-    ? {url, ...(pin ? {blockNumber: Number(pin)} : {})}
-    : undefined;
 
 const accounts = DEPLOYER_KEY ? [DEPLOYER_KEY] : [];
 
@@ -66,47 +53,44 @@ const config: HardhatUserConfig = {
         : {}),
       allowUnlimitedContractSize: false,
     },
+    // --- Fork networks ---
+    // Hardhat's in-process `forking` only works on the built-in `hardhat`
+    // network — a NAMED network cannot fork in-process. So each `*Fork`
+    // network connects to a separately-launched forked node:
+    //
+    //   npx hardhat node --fork $RPC_MAINNET --chain-id 1     --port 8545  # mainnetFork
+    //   npx hardhat node --fork $RPC_BASE    --chain-id 8453  --port 8546  # baseFork
+    //   npx hardhat node --fork $RPC_SEPOLIA --chain-id 11155111 --port 8547  # sepoliaFork
+    //   npx hardhat node --fork $RPC_BASE_SEPOLIA --chain-id 84532 --port 8548  # baseSepoliaFork
+    //
+    // `--chain-id` makes the node report the real chain id so addresses
+    // resolve. Then run `npx hardhat test --network mainnetFork`. The justfile
+    // `fork-node-*` recipes wrap these. Distinct ports let targets run
+    // concurrently (one per CI runner).
     localFork: {
       url: "http://127.0.0.1:8545",
       chainId: 31337,
-      accounts,
+      accounts: "remote",
     },
     mainnetFork: {
+      url: "http://127.0.0.1:8545",
       chainId: 1,
-      url: "http://127.0.0.1:0", // unused; we fork via HH_FORK_URL into the in-process network
-      ...(RPC_MAINNET
-        ? {forking: optionalFork(RPC_MAINNET, PIN_MAINNET)}
-        : {}),
+      accounts: "remote",
     },
     baseFork: {
+      url: "http://127.0.0.1:8546",
       chainId: 8453,
-      url: "http://127.0.0.1:0",
-      ...(RPC_BASE ? {forking: optionalFork(RPC_BASE, PIN_BASE)} : {}),
+      accounts: "remote",
     },
     sepoliaFork: {
+      url: "http://127.0.0.1:8547",
       chainId: 11155111,
-      url: "http://127.0.0.1:0",
-      ...(RPC_SEPOLIA ? {forking: optionalFork(RPC_SEPOLIA)} : {}),
+      accounts: "remote",
     },
     baseSepoliaFork: {
+      url: "http://127.0.0.1:8548",
       chainId: 84532,
-      url: "http://127.0.0.1:0",
-      ...(RPC_BASE_SEPOLIA ? {forking: optionalFork(RPC_BASE_SEPOLIA)} : {}),
-    },
-    polygonFork: {
-      chainId: 137,
-      url: "http://127.0.0.1:0",
-      ...(RPC_POLYGON ? {forking: optionalFork(RPC_POLYGON)} : {}),
-    },
-    arbitrumFork: {
-      chainId: 42161,
-      url: "http://127.0.0.1:0",
-      ...(RPC_ARBITRUM ? {forking: optionalFork(RPC_ARBITRUM)} : {}),
-    },
-    optimismFork: {
-      chainId: 10,
-      url: "http://127.0.0.1:0",
-      ...(RPC_OPTIMISM ? {forking: optionalFork(RPC_OPTIMISM)} : {}),
+      accounts: "remote",
     },
     sepolia: {
       url: RPC_SEPOLIA ?? "",
@@ -124,7 +108,7 @@ const config: HardhatUserConfig = {
       accounts,
     },
     base: {
-      url: RPC_BASE ?? "",
+      url: process.env.RPC_BASE ?? "",
       chainId: 8453,
       accounts,
     },

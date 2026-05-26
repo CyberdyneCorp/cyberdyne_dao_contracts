@@ -68,7 +68,6 @@ onlyOn(["mainnetFork", "baseFork"], () => {
     let deployer: Signer;
     let voter: Signer;
     let alice: Signer;
-    let bob: Signer;
     let dao: MinimalDAO;
     let plugin: PayrollPlugin;
     let usdcAddress: string;
@@ -76,7 +75,7 @@ onlyOn(["mainnetFork", "baseFork"], () => {
     let snapshot: SnapshotRestorer;
 
     before(async () => {
-      [deployer, voter, alice, bob] = await ethers.getSigners();
+      [deployer, voter, alice] = await ethers.getSigners();
       usdcAddress = EXTERNAL[chainKey()].USDC;
       usdc = new ethers.Contract(usdcAddress, ERC20_ABI, ethers.provider);
     });
@@ -138,7 +137,11 @@ onlyOn(["mainnetFork", "baseFork"], () => {
     it("one reverting payee does not block the others (real ETH transfers)", async () => {
       const reverting = await new RevertingRecipient__factory(deployer).deploy();
       await reverting.deployed();
-      const bAddr = await bob.getAddress();
+      // Use a FRESH zero-balance address as the good payee. A node-prefunded
+      // account (anvil's default signers) reads its genesis balance oddly on a
+      // fork after receiving ETH; a fresh address makes the +salary assertion
+      // unambiguous.
+      const bAddr = ethers.Wallet.createRandom().address;
 
       const ethSalary = ethers.utils.parseEther("0.5");
 
