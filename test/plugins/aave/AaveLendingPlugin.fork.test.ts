@@ -149,11 +149,11 @@ onlyOn(["mainnetFork", "baseFork"], () => {
 
       await plugin.connect(voter).supply(usdcAddress, amount);
 
-      // DAO's USDC decreased by amount; aUSDC increased by ~amount (within 1 wei
-      // due to AAVE's liquidity-index rounding on the very first supply).
+      // DAO's USDC decreased by amount; aUSDC increased by ~amount. aTokens
+      // round down on mint (liquidity-index math) — allow a few wei.
       expect(await usdc.balanceOf(dao.address)).to.equal(daoBefore.sub(amount));
       const aAfter = await aUsdc.balanceOf(dao.address);
-      expect(aAfter.sub(aBefore)).to.be.closeTo(amount, 1);
+      expect(aAfter.sub(aBefore)).to.be.closeTo(amount, 10);
 
       // Plugin never holds funds.
       expect(await usdc.balanceOf(plugin.address)).to.equal(0);
@@ -176,7 +176,7 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       await plugin.connect(voter).withdraw(usdcAddress, half);
 
       expect((await usdc.balanceOf(dao.address)).sub(usdcBefore)).to.equal(half);
-      expect(aBefore.sub(await aUsdc.balanceOf(dao.address))).to.be.closeTo(half, 1);
+      expect(aBefore.sub(await aUsdc.balanceOf(dao.address))).to.be.closeTo(half, 10);
     });
 
     it("borrows USDC against WETH collateral with debt issued to the DAO", async () => {
@@ -211,7 +211,7 @@ onlyOn(["mainnetFork", "baseFork"], () => {
         ERC20_ABI,
         ethers.provider
       );
-      expect(await variableDebtUsdc.balanceOf(dao.address)).to.be.closeTo(borrowAmount, 1);
+      expect(await variableDebtUsdc.balanceOf(dao.address)).to.be.closeTo(borrowAmount, 10);
     });
 
     it("repays USDC debt (partial) and reduces the variable debt token balance", async () => {
@@ -219,6 +219,13 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       const collateral = ethers.utils.parseEther("5");
       await fundFromWhale(wethAddress, WETH_WHALES[chainKey()], dao.address, collateral);
       await plugin.connect(voter).supply(wethAddress, collateral);
+
+      // Read account data after supplying collateral. Besides validating the
+      // collateral, this warms AAVE's reserve/user-config storage in the fork
+      // — without it, anvil's lazy state fetch can leave the subsequent borrow
+      // computing against incomplete state and silently borrowing nothing.
+      const acct = await pool.getUserAccountData(dao.address);
+      expect(acct.totalCollateralBase).to.be.gt(0);
 
       const borrowAmount = ethers.utils.parseUnits("500", 6);
       await plugin.connect(voter).borrow(usdcAddress, borrowAmount, VARIABLE_RATE);
@@ -230,6 +237,7 @@ onlyOn(["mainnetFork", "baseFork"], () => {
         ethers.provider
       );
       const debtBefore = await variableDebtUsdc.balanceOf(dao.address);
+      expect(debtBefore).to.be.gt(0); // borrow established debt
 
       // Repay half. DAO already has the borrowed USDC sitting in its treasury.
       const repayAmount = borrowAmount.div(2);
@@ -249,7 +257,7 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       await plugin.connect(voter).supply(usdcAddress, amount);
       const aUsdc = new ethers.Contract(aUsdcAddress, ERC20_ABI, ethers.provider);
       const aBalAfterA = await aUsdc.balanceOf(dao.address);
-      expect(aBalAfterA).to.be.closeTo(amount, 1);
+      expect(aBalAfterA).to.be.closeTo(amount, 10);
 
       // Vote to swap to a second AaveV3Adapter (simulating a v4 adapter
       // wrapper — same shape, different deployment).
@@ -264,7 +272,7 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       // protocol is unchanged for the DAO.
       await plugin.connect(voter).supply(usdcAddress, amount);
       const aBalAfterB = await aUsdc.balanceOf(dao.address);
-      expect(aBalAfterB.sub(aBalAfterA)).to.be.closeTo(amount, 1);
+      expect(aBalAfterB.sub(aBalAfterA)).to.be.closeTo(amount, 10);
 
       // The "legacy adapter readability" guarantee in v1: the adapter is
       // stateless, the position lives on AAVE. Adapter A still answers

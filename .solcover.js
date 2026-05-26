@@ -24,7 +24,6 @@ module.exports = {
     "test/mocks/RevertingRecipient.sol",
     "test/mocks/MockUniversalRouter.sol",
     "test/mocks/MockPermit2.sol",
-    "test/mocks/MockAaveAdapter.sol",
     "test/mocks/MockAavePool.sol",
   ],
   istanbulFolder: "./coverage",

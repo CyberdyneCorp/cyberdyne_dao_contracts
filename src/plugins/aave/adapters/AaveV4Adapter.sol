@@ -22,22 +22,36 @@ contract AaveV4Adapter is IAaveAdapter {
     }
 
     /// @inheritdoc IAaveAdapter
-    function supply(address, uint256, address) external pure override {
+    function encodeSupply(address, uint256, address) external pure override returns (bytes memory) {
         revert NotImplemented();
     }
 
     /// @inheritdoc IAaveAdapter
-    function withdraw(address, uint256, address) external pure override returns (uint256) {
+    function encodeWithdraw(
+        address,
+        uint256,
+        address
+    ) external pure override returns (bytes memory) {
         revert NotImplemented();
     }
 
     /// @inheritdoc IAaveAdapter
-    function borrow(address, uint256, uint256, address) external pure override {
+    function encodeBorrow(
+        address,
+        uint256,
+        uint256,
+        address
+    ) external pure override returns (bytes memory) {
         revert NotImplemented();
     }
 
     /// @inheritdoc IAaveAdapter
-    function repay(address, uint256, uint256, address) external pure override returns (uint256) {
+    function encodeRepay(
+        address,
+        uint256,
+        uint256,
+        address
+    ) external pure override returns (bytes memory) {
         revert NotImplemented();
     }
 }

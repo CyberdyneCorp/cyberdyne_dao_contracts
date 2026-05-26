@@ -63,9 +63,11 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
     // --- Vote-gated lending operations ------------------------------------
 
     /// @inheritdoc IAaveLendingPlugin
-    /// @dev Two-action batch executed by the DAO:
+    /// @dev Two-action batch executed by the DAO — the DAO calls the pool
+    ///      DIRECTLY (msg.sender at the pool = DAO), so the approval is
+    ///      honored and aTokens are minted to the DAO:
     ///         1. `IERC20(asset).approve(pool, amount)` — exact-amount approval.
-    ///         2. `adapter.supply(asset, amount, dao)` — aTokens minted to DAO.
+    ///         2. `pool.supply(asset, amount, dao, refCode)` — adapter-encoded.
     function supply(
         address asset,
         uint256 amount
@@ -82,9 +84,9 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
             data: abi.encodeCall(IERC20.approve, (pool, amount))
         });
         actions[1] = Action({
-            to: address(_adapter),
+            to: pool,
             value: 0,
-            data: abi.encodeCall(IAaveAdapter.supply, (asset, amount, address(dao())))
+            data: _adapter.encodeSupply(asset, amount, address(dao()))
         });
 
         IExecutor(address(dao())).execute(_nextCallId("AAVE_SUPPLY:"), actions, 0);
@@ -104,11 +106,14 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
 
         IAaveAdapter _adapter = adapter;
 
+        // The DAO holds the aTokens, so it must be msg.sender at the pool for
+        // the burn to resolve. No approve needed — withdraw burns the caller's
+        // aTokens and sends the underlying to `to = dao`.
         Action[] memory actions = new Action[](1);
         actions[0] = Action({
-            to: address(_adapter),
+            to: _adapter.poolAddress(),
             value: 0,
-            data: abi.encodeCall(IAaveAdapter.withdraw, (asset, amount, address(dao())))
+            data: _adapter.encodeWithdraw(asset, amount, address(dao()))
         });
 
         uint256 before = IERC20(asset).balanceOf(address(dao()));
@@ -129,14 +134,14 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
 
         IAaveAdapter _adapter = adapter;
 
+        // The DAO borrows against its OWN collateral (msg.sender = DAO =
+        // onBehalfOf), so the debt token is issued to the DAO and no credit
+        // delegation is required.
         Action[] memory actions = new Action[](1);
         actions[0] = Action({
-            to: address(_adapter),
+            to: _adapter.poolAddress(),
             value: 0,
-            data: abi.encodeCall(
-                IAaveAdapter.borrow,
-                (asset, amount, interestRateMode, address(dao()))
-            )
+            data: _adapter.encodeBorrow(asset, amount, interestRateMode, address(dao()))
         });
 
         IExecutor(address(dao())).execute(_nextCallId("AAVE_BORROW:"), actions, 0);
@@ -145,9 +150,10 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
     }
 
     /// @inheritdoc IAaveLendingPlugin
-    /// @dev Three-action batch:
+    /// @dev Three-action batch — DAO calls the pool directly so the approval
+    ///      + debt burn resolve against the DAO:
     ///         1. `IERC20(asset).approve(pool, amount)` — exact-amount approval.
-    ///         2. `adapter.repay(asset, amount, mode, dao)` — debt burned.
+    ///         2. `pool.repay(asset, amount, mode, dao)` — adapter-encoded.
     ///         3. `IERC20(asset).approve(pool, 0)` — reset residual.
     ///      AAVE's `repay` caps at outstanding debt: if `amount` exceeds debt,
     ///      `transferFrom` pulls only `min(amount, debt)`, leaving a residual
@@ -172,12 +178,9 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
             data: abi.encodeCall(IERC20.approve, (pool, amount))
         });
         actions[1] = Action({
-            to: address(_adapter),
+            to: pool,
             value: 0,
-            data: abi.encodeCall(
-                IAaveAdapter.repay,
-                (asset, amount, interestRateMode, address(dao()))
-            )
+            data: _adapter.encodeRepay(asset, amount, interestRateMode, address(dao()))
         });
         actions[2] = Action({to: asset, value: 0, data: abi.encodeCall(IERC20.approve, (pool, 0))});
 

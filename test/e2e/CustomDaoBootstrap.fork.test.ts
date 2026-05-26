@@ -159,22 +159,26 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
       // Helper: callStatic first to predict the repo address, then send the
       // real tx. Avoids brittle log parsing for the return value (the factory
       // emits the address via PluginRepoRegistry, not its own log).
+      // Release + build metadata must be NON-EMPTY — the current mainnet
+      // PluginRepoFactory reverts EmptyReleaseMetadata() on "0x". Our Foundry
+      // deploy scripts already pass bytes("ipfs://"); mirror that here.
+      const META = ethers.utils.toUtf8Bytes("ipfs://");
       async function publish(subdomain: string, setupAddr: string): Promise<string> {
         const maintainer = await deployer.getAddress();
         const repo = await pluginRepoFactory.callStatic.createPluginRepoWithFirstVersion(
           `${subdomain}-${ts}`,
           setupAddr,
           maintainer,
-          "0x",
-          "0x"
+          META,
+          META
         );
         await (
           await pluginRepoFactory.createPluginRepoWithFirstVersion(
             `${subdomain}-${ts}`,
             setupAddr,
             maintainer,
-            "0x",
-            "0x"
+            META,
+            META
           )
         ).wait();
         return repo;
@@ -358,20 +362,21 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
         await pm.grant(payrollAddress, await voter.getAddress(), MANAGE_PAYROLL_PERMISSION_ID)
       ).wait();
 
-      // Add alice as a recipient (ETH-paid for simplicity).
+      // Add a FRESH zero-balance payee (a node-prefunded signer reads its
+      // genesis balance oddly on a fork after receiving ETH — use a clean
+      // address so the +salary assertion is unambiguous).
+      const payee = ethers.Wallet.createRandom().address;
       const payroll = PayrollPlugin__factory.connect(payrollAddress, voter);
       const salary = ethers.utils.parseEther("0.1");
-      await (
-        await payroll.addRecipient(await alice.getAddress(), ethers.constants.AddressZero, salary)
-      ).wait();
+      await (await payroll.addRecipient(payee, ethers.constants.AddressZero, salary)).wait();
 
       // Time-travel to pay day + run crank.
-      const aliceBefore = await ethers.provider.getBalance(await alice.getAddress());
+      const payeeBefore = await ethers.provider.getBalance(payee);
       await time.setNextBlockTimestamp(utcTimestamp(2028, 6, 15, 12));
       await (await payroll.executePayroll()).wait();
 
-      const aliceAfter = await ethers.provider.getBalance(await alice.getAddress());
-      expect(aliceAfter.sub(aliceBefore)).to.equal(salary);
+      const payeeAfter = await ethers.provider.getBalance(payee);
+      expect(payeeAfter.sub(payeeBefore)).to.equal(salary);
       expect(await payroll.lastPayoutPeriod()).to.equal(2028 * 12 + 6);
     });
 
