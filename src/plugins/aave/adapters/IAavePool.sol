@@ -23,11 +23,7 @@ interface IAavePool {
     /// @notice Withdraw `amount` of `asset` to `to`. Pass `type(uint256).max`
     ///         to withdraw the full balance.
     /// @return The actual amount withdrawn.
-    function withdraw(
-        address asset,
-        uint256 amount,
-        address to
-    ) external returns (uint256);
+    function withdraw(address asset, uint256 amount, address to) external returns (uint256);
 
     /// @notice Borrow `amount` of `asset` against the caller's collateral on
     ///         behalf of `onBehalfOf`. The variable/stable debt token is
@@ -58,12 +54,17 @@ interface IAavePool {
     /// @return currentLiquidationThreshold   Weighted LT, in basis points.
     /// @return ltv                           Weighted LTV, in basis points.
     /// @return healthFactor                  In ray (1e18) — < 1e18 = liquidatable.
-    function getUserAccountData(address user) external view returns (
-        uint256 totalCollateralBase,
-        uint256 totalDebtBase,
-        uint256 availableBorrowsBase,
-        uint256 currentLiquidationThreshold,
-        uint256 ltv,
-        uint256 healthFactor
-    );
+    function getUserAccountData(
+        address user
+    )
+        external
+        view
+        returns (
+            uint256 totalCollateralBase,
+            uint256 totalDebtBase,
+            uint256 availableBorrowsBase,
+            uint256 currentLiquidationThreshold,
+            uint256 ltv,
+            uint256 healthFactor
+        );
 }

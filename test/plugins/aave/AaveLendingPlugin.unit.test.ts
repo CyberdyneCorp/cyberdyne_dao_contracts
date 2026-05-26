@@ -121,9 +121,9 @@ describe("AaveLendingPlugin", () => {
     });
 
     it("cannot be initialized twice", async () => {
-      await expect(
-        plugin.initialize(dao.address, adapter.address, [])
-      ).to.be.revertedWith("Initializable: contract is already initialized");
+      await expect(plugin.initialize(dao.address, adapter.address, [])).to.be.revertedWith(
+        "Initializable: contract is already initialized"
+      );
     });
   });
 
@@ -538,11 +538,13 @@ describe("AaveV4Adapter (stub)", () => {
       stub,
       "NotImplemented"
     );
-    await expect(
-      stub.borrow(someAsset, 1, VARIABLE_RATE, someAddr)
-    ).to.be.revertedWithCustomError(stub, "NotImplemented");
-    await expect(
-      stub.repay(someAsset, 1, VARIABLE_RATE, someAddr)
-    ).to.be.revertedWithCustomError(stub, "NotImplemented");
+    await expect(stub.borrow(someAsset, 1, VARIABLE_RATE, someAddr)).to.be.revertedWithCustomError(
+      stub,
+      "NotImplemented"
+    );
+    await expect(stub.repay(someAsset, 1, VARIABLE_RATE, someAddr)).to.be.revertedWithCustomError(
+      stub,
+      "NotImplemented"
+    );
   });
 });

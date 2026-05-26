@@ -19,11 +19,7 @@ const EXECUTE_PERMISSION_ID = ethers.utils.id("EXECUTE_PERMISSION");
 const PAY_DAY = 15;
 const SECONDS_PER_DAY = 86_400;
 
-async function deployProxied(
-  signer: Signer,
-  dao: string,
-  payDay: number
-): Promise<PayrollPlugin> {
+async function deployProxied(signer: Signer, dao: string, payDay: number): Promise<PayrollPlugin> {
   const impl = await new PayrollPlugin__factory(signer).deploy();
   await impl.deployed();
   const initData = impl.interface.encodeFunctionData("initialize", [dao, payDay]);
@@ -34,10 +30,7 @@ async function deployProxied(
 }
 
 async function fundDaoEth(dao: MinimalDAO, eth: BigNumber): Promise<void> {
-  await ethers.provider.send("hardhat_setBalance", [
-    dao.address,
-    ethers.utils.hexValue(eth),
-  ]);
+  await ethers.provider.send("hardhat_setBalance", [dao.address, ethers.utils.hexValue(eth)]);
 }
 
 // Computes a unix timestamp landing on a specific day of a specific month at 12:00 UTC.
@@ -179,10 +172,12 @@ describe("PayrollPlugin", () => {
     });
 
     it("rejects zero payee or zero amount", async () => {
-      await expect(plugin.connect(voter).addRecipient(ethers.constants.AddressZero, token.address, 100))
-        .to.be.revertedWithCustomError(plugin, "ZeroAddress");
-      await expect(plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 0))
-        .to.be.revertedWithCustomError(plugin, "ZeroAmount");
+      await expect(
+        plugin.connect(voter).addRecipient(ethers.constants.AddressZero, token.address, 100)
+      ).to.be.revertedWithCustomError(plugin, "ZeroAddress");
+      await expect(
+        plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 0)
+      ).to.be.revertedWithCustomError(plugin, "ZeroAmount");
     });
 
     it("reverts when MAX_RECIPIENTS reached", async () => {
@@ -190,11 +185,13 @@ describe("PayrollPlugin", () => {
       // This is slow; we cap loops elsewhere.
       const cap = (await plugin.MAX_RECIPIENTS()).toNumber();
       for (let i = 0; i < cap; i++) {
-        await plugin.connect(voter).addRecipient(
-          ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`),
-          token.address,
-          100
-        );
+        await plugin
+          .connect(voter)
+          .addRecipient(
+            ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`),
+            token.address,
+            100
+          );
       }
       const oneMore = ethers.utils.getAddress(`0x${(cap + 1).toString(16).padStart(40, "0")}`);
       await expect(plugin.connect(voter).addRecipient(oneMore, token.address, 100))
@@ -227,18 +224,21 @@ describe("PayrollPlugin", () => {
     });
 
     it("reverts on unknown payee or already-removed", async () => {
-      await expect(plugin.connect(voter).removeRecipient(await alice.getAddress()))
-        .to.be.revertedWithCustomError(plugin, "RecipientNotFound");
+      await expect(
+        plugin.connect(voter).removeRecipient(await alice.getAddress())
+      ).to.be.revertedWithCustomError(plugin, "RecipientNotFound");
 
       await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 1);
       await plugin.connect(voter).removeRecipient(await alice.getAddress());
-      await expect(plugin.connect(voter).removeRecipient(await alice.getAddress()))
-        .to.be.revertedWithCustomError(plugin, "RecipientNotFound");
+      await expect(
+        plugin.connect(voter).removeRecipient(await alice.getAddress())
+      ).to.be.revertedWithCustomError(plugin, "RecipientNotFound");
     });
 
     it("reverts when caller lacks MANAGE_PAYROLL", async () => {
       await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 1);
-      await expect(plugin.connect(stranger).removeRecipient(await alice.getAddress())).to.be.reverted;
+      await expect(plugin.connect(stranger).removeRecipient(await alice.getAddress())).to.be
+        .reverted;
     });
   });
 
@@ -255,18 +255,22 @@ describe("PayrollPlugin", () => {
     it("rejects zero amount", async () => {
       const addr = await alice.getAddress();
       await plugin.connect(voter).addRecipient(addr, token.address, 1000);
-      await expect(plugin.connect(voter).setAmount(addr, 0))
-        .to.be.revertedWithCustomError(plugin, "ZeroAmount");
+      await expect(plugin.connect(voter).setAmount(addr, 0)).to.be.revertedWithCustomError(
+        plugin,
+        "ZeroAmount"
+      );
     });
 
     it("rejects unknown or soft-deleted payee", async () => {
-      await expect(plugin.connect(voter).setAmount(await alice.getAddress(), 100))
-        .to.be.revertedWithCustomError(plugin, "RecipientNotFound");
+      await expect(
+        plugin.connect(voter).setAmount(await alice.getAddress(), 100)
+      ).to.be.revertedWithCustomError(plugin, "RecipientNotFound");
 
       await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 1);
       await plugin.connect(voter).removeRecipient(await alice.getAddress());
-      await expect(plugin.connect(voter).setAmount(await alice.getAddress(), 50))
-        .to.be.revertedWithCustomError(plugin, "RecipientNotFound");
+      await expect(
+        plugin.connect(voter).setAmount(await alice.getAddress(), 50)
+      ).to.be.revertedWithCustomError(plugin, "RecipientNotFound");
     });
   });
 
@@ -308,8 +312,10 @@ describe("PayrollPlugin", () => {
 
       // Same month, day after pay day.
       await time.setNextBlockTimestamp(payDayTs(2027, 1, 20));
-      await expect(plugin.executePayroll())
-        .to.be.revertedWithCustomError(plugin, "AlreadyPaidThisPeriod");
+      await expect(plugin.executePayroll()).to.be.revertedWithCustomError(
+        plugin,
+        "AlreadyPaidThisPeriod"
+      );
     });
 
     it("reverts NoActiveRecipients when all are soft-deleted", async () => {
@@ -317,15 +323,19 @@ describe("PayrollPlugin", () => {
       await plugin.connect(voter).removeRecipient(await alice.getAddress());
 
       await time.setNextBlockTimestamp(payDayTs(2027, 1));
-      await expect(plugin.executePayroll())
-        .to.be.revertedWithCustomError(plugin, "NoActiveRecipients");
+      await expect(plugin.executePayroll()).to.be.revertedWithCustomError(
+        plugin,
+        "NoActiveRecipients"
+      );
     });
   });
 
   describe("executePayroll: happy paths", () => {
     it("pays a single ERC20 recipient and locks the period", async () => {
       const aAddr = await alice.getAddress();
-      await plugin.connect(voter).addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6));
+      await plugin
+        .connect(voter)
+        .addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6));
       await token.mint(dao.address, ethers.utils.parseUnits("10000", 6));
 
       await time.setNextBlockTimestamp(payDayTs(2027, 3));
@@ -404,7 +414,11 @@ describe("PayrollPlugin", () => {
       // Recipient 1 = ETH to alice (this one succeeds).
       await plugin
         .connect(voter)
-        .addRecipient(reverting.address, ethers.constants.AddressZero, ethers.utils.parseEther("1"));
+        .addRecipient(
+          reverting.address,
+          ethers.constants.AddressZero,
+          ethers.utils.parseEther("1")
+        );
       await plugin
         .connect(voter)
         .addRecipient(goodAddr, ethers.constants.AddressZero, ethers.utils.parseEther("2"));

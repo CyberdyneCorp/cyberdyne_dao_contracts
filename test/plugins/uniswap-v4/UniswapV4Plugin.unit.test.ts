@@ -310,18 +310,28 @@ describe("UniswapV4Plugin", () => {
       await expect(
         plugin
           .connect(stranger)
-          .swap(DUMMY_COMMANDS, DUMMY_INPUTS, FUTURE_DEADLINE, tokenIn.address, 100, tokenOut.address, 0)
+          .swap(
+            DUMMY_COMMANDS,
+            DUMMY_INPUTS,
+            FUTURE_DEADLINE,
+            tokenIn.address,
+            100,
+            tokenOut.address,
+            0
+          )
       ).to.be.reverted;
     });
   });
 
   describe("swap: happy path", () => {
-    async function happySwap(opts: {
-      amountIn?: bigint | ReturnType<typeof ethers.utils.parseUnits>;
-      delivered?: bigint | ReturnType<typeof ethers.utils.parseUnits>;
-      minOut?: bigint | ReturnType<typeof ethers.utils.parseUnits>;
-      pullTokenIn?: boolean;
-    } = {}): Promise<{
+    async function happySwap(
+      opts: {
+        amountIn?: bigint | ReturnType<typeof ethers.utils.parseUnits>;
+        delivered?: bigint | ReturnType<typeof ethers.utils.parseUnits>;
+        minOut?: bigint | ReturnType<typeof ethers.utils.parseUnits>;
+        pullTokenIn?: boolean;
+      } = {}
+    ): Promise<{
       tx: ContractTransaction;
       amountIn: ReturnType<typeof ethers.utils.parseUnits>;
       delivered: ReturnType<typeof ethers.utils.parseUnits>;
@@ -398,10 +408,7 @@ describe("UniswapV4Plugin", () => {
 
       // Plugin recorded its approve via the mock Permit2 — check it was
       // (tokenIn, router, amountIn, deadline).
-      const {amount, expiration, set} = await permit2.getApproval(
-        tokenIn.address,
-        router.address
-      );
+      const {amount, expiration, set} = await permit2.getApproval(tokenIn.address, router.address);
       expect(set).to.equal(true);
       expect(amount).to.equal(amountIn);
       expect(expiration).to.equal(FUTURE_DEADLINE);
@@ -485,15 +492,21 @@ describe("UniswapV4Plugin", () => {
           try {
             const parsed = execIface.parseLog(log);
             if (parsed.name === "Executed") return parsed.args.callId as string;
-          } catch {/* ignore */}
+          } catch {
+            /* ignore */
+          }
         }
         throw new Error("Executed not found");
       }
       const id1 = callIdFrom(r1);
       const id2 = callIdFrom(r2);
 
-      expect(id1).to.equal(ethers.utils.solidityKeccak256(["string", "uint256"], ["UNI_V4_SWAP:", 0]));
-      expect(id2).to.equal(ethers.utils.solidityKeccak256(["string", "uint256"], ["UNI_V4_SWAP:", 1]));
+      expect(id1).to.equal(
+        ethers.utils.solidityKeccak256(["string", "uint256"], ["UNI_V4_SWAP:", 0])
+      );
+      expect(id2).to.equal(
+        ethers.utils.solidityKeccak256(["string", "uint256"], ["UNI_V4_SWAP:", 1])
+      );
       expect(id1).to.not.equal(id2);
     });
   });

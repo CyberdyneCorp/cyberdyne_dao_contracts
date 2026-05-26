@@ -2,9 +2,15 @@ import {ethers, network} from "hardhat";
 import type {BigNumberish, Signer} from "ethers";
 
 /** Impersonate an account, top up its ETH balance, and return a Signer. */
-export async function impersonate(addr: string, ethBalance: BigNumberish = ethers.utils.parseEther("100")): Promise<Signer> {
+export async function impersonate(
+  addr: string,
+  ethBalance: BigNumberish = ethers.utils.parseEther("100")
+): Promise<Signer> {
   await network.provider.send("hardhat_impersonateAccount", [addr]);
-  await network.provider.send("hardhat_setBalance", [addr, ethers.utils.hexValue(ethers.BigNumber.from(ethBalance))]);
+  await network.provider.send("hardhat_setBalance", [
+    addr,
+    ethers.utils.hexValue(ethers.BigNumber.from(ethBalance)),
+  ]);
   return ethers.getSigner(addr);
 }
 
@@ -33,9 +39,7 @@ export async function fundFromWhale(
   const erc20 = new ethers.Contract(token, ERC20_ABI, whaleSigner);
   const bal = await erc20.balanceOf(whale);
   if (bal.lt(amount)) {
-    throw new Error(
-      `Whale ${whale} has ${bal.toString()} of ${token}, need ${amount.toString()}`
-    );
+    throw new Error(`Whale ${whale} has ${bal.toString()} of ${token}, need ${amount.toString()}`);
   }
   const tx = await erc20.transfer(recipient, amount);
   await tx.wait();

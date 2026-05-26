@@ -20,7 +20,11 @@ contract MinimalDAO is IDAO, IExecutor {
         emit NativeTokenDeposited(msg.sender, msg.value);
     }
 
-    function _key(address where, address who, bytes32 permissionId) internal pure returns (bytes32) {
+    function _key(
+        address where,
+        address who,
+        bytes32 permissionId
+    ) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked(where, who, permissionId));
     }
 
@@ -76,15 +80,21 @@ contract MinimalDAO is IDAO, IExecutor {
 
     // --- Unused IDAO surface (no-op stubs so the interface stays satisfied) ---
 
-    function setMetadata(bytes calldata _m) external override {(_m);}
+    function setMetadata(bytes calldata _m) external override {
+        (_m);
+    }
 
     function deposit(address _t, uint256 _a, string calldata _r) external payable override {
         (_t, _a, _r);
     }
 
-    function setTrustedForwarder(address _f) external override {(_f);}
+    function setTrustedForwarder(address _f) external override {
+        (_f);
+    }
 
-    function getTrustedForwarder() external pure override returns (address) {return address(0);}
+    function getTrustedForwarder() external pure override returns (address) {
+        return address(0);
+    }
 
     function isValidSignature(bytes32 _h, bytes memory _s) external pure override returns (bytes4) {
         (_h, _s);
@@ -95,5 +105,7 @@ contract MinimalDAO is IDAO, IExecutor {
         (_i, _c, _m);
     }
 
-    function setSignatureValidator(address _v) external override {(_v);}
+    function setSignatureValidator(address _v) external override {
+        (_v);
+    }
 }

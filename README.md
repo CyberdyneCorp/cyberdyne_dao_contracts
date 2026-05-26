@@ -63,12 +63,12 @@ graph TB
     class UR,AP,REC external
 ```
 
-| Color | Meaning |
-|---|---|
-| Green | Halborn-audited Aragon OSx v1.4.0 — we don't touch it |
-| Blue | Existing audited Aragon plugin — we install but don't modify |
-| Yellow | New code in this repo — we own and audit it |
-| Red | Third-party protocols we integrate with via calldata |
+| Color  | Meaning                                                      |
+| ------ | ------------------------------------------------------------ |
+| Green  | Halborn-audited Aragon OSx v1.4.0 — we don't touch it        |
+| Blue   | Existing audited Aragon plugin — we install but don't modify |
+| Yellow | New code in this repo — we own and audit it                  |
+| Red    | Third-party protocols we integrate with via calldata         |
 
 ---
 
@@ -76,17 +76,17 @@ graph TB
 
 Building a DAO from scratch means rebuilding (and re-auditing) treasury custody, permission management, proposal lifecycle, plugin distribution, and upgrade paths. Aragon OSx ships all of that, fully audited, and lets us add only what's unique to our use case.
 
-| Concern | Provided by OSx | We build |
-|---|---|---|
-| Treasury custody (ETH + ERC20 + NFTs) | `DAO.sol` | — |
-| Permission system (grant / revoke / conditions) | `PermissionManager.sol` | — |
-| Proposal lifecycle + voting | `aragon/token-voting-plugin` | — |
-| Plugin install / update / uninstall | `PluginSetupProcessor` + `PluginRepo` | — |
-| Versioned plugin distribution | `PluginRepoFactory` | — |
-| Action execution model | `Action{to, value, data}` + `execute(Action[])` | — |
-| Uniswap V4 swap gating | — | `UniswapV4Plugin` |
-| AAVE lending gating | — | `AaveLendingPlugin` + version adapter |
-| Monthly payroll automation | — | `PayrollPlugin` |
+| Concern                                         | Provided by OSx                                 | We build                              |
+| ----------------------------------------------- | ----------------------------------------------- | ------------------------------------- |
+| Treasury custody (ETH + ERC20 + NFTs)           | `DAO.sol`                                       | —                                     |
+| Permission system (grant / revoke / conditions) | `PermissionManager.sol`                         | —                                     |
+| Proposal lifecycle + voting                     | `aragon/token-voting-plugin`                    | —                                     |
+| Plugin install / update / uninstall             | `PluginSetupProcessor` + `PluginRepo`           | —                                     |
+| Versioned plugin distribution                   | `PluginRepoFactory`                             | —                                     |
+| Action execution model                          | `Action{to, value, data}` + `execute(Action[])` | —                                     |
+| Uniswap V4 swap gating                          | —                                               | `UniswapV4Plugin`                     |
+| AAVE lending gating                             | —                                               | `AaveLendingPlugin` + version adapter |
+| Monthly payroll automation                      | —                                               | `PayrollPlugin`                       |
 
 **Version pinning:** OSx v1.4.0 audited core (`ProtocolVersion == [1, 4, 0]`). Working tree may be tag v1.5.0 because its core is byte-identical to 1.4.0. No forks, no patches, no custom flavors. See [TRD §3](docs/TRD.md#3-aragon-osx-version-policy).
 
@@ -210,15 +210,15 @@ Every line of new code in this repo lives in B (yellow). The green side is consu
 
 ## Tooling stack
 
-| Layer | Tool | Why |
-|---|---|---|
-| Solidity build | **Foundry** (`forge`) | Matches OSx upstream (`solc 0.8.17`, `optimizer-runs = 2000`). Fast compile + storage layout. |
-| Tests | **Hardhat + TypeScript + ethers v5** | Native fork support (`hardhat_reset`, `hardhat_impersonateAccount`), time travel, mocha/chai matchers from `chai-setup.ts`. |
-| Deployment scripts | **Foundry** (`forge script` via `just-foundry`) | Aligned with OSx `DEPLOYMENT.md` convention. |
-| Fork engine | **Hardhat Network forking** | One config flips between Ethereum / Base / other supported networks. |
-| Type bindings | `@typechain/hardhat` | Generated for both our plugins and Aragon / Uniswap / AAVE ABIs. |
-| Coverage | `solidity-coverage` | CI gate ≥ 90 % on new code. |
-| Lint / format | `solhint` + `prettier-plugin-solidity` | Same configs as OSx upstream. |
+| Layer              | Tool                                            | Why                                                                                                                         |
+| ------------------ | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Solidity build     | **Foundry** (`forge`)                           | Matches OSx upstream (`solc 0.8.17`, `optimizer-runs = 2000`). Fast compile + storage layout.                               |
+| Tests              | **Hardhat + TypeScript + ethers v5**            | Native fork support (`hardhat_reset`, `hardhat_impersonateAccount`), time travel, mocha/chai matchers from `chai-setup.ts`. |
+| Deployment scripts | **Foundry** (`forge script` via `just-foundry`) | Aligned with OSx `DEPLOYMENT.md` convention.                                                                                |
+| Fork engine        | **Hardhat Network forking**                     | One config flips between Ethereum / Base / other supported networks.                                                        |
+| Type bindings      | `@typechain/hardhat`                            | Generated for both our plugins and Aragon / Uniswap / AAVE ABIs.                                                            |
+| Coverage           | `solidity-coverage`                             | CI gate ≥ 90 % on new code.                                                                                                 |
+| Lint / format      | `solhint` + `prettier-plugin-solidity`          | Same configs as OSx upstream.                                                                                               |
 
 ### Fork networks
 
@@ -396,19 +396,20 @@ npm run dev
 
 Two UIs, two scopes:
 
-| | Production UI | Toy frontend (in this repo) |
-|---|---|---|
-| Where | Sibling repository | `frontend/` directory here |
-| Stack | Project-chosen (e.g. React + wagmi + viem) | Svelte + ethers.js v5 + WalletConnect v2 |
-| Purpose | End-user DAO operation | Dev / audit / testnet inspection + manual testing |
-| Polish | Full design system | None — default Svelte components only |
-| Spec | TRD §3a | TRD §3b |
+|         | Production UI                              | Toy frontend (in this repo)                       |
+| ------- | ------------------------------------------ | ------------------------------------------------- |
+| Where   | Sibling repository                         | `frontend/` directory here                        |
+| Stack   | Project-chosen (e.g. React + wagmi + viem) | Svelte + ethers.js v5 + WalletConnect v2          |
+| Purpose | End-user DAO operation                     | Dev / audit / testnet inspection + manual testing |
+| Polish  | Full design system                         | None — default Svelte components only             |
+| Spec    | TRD §3a                                    | TRD §3b                                           |
 
 The toy frontend exists so developers, auditors, and testnet bug-bounty participants can interact with every plugin action end-to-end without depending on the production UI being ready. It connects to `localFork`, `mainnetFork`, `baseFork`, `sepoliaFork`, `baseSepoliaFork`, and live networks via a chain switcher driven by `addresses.json`. See [TRD §3b](docs/TRD.md#3b-toy-frontend-in-repo-devtest-tool) for full scope; built in roadmap [P6](docs/ROADMAP.md#phase-6--toy-frontend-in-repo-devtest-tool).
 
 The Aragon App is explicitly **not** a deployment target for either UI.
 
 The contracts in this repo are responsible for:
+
 - Emitting granular events (`SwapExecuted`, `Supplied`, `RecipientAdded`, `PayrollExecuted`, …) for both UIs + subgraph.
 - Stable external signatures for clean TypeChain bindings.
 - Batch-friendly view functions (one RPC round-trip per UI screen where reasonable).
@@ -418,23 +419,23 @@ The contracts in this repo are responsible for:
 
 ## Documentation index
 
-| Doc | Purpose |
-|---|---|
-| [README.md](README.md) | This file — overview, architecture, getting started TL;DR. |
-| [docs/LOCAL_STACK.md](docs/LOCAL_STACK.md) | Self-contained local dev runbook: clone → fork → deploy → frontend → MetaMask → executed payroll. |
-| [docs/FRONTEND_INTEGRATION.md](docs/FRONTEND_INTEGRATION.md) | How any custom UI (production app, third-party) consumes the contracts — npm pkg, subgraph, IPFS, read/write patterns. |
-| [docs/EVENTS.md](docs/EVENTS.md) | Every event → UI surface → subgraph entity mapping. |
-| [docs/PROPOSAL_METADATA.md](docs/PROPOSAL_METADATA.md) | IPFS proposal-metadata schema + pinning recipe. |
-| [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Asset enumeration, trust boundaries, 20-vector mitigation table. |
-| [docs/INTERNAL_REVIEW_CHECKLIST.md](docs/INTERNAL_REVIEW_CHECKLIST.md) | Per-plugin signoff template (≥2 contributors per plugin before external audit). |
-| [docs/plugins/PAYROLL.md](docs/plugins/PAYROLL.md) | PayrollPlugin spec + slither waivers + storage layout. |
-| [docs/plugins/UNISWAP_V4.md](docs/plugins/UNISWAP_V4.md) | UniswapV4Plugin spec + slither waivers + storage layout. |
-| [docs/plugins/AAVE.md](docs/plugins/AAVE.md) | AaveLendingPlugin spec + slither waivers + storage layout. |
-| [docs/storage-layouts/](docs/storage-layouts/) | `forge inspect` storage-layout snapshots per release for upgrade-safety diffing. |
-| [docs/TRD.md](docs/TRD.md) | Full Technical Requirements Document. Source of truth for every design decision, permission grant, address, deployment phase, and open question. |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | End-to-end project roadmap: 13 phases with deliverables, exit criteria, and the project-wide quality bars. |
-| [subgraph/README.md](subgraph/README.md) | Per-DAO subgraph deploy recipe (Goldsky / hosted Graph / Studio). |
-| [frontend/README.md](frontend/README.md) | Toy frontend quickstart + the in-repo views/actions inventory. |
+| Doc                                                                    | Purpose                                                                                                                                          |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [README.md](README.md)                                                 | This file — overview, architecture, getting started TL;DR.                                                                                       |
+| [docs/LOCAL_STACK.md](docs/LOCAL_STACK.md)                             | Self-contained local dev runbook: clone → fork → deploy → frontend → MetaMask → executed payroll.                                                |
+| [docs/FRONTEND_INTEGRATION.md](docs/FRONTEND_INTEGRATION.md)           | How any custom UI (production app, third-party) consumes the contracts — npm pkg, subgraph, IPFS, read/write patterns.                           |
+| [docs/EVENTS.md](docs/EVENTS.md)                                       | Every event → UI surface → subgraph entity mapping.                                                                                              |
+| [docs/PROPOSAL_METADATA.md](docs/PROPOSAL_METADATA.md)                 | IPFS proposal-metadata schema + pinning recipe.                                                                                                  |
+| [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)                           | Asset enumeration, trust boundaries, 20-vector mitigation table.                                                                                 |
+| [docs/INTERNAL_REVIEW_CHECKLIST.md](docs/INTERNAL_REVIEW_CHECKLIST.md) | Per-plugin signoff template (≥2 contributors per plugin before external audit).                                                                  |
+| [docs/plugins/PAYROLL.md](docs/plugins/PAYROLL.md)                     | PayrollPlugin spec + slither waivers + storage layout.                                                                                           |
+| [docs/plugins/UNISWAP_V4.md](docs/plugins/UNISWAP_V4.md)               | UniswapV4Plugin spec + slither waivers + storage layout.                                                                                         |
+| [docs/plugins/AAVE.md](docs/plugins/AAVE.md)                           | AaveLendingPlugin spec + slither waivers + storage layout.                                                                                       |
+| [docs/storage-layouts/](docs/storage-layouts/)                         | `forge inspect` storage-layout snapshots per release for upgrade-safety diffing.                                                                 |
+| [docs/TRD.md](docs/TRD.md)                                             | Full Technical Requirements Document. Source of truth for every design decision, permission grant, address, deployment phase, and open question. |
+| [docs/ROADMAP.md](docs/ROADMAP.md)                                     | End-to-end project roadmap: 13 phases with deliverables, exit criteria, and the project-wide quality bars.                                       |
+| [subgraph/README.md](subgraph/README.md)                               | Per-DAO subgraph deploy recipe (Goldsky / hosted Graph / Studio).                                                                                |
+| [frontend/README.md](frontend/README.md)                               | Toy frontend quickstart + the in-repo views/actions inventory.                                                                                   |
 
 ---
 

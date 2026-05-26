@@ -23,7 +23,8 @@ import {IAaveAdapter} from "./adapters/IAaveAdapter.sol";
 contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
     bytes32 public constant TRIGGER_LENDING_PERMISSION_ID = keccak256("TRIGGER_LENDING_PERMISSION");
     bytes32 public constant UPDATE_ADAPTER_PERMISSION_ID = keccak256("UPDATE_ADAPTER_PERMISSION");
-    bytes32 public constant MANAGE_ALLOWLIST_PERMISSION_ID = keccak256("MANAGE_ALLOWLIST_PERMISSION");
+    bytes32 public constant MANAGE_ALLOWLIST_PERMISSION_ID =
+        keccak256("MANAGE_ALLOWLIST_PERMISSION");
 
     IAaveAdapter public override adapter;
     mapping(address => bool) public override allowedAsset;
@@ -107,10 +108,7 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
         actions[0] = Action({
             to: address(_adapter),
             value: 0,
-            data: abi.encodeCall(
-                IAaveAdapter.withdraw,
-                (asset, amount, address(dao()))
-            )
+            data: abi.encodeCall(IAaveAdapter.withdraw, (asset, amount, address(dao())))
         });
 
         uint256 before = IERC20(asset).balanceOf(address(dao()));
@@ -181,11 +179,7 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
                 (asset, amount, interestRateMode, address(dao()))
             )
         });
-        actions[2] = Action({
-            to: asset,
-            value: 0,
-            data: abi.encodeCall(IERC20.approve, (pool, 0))
-        });
+        actions[2] = Action({to: asset, value: 0, data: abi.encodeCall(IERC20.approve, (pool, 0))});
 
         uint256 before = IERC20(asset).balanceOf(address(dao()));
         IExecutor(address(dao())).execute(_nextCallId("AAVE_REPAY:"), actions, 0);
@@ -202,7 +196,9 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
     ///      readable on AAVE), and all NEW operations route through the new
     ///      adapter. Withdrawing legacy positions from the old AAVE version
     ///      is a separate operation tracked in `docs/plugins/AAVE.md §6`.
-    function setAdapter(IAaveAdapter newAdapter) external override auth(UPDATE_ADAPTER_PERMISSION_ID) {
+    function setAdapter(
+        IAaveAdapter newAdapter
+    ) external override auth(UPDATE_ADAPTER_PERMISSION_ID) {
         if (address(newAdapter) == address(0)) revert ZeroAddress();
         IAaveAdapter previous = adapter;
         adapter = newAdapter;
@@ -213,7 +209,10 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
     /// @dev First `allowed=true` flips `allowlistEnforced` permanently.
     ///      Removing an asset (`allowed=false`) does NOT disable enforcement
     ///      — once on, the allowlist stays on for the life of the plugin.
-    function setAllowedAsset(address asset, bool allowed) external override auth(MANAGE_ALLOWLIST_PERMISSION_ID) {
+    function setAllowedAsset(
+        address asset,
+        bool allowed
+    ) external override auth(MANAGE_ALLOWLIST_PERMISSION_ID) {
         allowedAsset[asset] = allowed;
         if (allowed && !allowlistEnforced) {
             allowlistEnforced = true;

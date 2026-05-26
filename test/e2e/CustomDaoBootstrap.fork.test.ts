@@ -106,7 +106,9 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
       daoFactoryAddress = osxAddress("daoFactory", {hardhatNetwork: network.name});
 
       // Phase 1: publish 3 PluginRepos.
-      const pluginRepoFactoryAddress = osxAddress("pluginRepoFactory", {hardhatNetwork: network.name});
+      const pluginRepoFactoryAddress = osxAddress("pluginRepoFactory", {
+        hardhatNetwork: network.name,
+      });
       const pluginRepoFactory = new ethers.Contract(
         pluginRepoFactoryAddress,
         PLUGIN_REPO_FACTORY_ABI,
@@ -204,15 +206,17 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
       uniswapAddress = result.installedPlugins[1].plugin;
       aaveAddress = result.installedPlugins[2].plugin;
 
-      await (await daoFactory.createDao(
-        {
-          trustedForwarder: ethers.constants.AddressZero,
-          daoURI: "",
-          subdomain: `cyberdyne-e2e-${ts}`,
-          metadata: "0x",
-        },
-        pluginSettings
-      )).wait();
+      await (
+        await daoFactory.createDao(
+          {
+            trustedForwarder: ethers.constants.AddressZero,
+            daoURI: "",
+            subdomain: `cyberdyne-e2e-${ts}`,
+            metadata: "0x",
+          },
+          pluginSettings
+        )
+      ).wait();
 
       snapshot = await takeSnapshot();
     });
@@ -238,23 +242,45 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
 
       // DAO → plugin: EXECUTE for each.
       for (const plugin of [payrollAddress, uniswapAddress, aaveAddress]) {
-        expect(await pm.hasPermission(daoAddress, plugin, EXECUTE_PERMISSION_ID, "0x"))
-          .to.equal(true, `EXECUTE not granted to ${plugin}`);
+        expect(await pm.hasPermission(daoAddress, plugin, EXECUTE_PERMISSION_ID, "0x")).to.equal(
+          true,
+          `EXECUTE not granted to ${plugin}`
+        );
       }
 
       // plugin → DAO: domain permissions.
-      expect(await pm.hasPermission(payrollAddress, daoAddress, MANAGE_PAYROLL_PERMISSION_ID, "0x")).to.equal(true);
-      expect(await pm.hasPermission(payrollAddress, daoAddress, UPGRADE_PLUGIN_PERMISSION_ID, "0x")).to.equal(true);
+      expect(
+        await pm.hasPermission(payrollAddress, daoAddress, MANAGE_PAYROLL_PERMISSION_ID, "0x")
+      ).to.equal(true);
+      expect(
+        await pm.hasPermission(payrollAddress, daoAddress, UPGRADE_PLUGIN_PERMISSION_ID, "0x")
+      ).to.equal(true);
 
-      expect(await pm.hasPermission(uniswapAddress, daoAddress, TRIGGER_SWAP_PERMISSION_ID, "0x")).to.equal(true);
-      expect(await pm.hasPermission(uniswapAddress, daoAddress, UPDATE_ROUTER_PERMISSION_ID, "0x")).to.equal(true);
-      expect(await pm.hasPermission(uniswapAddress, daoAddress, MANAGE_ALLOWLIST_PERMISSION_ID, "0x")).to.equal(true);
-      expect(await pm.hasPermission(uniswapAddress, daoAddress, UPGRADE_PLUGIN_PERMISSION_ID, "0x")).to.equal(true);
+      expect(
+        await pm.hasPermission(uniswapAddress, daoAddress, TRIGGER_SWAP_PERMISSION_ID, "0x")
+      ).to.equal(true);
+      expect(
+        await pm.hasPermission(uniswapAddress, daoAddress, UPDATE_ROUTER_PERMISSION_ID, "0x")
+      ).to.equal(true);
+      expect(
+        await pm.hasPermission(uniswapAddress, daoAddress, MANAGE_ALLOWLIST_PERMISSION_ID, "0x")
+      ).to.equal(true);
+      expect(
+        await pm.hasPermission(uniswapAddress, daoAddress, UPGRADE_PLUGIN_PERMISSION_ID, "0x")
+      ).to.equal(true);
 
-      expect(await pm.hasPermission(aaveAddress, daoAddress, TRIGGER_LENDING_PERMISSION_ID, "0x")).to.equal(true);
-      expect(await pm.hasPermission(aaveAddress, daoAddress, UPDATE_ADAPTER_PERMISSION_ID, "0x")).to.equal(true);
-      expect(await pm.hasPermission(aaveAddress, daoAddress, MANAGE_ALLOWLIST_PERMISSION_ID, "0x")).to.equal(true);
-      expect(await pm.hasPermission(aaveAddress, daoAddress, UPGRADE_PLUGIN_PERMISSION_ID, "0x")).to.equal(true);
+      expect(
+        await pm.hasPermission(aaveAddress, daoAddress, TRIGGER_LENDING_PERMISSION_ID, "0x")
+      ).to.equal(true);
+      expect(
+        await pm.hasPermission(aaveAddress, daoAddress, UPDATE_ADAPTER_PERMISSION_ID, "0x")
+      ).to.equal(true);
+      expect(
+        await pm.hasPermission(aaveAddress, daoAddress, MANAGE_ALLOWLIST_PERMISSION_ID, "0x")
+      ).to.equal(true);
+      expect(
+        await pm.hasPermission(aaveAddress, daoAddress, UPGRADE_PLUGIN_PERMISSION_ID, "0x")
+      ).to.equal(true);
     });
 
     it("runs one payroll month end-to-end against the bootstrapped DAO", async () => {
@@ -268,12 +294,16 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
       ]);
       const daoSigner = await ethers.getSigner(daoAddress);
       const pm = new ethers.Contract(daoAddress, PERMISSION_MANAGER_ABI, daoSigner);
-      await (await pm.grant(payrollAddress, await voter.getAddress(), MANAGE_PAYROLL_PERMISSION_ID)).wait();
+      await (
+        await pm.grant(payrollAddress, await voter.getAddress(), MANAGE_PAYROLL_PERMISSION_ID)
+      ).wait();
 
       // Add alice as a recipient (ETH-paid for simplicity).
       const payroll = PayrollPlugin__factory.connect(payrollAddress, voter);
       const salary = ethers.utils.parseEther("0.1");
-      await (await payroll.addRecipient(await alice.getAddress(), ethers.constants.AddressZero, salary)).wait();
+      await (
+        await payroll.addRecipient(await alice.getAddress(), ethers.constants.AddressZero, salary)
+      ).wait();
 
       // Time-travel to pay day + run crank.
       const aliceBefore = await ethers.provider.getBalance(await alice.getAddress());

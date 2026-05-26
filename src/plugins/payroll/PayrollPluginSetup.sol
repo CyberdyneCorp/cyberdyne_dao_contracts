@@ -35,8 +35,8 @@ contract PayrollPluginSetup is PluginUpgradeableSetup {
 
         plugin = implementation().deployUUPSProxy(initCalldata);
 
-        PermissionLib.MultiTargetPermission[] memory permissions =
-            new PermissionLib.MultiTargetPermission[](3);
+        PermissionLib.MultiTargetPermission[]
+            memory permissions = new PermissionLib.MultiTargetPermission[](3);
 
         // 1) DAO → plugin: EXECUTE_PERMISSION (lets the crank issue transfers via DAO.execute).
         permissions[0] = PermissionLib.MultiTargetPermission({

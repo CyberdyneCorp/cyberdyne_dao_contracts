@@ -24,7 +24,8 @@ import {IPermit2} from "./IPermit2.sol";
 contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
     bytes32 public constant TRIGGER_SWAP_PERMISSION_ID = keccak256("TRIGGER_SWAP_PERMISSION");
     bytes32 public constant UPDATE_ROUTER_PERMISSION_ID = keccak256("UPDATE_ROUTER_PERMISSION");
-    bytes32 public constant MANAGE_ALLOWLIST_PERMISSION_ID = keccak256("MANAGE_ALLOWLIST_PERMISSION");
+    bytes32 public constant MANAGE_ALLOWLIST_PERMISSION_ID =
+        keccak256("MANAGE_ALLOWLIST_PERMISSION");
 
     address public override universalRouter;
     address public override permit2;
@@ -165,14 +166,19 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
     }
 
     /// @inheritdoc IUniswapV4Plugin
-    function setUniversalRouter(address newRouter) external override auth(UPDATE_ROUTER_PERMISSION_ID) {
+    function setUniversalRouter(
+        address newRouter
+    ) external override auth(UPDATE_ROUTER_PERMISSION_ID) {
         address previous = universalRouter;
         universalRouter = newRouter;
         emit UniversalRouterUpdated(previous, newRouter);
     }
 
     /// @inheritdoc IUniswapV4Plugin
-    function setAllowedToken(address token, bool allowed) external override auth(MANAGE_ALLOWLIST_PERMISSION_ID) {
+    function setAllowedToken(
+        address token,
+        bool allowed
+    ) external override auth(MANAGE_ALLOWLIST_PERMISSION_ID) {
         allowedToken[token] = allowed;
         if (allowed && !allowlistEnforced) {
             allowlistEnforced = true;

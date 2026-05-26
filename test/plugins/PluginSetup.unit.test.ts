@@ -71,10 +71,7 @@ describe("PluginSetup (TRD §9 permission-matrix compliance)", () => {
 
     // Adapter must be non-zero — init reverts ZeroAddress otherwise.
     const adapter = ethers.Wallet.createRandom().address;
-    const data = ethers.utils.defaultAbiCoder.encode(
-      ["address", "address[]"],
-      [adapter, []]
-    );
+    const data = ethers.utils.defaultAbiCoder.encode(["address", "address[]"], [adapter, []]);
 
     const result = await setup.callStatic.prepareInstallation(FAKE_DAO, data);
     const permissions = result.preparedSetupData.permissions as unknown as Permission[];

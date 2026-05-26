@@ -27,16 +27,24 @@ contract MockPermit2 is IPermit2 {
     ///         "approve was called N times" sanity checks across runs.
     uint256 public approveCallCount;
 
-    function approve(address token, address spender, uint160 amount, uint48 expiration) external override {
-        records[token][spender] = ApprovalRecord({amount: amount, expiration: expiration, set: true});
+    function approve(
+        address token,
+        address spender,
+        uint160 amount,
+        uint48 expiration
+    ) external override {
+        records[token][spender] = ApprovalRecord({
+            amount: amount,
+            expiration: expiration,
+            set: true
+        });
         ++approveCallCount;
     }
 
-    function getApproval(address token, address spender)
-        external
-        view
-        returns (uint160 amount, uint48 expiration, bool set)
-    {
+    function getApproval(
+        address token,
+        address spender
+    ) external view returns (uint160 amount, uint48 expiration, bool set) {
         ApprovalRecord storage r = records[token][spender];
         return (r.amount, r.expiration, r.set);
     }

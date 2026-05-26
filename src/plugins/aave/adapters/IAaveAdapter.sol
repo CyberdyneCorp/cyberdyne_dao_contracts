@@ -12,10 +12,20 @@ interface IAaveAdapter {
     function withdraw(address asset, uint256 amount, address to) external returns (uint256);
 
     /// @notice Borrow `amount` of `asset` on behalf of `onBehalfOf` at the given rate mode.
-    function borrow(address asset, uint256 amount, uint256 interestRateMode, address onBehalfOf) external;
+    function borrow(
+        address asset,
+        uint256 amount,
+        uint256 interestRateMode,
+        address onBehalfOf
+    ) external;
 
     /// @notice Repay `amount` of `asset` for `onBehalfOf`. Returns actual amount repaid.
-    function repay(address asset, uint256 amount, uint256 interestRateMode, address onBehalfOf) external returns (uint256);
+    function repay(
+        address asset,
+        uint256 amount,
+        uint256 interestRateMode,
+        address onBehalfOf
+    ) external returns (uint256);
 
     /// @notice The underlying AAVE Pool address — used to scope DAO approvals.
     function poolAddress() external view returns (address);

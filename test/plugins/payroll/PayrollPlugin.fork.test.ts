@@ -164,7 +164,9 @@ onlyOn(["mainnetFork", "baseFork"], () => {
         try {
           const parsed = iface.parseLog(log);
           if (parsed.name === "PayrollExecuted") failureMap = parsed.args.failureMap;
-        } catch {/* not our event */}
+        } catch {
+          /* not our event */
+        }
       }
       expect(failureMap).to.not.be.undefined;
       expect(failureMap!).to.equal(1); // bit 0 = bad recipient failed

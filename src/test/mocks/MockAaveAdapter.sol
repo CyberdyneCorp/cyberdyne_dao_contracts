@@ -71,10 +71,7 @@ contract MockAaveAdapter is IAaveAdapter {
         uint256 bal = aTokenBalance[msg.sender][asset];
         uint256 toWithdraw = amount > bal ? bal : amount;
         aTokenBalance[msg.sender][asset] = bal - toWithdraw;
-        require(
-            IERC20(asset).transfer(to, toWithdraw),
-            "MockAaveAdapter: transfer failed"
-        );
+        require(IERC20(asset).transfer(to, toWithdraw), "MockAaveAdapter: transfer failed");
         return toWithdraw;
     }
 
@@ -90,10 +87,7 @@ contract MockAaveAdapter is IAaveAdapter {
         address onBehalfOf
     ) external override {
         debt[msg.sender][asset][interestRateMode] += amount;
-        require(
-            IERC20(asset).transfer(onBehalfOf, amount),
-            "MockAaveAdapter: transfer failed"
-        );
+        require(IERC20(asset).transfer(onBehalfOf, amount), "MockAaveAdapter: transfer failed");
     }
 
     /// @inheritdoc IAaveAdapter

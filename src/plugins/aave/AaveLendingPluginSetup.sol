@@ -27,8 +27,10 @@ contract AaveLendingPluginSetup is PluginUpgradeableSetup {
         address _dao,
         bytes calldata _data
     ) external returns (address plugin, PreparedSetupData memory preparedSetupData) {
-        (address aaveAdapter, address[] memory initialAllowlist) =
-            abi.decode(_data, (address, address[]));
+        (address aaveAdapter, address[] memory initialAllowlist) = abi.decode(
+            _data,
+            (address, address[])
+        );
 
         bytes memory initCalldata = abi.encodeCall(
             AaveLendingPlugin.initialize,
@@ -37,8 +39,8 @@ contract AaveLendingPluginSetup is PluginUpgradeableSetup {
 
         plugin = implementation().deployUUPSProxy(initCalldata);
 
-        PermissionLib.MultiTargetPermission[] memory permissions =
-            new PermissionLib.MultiTargetPermission[](5);
+        PermissionLib.MultiTargetPermission[]
+            memory permissions = new PermissionLib.MultiTargetPermission[](5);
 
         permissions[0] = PermissionLib.MultiTargetPermission({
             operation: PermissionLib.Operation.Grant,

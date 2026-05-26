@@ -28,8 +28,12 @@ contract UniswapV4PluginSetup is PluginUpgradeableSetup {
         address _dao,
         bytes calldata _data
     ) external returns (address plugin, PreparedSetupData memory preparedSetupData) {
-        (address universalRouter, address permit2, address poolManager, address[] memory initialAllowlist) =
-            abi.decode(_data, (address, address, address, address[]));
+        (
+            address universalRouter,
+            address permit2,
+            address poolManager,
+            address[] memory initialAllowlist
+        ) = abi.decode(_data, (address, address, address, address[]));
 
         bytes memory initCalldata = abi.encodeCall(
             UniswapV4Plugin.initialize,
@@ -38,8 +42,8 @@ contract UniswapV4PluginSetup is PluginUpgradeableSetup {
 
         plugin = implementation().deployUUPSProxy(initCalldata);
 
-        PermissionLib.MultiTargetPermission[] memory permissions =
-            new PermissionLib.MultiTargetPermission[](5);
+        PermissionLib.MultiTargetPermission[]
+            memory permissions = new PermissionLib.MultiTargetPermission[](5);
 
         // 1) DAO grants the plugin EXECUTE_PERMISSION so the plugin can build Action[]
         //    batches (approve / route / revoke) and call dao.execute.

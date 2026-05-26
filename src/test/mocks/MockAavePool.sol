@@ -113,12 +113,7 @@ contract MockAavePool is IAavePool {
     /// @inheritdoc IAavePool
     function getUserAccountData(
         address /* user */
-    )
-        external
-        view
-        override
-        returns (uint256, uint256, uint256, uint256, uint256, uint256)
-    {
+    ) external view override returns (uint256, uint256, uint256, uint256, uint256, uint256) {
         return (
             totalCollateralBase,
             totalDebtBase,
