@@ -1,16 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity 0.8.17;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 import {PluginUUPSUpgradeable} from "@aragon/osx-commons-contracts/src/plugin/PluginUUPSUpgradeable.sol";
 import {IDAO} from "@aragon/osx-commons-contracts/src/dao/IDAO.sol";
+import {IExecutor, Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
 
 import {IAaveLendingPlugin} from "./IAaveLendingPlugin.sol";
 import {IAaveAdapter} from "./adapters/IAaveAdapter.sol";
 
-/// @title AaveLendingPlugin (P1 stub)
-/// @notice Vote-gated AAVE supply/withdraw/borrow/repay. Real adapter call paths
-///         land in P4 — this stub locks the API, permission IDs, and the adapter
-///         swap mechanic that supports a future v3→v4 migration.
+/// @title AaveLendingPlugin
+/// @notice Vote-gated DAO supply / withdraw / borrow / repay against AAVE,
+///         routed through a pluggable `IAaveAdapter` so a v3 → v4 migration
+///         is a single `setAdapter` vote with no plugin redeploy.
+/// @dev    Plugin never custodies funds.
+///         `onBehalfOf = dao()` on every adapter call so aTokens and debt
+///         tokens are issued directly to the DAO.
+///         Token movements happen via `IExecutor(dao).execute(...)`:
+///         the DAO is the only address that can approve the pool, and the
+///         DAO is the receiver of every withdraw / borrow.
 contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
     bytes32 public constant TRIGGER_LENDING_PERMISSION_ID = keccak256("TRIGGER_LENDING_PERMISSION");
     bytes32 public constant UPDATE_ADAPTER_PERMISSION_ID = keccak256("UPDATE_ADAPTER_PERMISSION");
@@ -20,8 +29,18 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
     mapping(address => bool) public override allowedAsset;
     bool public override allowlistEnforced;
 
-    uint256[47] private __gap;
+    /// @notice Strictly-increasing counter used to make each `IExecutor.execute`
+    ///         callId unique, so the subgraph can join distinct operations
+    ///         even when they touch the same `(asset, amount)` pair.
+    uint256 private _opNonce;
 
+    uint256[46] private __gap;
+
+    /// @notice Initialize the plugin. Called once via the UUPS proxy constructor.
+    /// @param _dao              DAO that authorizes this plugin and holds funds.
+    /// @param _adapter          Concrete `IAaveAdapter` (v3 today, v4 later).
+    /// @param _initialAllowlist If non-empty, seeds the asset allowlist and
+    ///                          flips `allowlistEnforced=true`.
     function initialize(
         IDAO _dao,
         IAaveAdapter _adapter,
@@ -40,22 +59,139 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
         }
     }
 
-    function supply(address, uint256) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
-        revert NotImplemented();
+    // --- Vote-gated lending operations ------------------------------------
+
+    /// @inheritdoc IAaveLendingPlugin
+    /// @dev Two-action batch executed by the DAO:
+    ///         1. `IERC20(asset).approve(pool, amount)` — exact-amount approval.
+    ///         2. `adapter.supply(asset, amount, dao)` — aTokens minted to DAO.
+    function supply(
+        address asset,
+        uint256 amount
+    ) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
+        _checkAllowlist(asset);
+
+        IAaveAdapter _adapter = adapter;
+        address pool = _adapter.poolAddress();
+
+        Action[] memory actions = new Action[](2);
+        actions[0] = Action({
+            to: asset,
+            value: 0,
+            data: abi.encodeCall(IERC20.approve, (pool, amount))
+        });
+        actions[1] = Action({
+            to: address(_adapter),
+            value: 0,
+            data: abi.encodeCall(IAaveAdapter.supply, (asset, amount, address(dao())))
+        });
+
+        IExecutor(address(dao())).execute(_nextCallId("AAVE_SUPPLY:"), actions, 0);
+
+        emit Supplied(asset, amount);
     }
 
-    function withdraw(address, uint256) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
-        revert NotImplemented();
+    /// @inheritdoc IAaveLendingPlugin
+    /// @dev Computes `received` as the DAO's `asset` balance delta. AAVE may
+    ///      return less than `amount` (e.g. `type(uint256).max` semantics or
+    ///      partial liquidity) — the event surfaces the actual amount.
+    function withdraw(
+        address asset,
+        uint256 amount
+    ) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
+        _checkAllowlist(asset);
+
+        IAaveAdapter _adapter = adapter;
+
+        Action[] memory actions = new Action[](1);
+        actions[0] = Action({
+            to: address(_adapter),
+            value: 0,
+            data: abi.encodeCall(
+                IAaveAdapter.withdraw,
+                (asset, amount, address(dao()))
+            )
+        });
+
+        uint256 before = IERC20(asset).balanceOf(address(dao()));
+        IExecutor(address(dao())).execute(_nextCallId("AAVE_WITHDRAW:"), actions, 0);
+        uint256 received = IERC20(asset).balanceOf(address(dao())) - before;
+
+        emit Withdrawn(asset, amount, received);
     }
 
-    function borrow(address, uint256, uint256) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
-        revert NotImplemented();
+    /// @inheritdoc IAaveLendingPlugin
+    /// @dev Single-action batch; debt token is issued to the DAO.
+    function borrow(
+        address asset,
+        uint256 amount,
+        uint256 interestRateMode
+    ) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
+        _checkAllowlist(asset);
+
+        IAaveAdapter _adapter = adapter;
+
+        Action[] memory actions = new Action[](1);
+        actions[0] = Action({
+            to: address(_adapter),
+            value: 0,
+            data: abi.encodeCall(
+                IAaveAdapter.borrow,
+                (asset, amount, interestRateMode, address(dao()))
+            )
+        });
+
+        IExecutor(address(dao())).execute(_nextCallId("AAVE_BORROW:"), actions, 0);
+
+        emit Borrowed(asset, amount, interestRateMode);
     }
 
-    function repay(address, uint256, uint256) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
-        revert NotImplemented();
+    /// @inheritdoc IAaveLendingPlugin
+    /// @dev Two-action batch:
+    ///         1. `IERC20(asset).approve(pool, amount)` — exact-amount approval.
+    ///         2. `adapter.repay(asset, amount, mode, dao)` — debt burned.
+    ///      `paid` is the DAO's `asset` balance delta (before - after) so the
+    ///      event reflects what the pool actually pulled (≤ amount).
+    function repay(
+        address asset,
+        uint256 amount,
+        uint256 interestRateMode
+    ) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
+        _checkAllowlist(asset);
+
+        IAaveAdapter _adapter = adapter;
+        address pool = _adapter.poolAddress();
+
+        Action[] memory actions = new Action[](2);
+        actions[0] = Action({
+            to: asset,
+            value: 0,
+            data: abi.encodeCall(IERC20.approve, (pool, amount))
+        });
+        actions[1] = Action({
+            to: address(_adapter),
+            value: 0,
+            data: abi.encodeCall(
+                IAaveAdapter.repay,
+                (asset, amount, interestRateMode, address(dao()))
+            )
+        });
+
+        uint256 before = IERC20(asset).balanceOf(address(dao()));
+        IExecutor(address(dao())).execute(_nextCallId("AAVE_REPAY:"), actions, 0);
+        uint256 paid = before - IERC20(asset).balanceOf(address(dao()));
+
+        emit Repaid(asset, amount, interestRateMode, paid);
     }
 
+    // --- Vote-gated admin --------------------------------------------------
+
+    /// @inheritdoc IAaveLendingPlugin
+    /// @dev Swapping the adapter is how a v3 → v4 migration ships: the old
+    ///      adapter remains deployed (positions opened through it are still
+    ///      readable on AAVE), and all NEW operations route through the new
+    ///      adapter. Withdrawing legacy positions from the old AAVE version
+    ///      is a separate operation tracked in `docs/plugins/AAVE.md §6`.
     function setAdapter(IAaveAdapter newAdapter) external override auth(UPDATE_ADAPTER_PERMISSION_ID) {
         if (address(newAdapter) == address(0)) revert ZeroAddress();
         IAaveAdapter previous = adapter;
@@ -63,11 +199,43 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
         emit AdapterUpdated(address(previous), address(newAdapter));
     }
 
+    /// @inheritdoc IAaveLendingPlugin
+    /// @dev First `allowed=true` flips `allowlistEnforced` permanently.
+    ///      Removing an asset (`allowed=false`) does NOT disable enforcement
+    ///      — once on, the allowlist stays on for the life of the plugin.
     function setAllowedAsset(address asset, bool allowed) external override auth(MANAGE_ALLOWLIST_PERMISSION_ID) {
         allowedAsset[asset] = allowed;
         if (allowed && !allowlistEnforced) {
             allowlistEnforced = true;
         }
         emit AllowedAssetSet(asset, allowed);
+    }
+
+    // --- Views -------------------------------------------------------------
+
+    /// @inheritdoc IAaveLendingPlugin
+    function opNonce() external view override returns (uint256) {
+        return _opNonce;
+    }
+
+    // --- Internals --------------------------------------------------------
+
+    /// @dev Reverts `AssetNotAllowed` if the allowlist is enforced and `asset`
+    ///      is not flagged. No-op when the allowlist is disabled at install
+    ///      time and never enabled.
+    function _checkAllowlist(address asset) internal view {
+        if (allowlistEnforced && !allowedAsset[asset]) {
+            revert AssetNotAllowed(asset);
+        }
+    }
+
+    /// @dev Bumps `_opNonce` and returns `keccak256(tag || nonce)`. Distinct
+    ///      operations (back-to-back supplies of the same asset for the same
+    ///      amount, say) get distinct callIds — important for the subgraph.
+    function _nextCallId(string memory tag) internal returns (bytes32) {
+        unchecked {
+            _opNonce += 1;
+        }
+        return keccak256(abi.encodePacked(tag, _opNonce));
     }
 }
