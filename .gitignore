@@ -1,0 +1,44 @@
+# Foundry
+out/
+cache/
+broadcast/*/dry-run/
+broadcast/*/*.json
+!broadcast/*/run-latest.json
+
+# Hardhat
+artifacts/
+cache_hardhat/
+typechain-types/
+coverage/
+coverage.json
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# OS
+Thumbs.db
+
+# Deployments (per-run logs)
+deployments/*-tmp-*
+
+# Logs
+logs/
+*.log
