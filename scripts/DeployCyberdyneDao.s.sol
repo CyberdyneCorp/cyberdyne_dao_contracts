@@ -9,14 +9,9 @@ import {AaveLendingPluginSetup} from "../src/plugins/aave/AaveLendingPluginSetup
 import {AaveV3Adapter} from "../src/plugins/aave/adapters/AaveV3Adapter.sol";
 import {IAavePool} from "../src/plugins/aave/adapters/IAavePool.sol";
 
-import {
-    IDAOFactory,
-    IPluginRepo,
-    IPluginRepoFactory,
-    PluginSetupRef,
-    Tag
-} from "./lib/IOsxFramework.sol";
+import {IDAOFactory, IPluginRepo, IPluginRepoFactory, PluginSetupRef, Tag} from "./lib/IOsxFramework.sol";
 import {OsxAddresses} from "./lib/OsxAddresses.sol";
+import {TokenVotingParams} from "./lib/TokenVotingParams.sol";
 
 /// @title DeployCyberdyneDao
 /// @notice One-ceremony bootstrap per TRD §8 + ROADMAP P5.
@@ -25,17 +20,24 @@ import {OsxAddresses} from "./lib/OsxAddresses.sol";
 ///         Phase 3: writes deployments/<chain>-<timestamp>.json with every
 ///                  resulting address for the frontend repo to consume.
 ///
-/// @dev    TokenVoting integration is deferred. The roadmap's pseudocode
-///         includes TokenVoting as plugins[0], but its PluginRepo address is
-///         published by the separate `aragon/token-voting-plugin` repo and
-///         varies per chain. To install it, set `TOKEN_VOTING_REPO` env var
-///         and the script will splice it in as plugins[0]. Without it, the
-///         DAO is created with the 3 Cyberdyne plugins only — see
-///         "Without TokenVoting" notes at the bottom of the script.
+/// @dev    TokenVoting is installed as plugins[0] when a PluginRepo address
+///         resolves (env `TOKEN_VOTING_REPO`, else `OsxAddresses.tokenVotingRepo`).
+///         Its install data is built with TYPED params via TokenVotingParams
+///         (no more raw pre-encoded bytes) — voting settings + a fresh
+///         GovernanceERC20 allocation, overridable by env. If no repo address
+///         resolves, the DAO is created with the 3 Cyberdyne plugins only.
 ///
-///         Run example (anvil fork of mainnet):
+///         > ONE VERIFICATION STEP REMAINS: the per-chain TokenVoting repo
+///         > address in OsxAddresses.tokenVotingRepo is address(0) until
+///         > verified against each target chain (the published address +
+///         > pinned build determine the install-data ABI). Until then, pass
+///         > a verified address via TOKEN_VOTING_REPO. See ROADMAP P11.
+///
+///         Run example (anvil fork of mainnet, with TokenVoting):
 ///         ```
 ///         export PAY_DAY=15 SUBDOMAIN_DAO=cyberdyne
+///         export TOKEN_VOTING_REPO=0x...          # verified repo for this chain
+///         export GOV_TOKEN_HOLDER=0xYourTestSigner
 ///         forge script scripts/DeployCyberdyneDao.s.sol \
 ///             --rpc-url $RPC_MAINNET --broadcast --slow
 ///         ```
@@ -62,8 +64,9 @@ contract DeployCyberdyneDao is Script {
     }
 
     function _publishRepos(address maintainer) internal returns (PublishedPlugins memory p) {
-        IPluginRepoFactory pluginRepoFactory =
-            IPluginRepoFactory(OsxAddresses.pluginRepoFactory(block.chainid));
+        IPluginRepoFactory pluginRepoFactory = IPluginRepoFactory(
+            OsxAddresses.pluginRepoFactory(block.chainid)
+        );
 
         p.payrollSetup = new PayrollPluginSetup();
         p.payrollRepo = pluginRepoFactory.createPluginRepoWithFirstVersion(
@@ -108,31 +111,31 @@ contract DeployCyberdyneDao is Script {
         (dao, ) = daoFactory.createDao(daoSettings, pluginSettings);
     }
 
-    function _buildPluginSettings(PublishedPlugins memory p)
-        internal
-        view
-        returns (IDAOFactory.PluginSettings[] memory pluginSettings)
-    {
-        address tokenVotingRepo = vm.envOr("TOKEN_VOTING_REPO", address(0));
+    function _buildPluginSettings(
+        PublishedPlugins memory p
+    ) internal view returns (IDAOFactory.PluginSettings[] memory pluginSettings) {
+        // Resolve the TokenVoting PluginRepo: explicit env override first,
+        // else the per-chain value in OsxAddresses (address(0) = not yet
+        // configured → TokenVoting is skipped, DAO is created with the 3
+        // Cyberdyne plugins only).
+        address tokenVotingRepo = vm.envOr(
+            "TOKEN_VOTING_REPO",
+            OsxAddresses.tokenVotingRepo(block.chainid)
+        );
         uint256 pluginCount = (tokenVotingRepo != address(0)) ? 4 : 3;
         pluginSettings = new IDAOFactory.PluginSettings[](pluginCount);
         uint256 idx;
 
         if (tokenVotingRepo != address(0)) {
-            // The token-voting-plugin's prepareInstallation data is
-            //   abi.encode(votingSettings, tokenSettings, mintSettings)
-            // where each struct is defined in @aragon/token-voting-plugin.
-            // Operators pass pre-encoded bytes via TOKEN_VOTING_DATA (built
-            // off-chain via the token-voting-plugin SDK).
             pluginSettings[idx++] = IDAOFactory.PluginSettings({
                 pluginSetupRef: PluginSetupRef({
                     versionTag: Tag({
                         release: 1,
-                        build: uint16(vm.envOr("TOKEN_VOTING_BUILD", uint256(2)))
+                        build: uint16(vm.envOr("TOKEN_VOTING_BUILD", uint256(3)))
                     }),
                     pluginSetupRepo: IPluginRepo(tokenVotingRepo)
                 }),
-                data: vm.envBytes("TOKEN_VOTING_DATA")
+                data: _tokenVotingInstallData()
             });
         }
 
@@ -165,6 +168,47 @@ contract DeployCyberdyneDao is Script {
             }),
             data: abi.encode(address(p.aaveAdapter), new address[](0))
         });
+    }
+
+    /// @dev Build the TokenVoting `prepareInstallation` payload from env (or
+    ///      testnet defaults). Mints a fresh GovernanceERC20 allocated to the
+    ///      deployer unless overridden.
+    ///
+    ///      Env overrides:
+    ///        GOV_TOKEN_NAME / GOV_TOKEN_SYMBOL — token identity
+    ///        GOV_TOKEN_HOLDER / GOV_TOKEN_SUPPLY — single-holder allocation
+    ///        VOTE_SUPPORT / VOTE_PARTICIPATION (ppm), VOTE_DURATION (seconds)
+    ///
+    ///      For a multi-holder genesis or per-mainnet voting params, edit this
+    ///      function directly — the env path is the fast testnet route.
+    ///      See the Governance Token Spec note for the parameter rationale.
+    function _tokenVotingInstallData() internal view returns (bytes memory) {
+        TokenVotingParams.VotingSettings memory voting = TokenVotingParams
+            .defaultTestnetVotingSettings();
+        voting.supportThreshold = uint32(
+            vm.envOr("VOTE_SUPPORT", uint256(voting.supportThreshold))
+        );
+        voting.minParticipation = uint32(
+            vm.envOr("VOTE_PARTICIPATION", uint256(voting.minParticipation))
+        );
+        voting.minDuration = uint64(vm.envOr("VOTE_DURATION", uint256(voting.minDuration)));
+
+        TokenVotingParams.TokenSettings memory token = TokenVotingParams.TokenSettings({
+            addr: address(0), // mint a fresh GovernanceERC20
+            name: vm.envOr("GOV_TOKEN_NAME", string("Cyberdyne Governance")),
+            symbol: vm.envOr("GOV_TOKEN_SYMBOL", string("CYBR"))
+        });
+
+        address[] memory receivers = new address[](1);
+        receivers[0] = vm.envOr("GOV_TOKEN_HOLDER", msg.sender);
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = vm.envOr("GOV_TOKEN_SUPPLY", uint256(1_000_000 ether));
+        TokenVotingParams.MintSettings memory mint = TokenVotingParams.MintSettings({
+            receivers: receivers,
+            amounts: amounts
+        });
+
+        return TokenVotingParams.encodeInstallData(voting, token, mint);
     }
 
     function _logAndPersist(address dao, PublishedPlugins memory p) internal {

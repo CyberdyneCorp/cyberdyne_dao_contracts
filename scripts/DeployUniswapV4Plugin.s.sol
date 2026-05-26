@@ -14,7 +14,9 @@ contract DeployUniswapV4Plugin is Script {
         string memory subdomain = vm.envOr("SUBDOMAIN", string("cyberdyne-uniswap-v4"));
         address maintainer = vm.envOr("MAINTAINER", msg.sender);
 
-        IPluginRepoFactory factory = IPluginRepoFactory(OsxAddresses.pluginRepoFactory(block.chainid));
+        IPluginRepoFactory factory = IPluginRepoFactory(
+            OsxAddresses.pluginRepoFactory(block.chainid)
+        );
 
         vm.startBroadcast();
 

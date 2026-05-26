@@ -10,17 +10,16 @@
  *     this test fails).
  *   - PayrollPlugin runs a real monthly crank against the bootstrapped DAO.
  *
- * Scope adjustment from the literal roadmap: this test bootstraps the 3
- * Cyberdyne plugins WITHOUT TokenVoting. The roadmap's pseudocode shows
- * `[TokenVoting, Uniswap, Aave, Payroll]`, but the TokenVoting plugin's
- * PluginRepo address is published by the separate `aragon/token-voting-plugin`
- * repo and varies per chain — we can't hardcode it authoritatively without
- * network verification. To exercise the create→vote→execute proposal flow,
- * the test grants ROOT to the test signer post-bootstrap and triggers plugin
- * actions through DAO.execute directly. The TokenVoting integration is the
- * single missing piece between this test and "operator can vote on a real
- * proposal", and it's a single env var (`TOKEN_VOTING_REPO`) away in the
- * Foundry script that ships in the same commit.
+ * TokenVoting: when `TOKEN_VOTING_REPO` is set to a verified repo address for
+ * this fork, the bootstrap installs TokenVoting as plugins[0] (minting a fresh
+ * GovernanceERC20 fully allocated to the deployer) and the
+ * "runs a proposal through TokenVoting end-to-end" test exercises a real
+ * create → vote → execute round-trip. Without the env var, that test
+ * self-skips and the payroll test falls back to ROOT-impersonation (the DAO
+ * is self-sovereign, so impersonating it lets us drive plugin admin functions
+ * directly). The only thing blocking the default-on path is a verified
+ * per-chain TokenVoting repo address — see OsxAddresses.tokenVotingRepo and
+ * ROADMAP P11.
  *
  * Per-plugin fork tests in P2/P3/P4 already cover swap + supply + borrow
  * against real external protocols; this test focuses on the bootstrap glue
@@ -79,6 +78,23 @@ const ERC20_ABI = [
   "function transfer(address to, uint256 amount) returns (bool)",
 ];
 
+// Minimal TokenVoting surface for the create → vote → execute round-trip.
+// Matches the build pinned in lib/osx-commons token-voting ABIs.
+const TOKEN_VOTING_ABI = [
+  "function createProposal(bytes _metadata, tuple(address to, uint256 value, bytes data)[] _actions, uint256 _allowFailureMap, uint64 _startDate, uint64 _endDate, uint8 _voteOption, bool _tryEarlyExecution) returns (uint256 proposalId)",
+  "function vote(uint256 _proposalId, uint8 _voteOption, bool _tryEarlyExecution)",
+  "function execute(uint256 _proposalId)",
+  "function getProposal(uint256 _proposalId) view returns (bool open, bool executed, tuple(uint8 votingMode, uint32 supportThreshold, uint32 startDate, uint32 endDate, uint32 snapshotBlock, uint256 minVotingPower) parameters, tuple(uint256 abstain, uint256 yes, uint256 no) tally, tuple(address to, uint256 value, bytes data)[] actions, uint256 allowFailureMap)",
+  "function getVotingToken() view returns (address)",
+];
+
+// VoteOption enum: 0 None, 1 Abstain, 2 Yes, 3 No.
+const VOTE_YES = 2;
+
+// Optional: a verified TokenVoting PluginRepo for this fork. When set, the
+// bootstrap installs TokenVoting as plugins[0] and the voting-flow test runs.
+const TOKEN_VOTING_REPO = process.env.TOKEN_VOTING_REPO;
+
 function chainKey(): ExternalChain {
   if (network.name === "mainnetFork") return "mainnet";
   if (network.name === "baseFork") return "base";
@@ -100,6 +116,7 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
     let uniswapAddress: string;
     let aaveAddress: string;
     let daoFactoryAddress: string;
+    let tokenVotingAddress: string | undefined; // set only if TOKEN_VOTING_REPO provided
 
     before(async () => {
       [deployer, voter, alice] = await ethers.getSigners();
@@ -171,7 +188,47 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
       const daoFactory = new ethers.Contract(daoFactoryAddress, DAO_FACTORY_ABI, deployer);
 
       const externals = EXTERNAL[chainKey()];
-      const pluginSettings = [
+
+      // Optionally prepend TokenVoting as plugins[0] when a verified repo is
+      // provided. Mints a fresh GovernanceERC20 fully allocated to the
+      // deployer so it controls 100% of voting power for the round-trip test.
+      const pluginSettings: unknown[] = [];
+      if (TOKEN_VOTING_REPO) {
+        const tvBuild = Number(process.env.TOKEN_VOTING_BUILD ?? 3);
+        const votingSettings = {
+          votingMode: 1, // EarlyExecution — lets the 100%-power holder execute immediately
+          supportThreshold: 500000, // 50%
+          minParticipation: 100000, // 10%
+          minDuration: 3600, // 1 hour (OSx floor)
+          minProposerVotingPower: 0,
+        };
+        const tokenSettings = {
+          addr: ethers.constants.AddressZero,
+          name: "Cyberdyne Gov",
+          symbol: "CYBR",
+        };
+        const mintSettings = {
+          receivers: [await deployer.getAddress()],
+          amounts: [ethers.utils.parseEther("1000000")],
+        };
+        const tvData = ethers.utils.defaultAbiCoder.encode(
+          [
+            "tuple(uint8 votingMode, uint32 supportThreshold, uint32 minParticipation, uint64 minDuration, uint256 minProposerVotingPower)",
+            "tuple(address addr, string name, string symbol)",
+            "tuple(address[] receivers, uint256[] amounts)",
+          ],
+          [votingSettings, tokenSettings, mintSettings]
+        );
+        pluginSettings.push({
+          pluginSetupRef: {
+            versionTag: {release: 1, build: tvBuild},
+            pluginSetupRepo: TOKEN_VOTING_REPO,
+          },
+          data: tvData,
+        });
+      }
+
+      pluginSettings.push(
         {
           pluginSetupRef: {versionTag: {release: 1, build: 1}, pluginSetupRepo: payrollRepo},
           data: ethers.utils.defaultAbiCoder.encode(["uint8"], [15]),
@@ -189,8 +246,8 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
             ["address", "address[]"],
             [aaveAdapter.address, []]
           ),
-        },
-      ];
+        }
+      );
 
       const result = await daoFactory.callStatic.createDao(
         {
@@ -202,9 +259,12 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
         pluginSettings
       );
       daoAddress = result.dao;
-      payrollAddress = result.installedPlugins[0].plugin;
-      uniswapAddress = result.installedPlugins[1].plugin;
-      aaveAddress = result.installedPlugins[2].plugin;
+      // Plugin order in installedPlugins mirrors pluginSettings order.
+      const base = TOKEN_VOTING_REPO ? 1 : 0;
+      if (TOKEN_VOTING_REPO) tokenVotingAddress = result.installedPlugins[0].plugin;
+      payrollAddress = result.installedPlugins[base + 0].plugin;
+      uniswapAddress = result.installedPlugins[base + 1].plugin;
+      aaveAddress = result.installedPlugins[base + 2].plugin;
 
       await (
         await daoFactory.createDao(
@@ -313,6 +373,80 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
       const aliceAfter = await ethers.provider.getBalance(await alice.getAddress());
       expect(aliceAfter.sub(aliceBefore)).to.equal(salary);
       expect(await payroll.lastPayoutPeriod()).to.equal(2028 * 12 + 6);
+    });
+
+    // Real governance round-trip — only runs when TokenVoting was installed
+    // (TOKEN_VOTING_REPO provided). This is the path that replaces the
+    // ROOT-impersonation shortcut above with an actual create → vote → execute.
+    it("runs a proposal through TokenVoting end-to-end (create → vote → execute)", async function () {
+      if (!TOKEN_VOTING_REPO || !tokenVotingAddress) {
+        this.skip(); // no verified TokenVoting repo for this fork
+        return;
+      }
+
+      const tv = new ethers.Contract(tokenVotingAddress, TOKEN_VOTING_ABI, deployer);
+
+      // The deployer holds 100% of the freshly-minted governance token. Voting
+      // power is snapshotted at proposal creation, so the token must be
+      // self-delegated first. GovernanceERC20 auto-delegates on mint in recent
+      // builds; if your build doesn't, delegate explicitly before this point.
+
+      // Build the action: add a payroll recipient (a vote-gated admin action).
+      const payrollIface = PayrollPlugin__factory.createInterface();
+      const newPayee = await alice.getAddress();
+      const action = {
+        to: payrollAddress,
+        value: 0,
+        data: payrollIface.encodeFunctionData("addRecipient", [
+          newPayee,
+          ethers.constants.AddressZero,
+          ethers.utils.parseEther("0.05"),
+        ]),
+      };
+
+      // Create the proposal. endDate = 0 lets the plugin use minDuration.
+      const createTx = await tv.createProposal(
+        ethers.utils.toUtf8Bytes("ipfs://e2e-test-proposal"),
+        [action],
+        0, // allowFailureMap
+        0, // startDate (0 = now)
+        0, // endDate (0 = now + minDuration)
+        VOTE_YES, // vote yes at creation
+        true // tryEarlyExecution
+      );
+      const receipt = await createTx.wait();
+
+      // Extract proposalId from the ProposalCreated event (topic[1]).
+      const created = receipt.logs.find(
+        (l: {topics: string[]}) =>
+          l.topics[0] ===
+          ethers.utils.id(
+            "ProposalCreated(uint256,address,uint64,uint64,bytes,(address,uint256,bytes)[],uint256)"
+          )
+      );
+      // Fall back to proposalId 0 if the topic shape differs across builds —
+      // EarlyExecution + 100% power means the proposal likely already executed.
+      const proposalId = created
+        ? ethers.BigNumber.from(created.topics[1])
+        : ethers.BigNumber.from(0);
+
+      // With EarlyExecution + 100% YES, tryEarlyExecution should have executed
+      // at creation. If not, advance past minDuration and execute explicitly.
+      let proposal = await tv.getProposal(proposalId);
+      if (!proposal.executed) {
+        await time.increase(3600 + 1); // past minDuration
+        await (await tv.execute(proposalId)).wait();
+        proposal = await tv.getProposal(proposalId);
+      }
+
+      expect(proposal.executed).to.equal(true);
+
+      // The executed action added a recipient — verify the payroll plugin state.
+      const payroll = PayrollPlugin__factory.connect(payrollAddress, ethers.provider);
+      const recipients = await payroll.allActiveRecipients();
+      expect(recipients.some((r) => r.payee.toLowerCase() === newPayee.toLowerCase())).to.equal(
+        true
+      );
     });
   });
 });

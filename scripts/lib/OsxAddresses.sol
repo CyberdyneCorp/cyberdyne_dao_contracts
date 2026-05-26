@@ -59,4 +59,31 @@ library OsxAddresses {
         if (chainId == 8453) return 0x498581fF718922c3f8e6A244956aF099B2652b2b; // base
         revert UnsupportedChain(chainId);
     }
+
+    /// @notice TokenVoting plugin `PluginRepo` address per chain.
+    /// @dev    Returns `address(0)` ("not configured") for every chain by
+    ///         default. The TokenVoting repo is published by the SEPARATE
+    ///         `aragon/token-voting-plugin` repo — its addresses are NOT in
+    ///         the OSx core `npm-artifacts/addresses.json` we mirror elsewhere
+    ///         in this file, and they must be VERIFIED against each target
+    ///         chain before use (the build pinned at the repo determines the
+    ///         install-data ABI — see TokenVotingParams.sol).
+    ///
+    ///         Resolution order in DeployCyberdyneDao:
+    ///           1. `TOKEN_VOTING_REPO` env var (explicit override), else
+    ///           2. this function's return (hardcode verified values below).
+    ///
+    ///         Sources to verify from:
+    ///           - github.com/aragon/token-voting-plugin (deployments)
+    ///           - the "aragon/osx-artifacts" npm package / Aragon's registry
+    ///           - on-chain: PluginRepoRegistry events for the "token-voting"
+    ///             subdomain on the target chain
+    function tokenVotingRepo(uint256 chainId) internal pure returns (address) {
+        // TODO(P11): fill in + VERIFY per chain before testnet/mainnet deploy.
+        // Left as address(0) deliberately — fabricating an unverified address
+        // here is worse than an honest "not configured" that the deploy script
+        // treats as "skip TokenVoting" (or requires the env override).
+        (chainId);
+        return address(0);
+    }
 }

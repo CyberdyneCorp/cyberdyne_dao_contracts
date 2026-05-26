@@ -15,11 +15,16 @@ import {OsxAddresses} from "./lib/OsxAddresses.sol";
 ///         The DAO bootstrap (DeployCyberdyneDao) passes the adapter address
 ///         into AaveLendingPlugin's `prepareInstallation` payload.
 contract DeployAavePlugin is Script {
-    function run() external returns (IPluginRepo repo, AaveLendingPluginSetup setup, AaveV3Adapter adapter) {
+    function run()
+        external
+        returns (IPluginRepo repo, AaveLendingPluginSetup setup, AaveV3Adapter adapter)
+    {
         string memory subdomain = vm.envOr("SUBDOMAIN", string("cyberdyne-aave"));
         address maintainer = vm.envOr("MAINTAINER", msg.sender);
 
-        IPluginRepoFactory factory = IPluginRepoFactory(OsxAddresses.pluginRepoFactory(block.chainid));
+        IPluginRepoFactory factory = IPluginRepoFactory(
+            OsxAddresses.pluginRepoFactory(block.chainid)
+        );
         address aavePool = OsxAddresses.aaveV3Pool(block.chainid);
 
         vm.startBroadcast();

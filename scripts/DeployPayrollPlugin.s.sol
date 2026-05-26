@@ -18,7 +18,9 @@ contract DeployPayrollPlugin is Script {
         string memory subdomain = vm.envOr("SUBDOMAIN", string("cyberdyne-payroll"));
         address maintainer = vm.envOr("MAINTAINER", msg.sender);
 
-        IPluginRepoFactory factory = IPluginRepoFactory(OsxAddresses.pluginRepoFactory(block.chainid));
+        IPluginRepoFactory factory = IPluginRepoFactory(
+            OsxAddresses.pluginRepoFactory(block.chainid)
+        );
 
         vm.startBroadcast();
 
