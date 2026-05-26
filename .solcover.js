@@ -9,14 +9,23 @@ module.exports = {
     "plugins/uniswap-v4/IPermit2.sol",
     "plugins/aave/IAaveLendingPlugin.sol",
     "plugins/aave/adapters/IAaveAdapter.sol",
+    "plugins/aave/adapters/IAavePool.sol",
     "plugins/payroll/IPayrollPlugin.sol",
     // Vendored 3rd-party math lib.
     "plugins/payroll/lib/BokkyPooBahsDateTimeLibrary.sol",
+    // P4-stub: AAVE v4 adapter is a placeholder until v4 launches (TRD §16
+    // #1). All methods revert NotImplemented; testing it would only assert
+    // the revert. Re-enable when v4 lands.
+    "plugins/aave/adapters/AaveV4Adapter.sol",
     // Test-only mocks. Live under src/ so Hardhat compiles them, but they
     // don't ship and don't count toward coverage.
     "test/mocks/MinimalDAO.sol",
     "test/mocks/TestERC20.sol",
     "test/mocks/RevertingRecipient.sol",
+    "test/mocks/MockUniversalRouter.sol",
+    "test/mocks/MockPermit2.sol",
+    "test/mocks/MockAaveAdapter.sol",
+    "test/mocks/MockAavePool.sol",
   ],
   istanbulFolder: "./coverage",
   istanbulReporter: ["html", "lcov", "text", "json-summary"],

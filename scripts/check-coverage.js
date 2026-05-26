@@ -18,6 +18,8 @@ const SUMMARY = path.join(process.cwd(), "coverage", "coverage-summary.json");
 // Sub-paths under src/ that the gate enforces. Add others as their phase lands.
 const ENFORCED = [
   path.join("src", "plugins", "payroll") + path.sep,
+  path.join("src", "plugins", "uniswap-v4") + path.sep,
+  path.join("src", "plugins", "aave") + path.sep,
 ];
 
 if (!fs.existsSync(SUMMARY)) {
