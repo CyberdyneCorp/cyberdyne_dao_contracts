@@ -42,7 +42,7 @@ async function deployProxied(signer: Signer, dao: string): Promise<UniswapV3Plug
   return UniswapV3Plugin__factory.connect(proxy.address, signer);
 }
 
-onlyOn(["mainnetFork"], () => {
+onlyOn(["mainnetFork", "localFork"], () => {
   describe(`UniswapV3Plugin (fork: ${network.name}) [fork]`, function () {
     // Retry transient public-RPC zero-reads (see AAVE fork test for rationale).
     this.retries(2);
@@ -114,6 +114,147 @@ onlyOn(["mainnetFork"], () => {
       const tokenId = ev?.args?.tokenId;
       expect(tokenId).to.not.be.undefined;
       expect(await npm.ownerOf(tokenId)).to.equal(dao.address);
+    });
+
+    // Mint helper used by the lifecycle tests below — single source of the
+    // amount-ordering rule so an "amount0/amount1" swap doesn't leak per test.
+    async function mintFullRange(): Promise<{tokenId: import("ethers").BigNumber}> {
+      const amount0 =
+        token0.toLowerCase() === usdc.toLowerCase()
+          ? ethers.utils.parseUnits("1000", 6)
+          : ethers.utils.parseEther("0.5");
+      const amount1 =
+        token1.toLowerCase() === weth.toLowerCase()
+          ? ethers.utils.parseEther("0.5")
+          : ethers.utils.parseUnits("1000", 6);
+      await plugin.connect(voter).mint({
+        token0,
+        token1,
+        fee: FEE,
+        tickLower: FULL_RANGE_LOWER,
+        tickUpper: FULL_RANGE_UPPER,
+        amount0Desired: amount0,
+        amount1Desired: amount1,
+        amount0Min: 0,
+        amount1Min: 0,
+        deadline: FUTURE,
+      });
+      const ev = (await plugin.queryFilter(plugin.filters.PositionMinted())).pop();
+      return {tokenId: ev!.args!.tokenId};
+    }
+
+    it("increaseLiquidity grows an existing DAO position", async () => {
+      const {tokenId} = await mintFullRange();
+
+      const npmRead = new ethers.Contract(
+        NPM,
+        [
+          "function positions(uint256) view returns (uint96,address,address,address,uint24,int24,int24,uint128,uint256,uint256,uint128,uint128)",
+        ],
+        ethers.provider
+      );
+      const liqBefore = (await npmRead.positions(tokenId))[7];
+
+      // Top-up the DAO so it has more to add (mint consumed up to ~1000 USDC + 0.5 WETH).
+      await fundFromWhale(usdc, USDC_WHALE, dao.address, ethers.utils.parseUnits("500", 6));
+      await fundFromWhale(weth, WETH_WHALE, dao.address, ethers.utils.parseEther("0.2"));
+
+      const addAmount0 =
+        token0.toLowerCase() === usdc.toLowerCase()
+          ? ethers.utils.parseUnits("250", 6)
+          : ethers.utils.parseEther("0.1");
+      const addAmount1 =
+        token1.toLowerCase() === weth.toLowerCase()
+          ? ethers.utils.parseEther("0.1")
+          : ethers.utils.parseUnits("250", 6);
+
+      await expect(
+        plugin
+          .connect(voter)
+          .increaseLiquidity(tokenId, addAmount0, addAmount1, 0, 0, FUTURE)
+      ).to.emit(plugin, "LiquidityIncreased");
+
+      const liqAfter = (await npmRead.positions(tokenId))[7];
+      expect(liqAfter).to.be.gt(liqBefore);
+    });
+
+    it("burn closes an emptied position; subsequent ownerOf reverts", async () => {
+      const {tokenId} = await mintFullRange();
+
+      const npmRead = new ethers.Contract(
+        NPM,
+        [
+          "function positions(uint256) view returns (uint96,address,address,address,uint24,int24,int24,uint128,uint256,uint256,uint128,uint128)",
+          "function ownerOf(uint256) view returns (address)",
+        ],
+        ethers.provider
+      );
+      const liquidity = (await npmRead.positions(tokenId))[7];
+
+      // Drain liquidity + collect — NPM requires liquidity = 0 AND tokensOwed = 0 to burn.
+      await plugin.connect(voter).decreaseLiquidity(tokenId, liquidity, 0, 0, FUTURE);
+      const U128_MAX = ethers.BigNumber.from(2).pow(128).sub(1);
+      await plugin.connect(voter).collect(tokenId, U128_MAX, U128_MAX);
+
+      await expect(plugin.connect(voter).burn(tokenId)).to.emit(plugin, "PositionBurned");
+      // After burn the NFT no longer exists — ownerOf reverts.
+      await expect(npmRead.ownerOf(tokenId)).to.be.reverted;
+    });
+
+    it("reverts DeadlineExpired when mint deadline < block.timestamp", async () => {
+      const amount0 =
+        token0.toLowerCase() === usdc.toLowerCase()
+          ? ethers.utils.parseUnits("1000", 6)
+          : ethers.utils.parseEther("0.5");
+      const amount1 =
+        token1.toLowerCase() === weth.toLowerCase()
+          ? ethers.utils.parseEther("0.5")
+          : ethers.utils.parseUnits("1000", 6);
+      const past = (await ethers.provider.getBlock("latest")).timestamp - 60;
+      await expect(
+        plugin.connect(voter).mint({
+          token0,
+          token1,
+          fee: FEE,
+          tickLower: FULL_RANGE_LOWER,
+          tickUpper: FULL_RANGE_UPPER,
+          amount0Desired: amount0,
+          amount1Desired: amount1,
+          amount0Min: 0,
+          amount1Min: 0,
+          deadline: past,
+        })
+      ).to.be.revertedWithCustomError(plugin, "DeadlineExpired");
+    });
+
+    it("rejects non-allowlisted token when allowlist is enforced (live tokens)", async () => {
+      // Turn the allowlist on by adding USDC only — WETH is now disallowed.
+      // (setAllowedToken is gated by MANAGE_ALLOWLIST; grant it to voter.)
+      const MANAGE_ALLOW = ethers.utils.id("MANAGE_ALLOWLIST_PERMISSION");
+      await dao.grant(plugin.address, await voter.getAddress(), MANAGE_ALLOW);
+      await plugin.connect(voter).setAllowedToken(usdc, true);
+      const amount0 =
+        token0.toLowerCase() === usdc.toLowerCase()
+          ? ethers.utils.parseUnits("1000", 6)
+          : ethers.utils.parseEther("0.5");
+      const amount1 =
+        token1.toLowerCase() === weth.toLowerCase()
+          ? ethers.utils.parseEther("0.5")
+          : ethers.utils.parseUnits("1000", 6);
+      await expect(
+        plugin.connect(voter).mint({
+          token0,
+          token1,
+          fee: FEE,
+          tickLower: FULL_RANGE_LOWER,
+          tickUpper: FULL_RANGE_UPPER,
+          amount0Desired: amount0,
+          amount1Desired: amount1,
+          amount0Min: 0,
+          amount1Min: 0,
+          deadline: FUTURE,
+        })
+      ).to.be.revertedWithCustomError(plugin, "TokenNotAllowed");
     });
 
     it("decreaseLiquidity + collect returns underlying to the DAO", async () => {

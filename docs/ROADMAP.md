@@ -438,7 +438,7 @@ Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 
 
 ### UniswapV3Plugin
 
-- [ ] 🟡 **Beef up fork tests.** Current suite covers only mint + decrease/collect against the live NPM. Add: `increaseLiquidity`, `burn`, fee-only collect with zero decrease, deadline-expired revert, allowlist enforcement against live tokens.
+- [x] ✅ **Fork tests beefed up to 6 cases.** Added `increaseLiquidity` grows position; `burn` closes emptied position + `ownerOf` reverts; `DeadlineExpired` mint guard; allowlist rejection of non-listed live tokens. (Existing: mint, decrease+collect.) Guard now accepts both `mainnetFork` and `localFork`.
 - [ ] 🟡 **`quoteMint(token0, token1, fee, tickLower, tickUpper, amount0Desired)` view helper** — wraps Uniswap QuoterV2 to surface expected `liquidity` + counter-amount before the proposal is built. Closes a real footgun (bad ticks → mint reverts on `amount0Min`/`amount1Min`).
 - [ ] 🟡 **Subgraph entities** — `V3Position`, `V3Collect`, `V3TokenAllowlistEntry` + mappings for `PositionMinted` / `LiquidityIncreased` / `LiquidityDecreased` / `FeesCollected` / `PositionBurned`. Today the positions page reads RPC only.
 - [ ] 🔵 **Optional ETH-in helper** — when `token0` / `token1` is WETH, prepend `WETH.deposit{value: x}` to `previewMintActions` so a single proposal can wrap + mint atomically.

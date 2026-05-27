@@ -119,8 +119,12 @@ CI gate: `slither --fail-high`. None high-severity.
   coverage (lines 93.75% / branches 90.63%).
 - Invariant: `test/invariants/UniswapV3.invariant.t.sol` — plugin holds no
   tokens/ETH, zero residual allowance, opNonce monotonic.
-- Fork: `test/plugins/uniswap-v3/UniswapV3Plugin.fork.test.ts` — mints + winds
-  down a REAL USDC/WETH position via the canonical NPM on `mainnetFork`.
+- Fork: `test/plugins/uniswap-v3/UniswapV3Plugin.fork.test.ts` — 6 cases
+  against the canonical NPM on mainnet-state forks (`mainnetFork` and
+  `localFork`): mint a real USDC/WETH position, `increaseLiquidity` grows
+  it, `decreaseLiquidity + collect` returns funds to the DAO, `burn`
+  removes the NFT, deadline-expired guard reverts, and allowlist
+  enforcement rejects non-listed live tokens.
 - Permission matrix: `test/plugins/PluginSetup.unit.test.ts` — 5-grant install
   set (EXECUTE, MANAGE_POSITIONS, UPDATE_POSITION_MANAGER, MANAGE_ALLOWLIST,
   UPGRADE_PLUGIN).
