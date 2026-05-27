@@ -5,6 +5,7 @@ import {
   UniswapV4PluginSetup__factory,
   AaveLendingPluginSetup__factory,
   CostRegistryPluginSetup__factory,
+  UniswapV3PluginSetup__factory,
 } from "../../typechain-types";
 
 // Mirrors the (op, where, who, permissionId) tuple from PermissionLib.MultiTargetPermission.
@@ -133,6 +134,30 @@ describe("PluginSetup (TRD §9 permission-matrix compliance)", () => {
     assertGrant(permissions[2], plugin, FAKE_DAO, UPGRADE_PLUGIN_PERMISSION_ID);
   });
 
+  it("UniswapV3PluginSetup grants the 5 expected permissions on install", async () => {
+    const [deployer] = await ethers.getSigners();
+    const setup = await new UniswapV3PluginSetup__factory(deployer).deploy();
+
+    const npm = ethers.Wallet.createRandom().address;
+    const data = ethers.utils.defaultAbiCoder.encode(["address", "address[]"], [npm, []]);
+
+    const result = await setup.callStatic.prepareInstallation(FAKE_DAO, data);
+    const permissions = result.preparedSetupData.permissions as unknown as Permission[];
+    const plugin = result.plugin;
+
+    expect(permissions.length).to.equal(5);
+    assertGrant(permissions[0], FAKE_DAO, plugin, EXECUTE_PERMISSION_ID);
+    assertGrant(permissions[1], plugin, FAKE_DAO, ethers.utils.id("MANAGE_POSITIONS_PERMISSION"));
+    assertGrant(
+      permissions[2],
+      plugin,
+      FAKE_DAO,
+      ethers.utils.id("UPDATE_POSITION_MANAGER_PERMISSION")
+    );
+    assertGrant(permissions[3], plugin, FAKE_DAO, ethers.utils.id("MANAGE_ALLOWLIST_PERMISSION"));
+    assertGrant(permissions[4], plugin, FAKE_DAO, UPGRADE_PLUGIN_PERMISSION_ID);
+  });
+
   it("prepareUpdate on build 1 reverts InvalidUpdatePath(0, 1)", async () => {
     const [deployer] = await ethers.getSigners();
 
@@ -140,11 +165,12 @@ describe("PluginSetup (TRD §9 permission-matrix compliance)", () => {
     const aaveSetup = await new AaveLendingPluginSetup__factory(deployer).deploy();
     const payrollSetup = await new PayrollPluginSetup__factory(deployer).deploy();
     const costSetup = await new CostRegistryPluginSetup__factory(deployer).deploy();
+    const v3Setup = await new UniswapV3PluginSetup__factory(deployer).deploy();
 
     const fakePlugin = ethers.Wallet.createRandom().address;
     const payload = {plugin: fakePlugin, currentHelpers: [], data: "0x"};
 
-    for (const setup of [uniSetup, aaveSetup, payrollSetup, costSetup]) {
+    for (const setup of [uniSetup, aaveSetup, payrollSetup, costSetup, v3Setup]) {
       await expect(setup.prepareUpdate(FAKE_DAO, 0, payload))
         .to.be.revertedWithCustomError(setup, "InvalidUpdatePath")
         .withArgs(0, 1);
@@ -158,11 +184,12 @@ describe("PluginSetup (TRD §9 permission-matrix compliance)", () => {
     const aaveSetup = await new AaveLendingPluginSetup__factory(deployer).deploy();
     const payrollSetup = await new PayrollPluginSetup__factory(deployer).deploy();
     const costSetup = await new CostRegistryPluginSetup__factory(deployer).deploy();
+    const v3Setup = await new UniswapV3PluginSetup__factory(deployer).deploy();
 
     const fakePlugin = ethers.Wallet.createRandom().address;
     const payload = {plugin: fakePlugin, currentHelpers: [], data: "0x"};
 
-    for (const setup of [uniSetup, aaveSetup, payrollSetup, costSetup]) {
+    for (const setup of [uniSetup, aaveSetup, payrollSetup, costSetup, v3Setup]) {
       const revokes = (await setup.callStatic.prepareUninstallation(
         FAKE_DAO,
         payload

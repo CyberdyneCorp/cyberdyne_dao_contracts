@@ -42,6 +42,22 @@ Signatures freeze at **P1**. Any change after P5 (bootstrap) is breaking for the
 
 ---
 
+## UniswapV3Plugin
+
+| Event | Signature | Indexed | Subgraph entity | UI surface |
+|---|---|---|---|---|
+| `PositionMinted` | `(uint256 tokenId, address token0, address token1, uint24 fee, uint128 liquidity, uint256 amount0, uint256 amount1)` | `tokenId`, `token0`, `token1` | `V3Position` (created) | Positions screen |
+| `LiquidityIncreased` | `(uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)` | `tokenId` | `V3Position` (liquidity++) | Positions screen |
+| `LiquidityDecreased` | `(uint256 tokenId, uint128 liquidity)` | `tokenId` | `V3Position` (liquidity--) | Positions screen |
+| `FeesCollected` | `(uint256 tokenId, uint256 amount0, uint256 amount1)` | `tokenId` | `V3Collect` | Positions screen — fee history |
+| `PositionBurned` | `(uint256 tokenId)` | `tokenId` | `V3Position` (closed) | Positions screen |
+| `PositionManagerUpdated` | `(address previous, address current)` | `previous`, `current` | `V3ManagerMigration` | Inspector |
+| `AllowedTokenSet` | `(address token, bool allowed)` | `token` | `V3TokenAllowlistEntry` (mutable) | Admin/inspector |
+
+**Read-side joins:** live position state (liquidity, ticks, tokensOwed) is read from `NonfungiblePositionManager.positions(tokenId)`; the DAO owns the NFTs.
+
+---
+
 ## PayrollPlugin
 
 | Event | Signature | Indexed | Subgraph entity | UI surface |

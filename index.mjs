@@ -20,6 +20,7 @@ import payrollAbi from "./frontend-abi/PayrollPlugin.json" with {type: "json"};
 import uniswapAbi from "./frontend-abi/UniswapV4Plugin.json" with {type: "json"};
 import aaveAbi from "./frontend-abi/AaveLendingPlugin.json" with {type: "json"};
 import costRegistryAbi from "./frontend-abi/CostRegistryPlugin.json" with {type: "json"};
+import uniswapV3Abi from "./frontend-abi/UniswapV3Plugin.json" with {type: "json"};
 
 /** @type {Record<string, any[]>} */
 const ABIS = {
@@ -27,6 +28,7 @@ const ABIS = {
   UniswapV4Plugin: uniswapAbi.abi,
   AaveLendingPlugin: aaveAbi.abi,
   CostRegistryPlugin: costRegistryAbi.abi,
+  UniswapV3Plugin: uniswapV3Abi.abi,
 };
 
 export {addresses};
