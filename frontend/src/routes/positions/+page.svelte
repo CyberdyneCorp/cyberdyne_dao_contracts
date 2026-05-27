@@ -48,6 +48,9 @@
   let mFull = true;
   let mLower = String(FULL_LOWER);
   let mUpper = String(FULL_UPPER);
+  // Optional: wrap this much native ETH → WETH atomically before the mint
+  // (the plugin is ERC20-only; this prepends a WETH.deposit{value} action).
+  let mWrapEth = ""; // ether units, blank = no wrap
   // Governance-safe: previewMintActions returns 5 raw actions which run
   // atomically in one dao.execute (no nested-execute reentrancy under TV).
   let mintAction: ProposalAction[] | null = null;
@@ -82,7 +85,7 @@
     try {
       if ($wallet.status !== "connected") throw new Error("Connect a wallet");
       const cfg = cfgNow();
-      mintAction = await actions.previewV3Mint(cfg, $wallet.provider, {
+      const mintBatch = await actions.previewV3Mint(cfg, $wallet.provider, {
         token0: mToken0,
         token1: mToken1,
         fee: parseInt(mFee, 10),
@@ -94,6 +97,14 @@
         amount1Min: ethers.constants.Zero,
         deadline: farDeadline(),
       });
+      // Optionally prepend a WETH.deposit{value} so the DAO wraps ETH atomically
+      // before the mint pulls WETH.
+      if (mWrapEth.trim()) {
+        const wrap = actions.wethDepositAction(cfg, ethers.utils.parseEther(mWrapEth.trim()));
+        mintAction = [wrap, ...mintBatch];
+      } else {
+        mintAction = mintBatch;
+      }
     } catch (err) {
       alert(`Build failed: ${(err as Error).message}`);
     }
@@ -566,6 +577,9 @@
       <label>tickLower <input bind:value={mLower} style="min-width:90px" /></label>
       <label>tickUpper <input bind:value={mUpper} style="min-width:90px" /></label>
     {/if}
+    <label title="Optional: wrap this much native ETH → WETH atomically before the mint">
+      wrap ETH <input bind:value={mWrapEth} placeholder="0 (none)" style="min-width:90px" />
+    </label>
     <button on:click={quoteMint}>Quote pool</button>
     <button on:click={buildMint}>Build</button>
   </div>

@@ -432,6 +432,26 @@ export async function previewV3Burn(
   return liftPreview(actions, `Uniswap V3: burn #${tokenId.toString()}`);
 }
 
+/**
+ * Build a `WETH.deposit{value: amountWei}()` action. The Uniswap plugins are
+ * ERC20-only by design (the plugin never holds a payable surface), so to fund
+ * a position with native ETH the proposal wraps it first: prepend this action
+ * to a V3/V4 mint or increase batch so the DAO wraps `amountWei` of its ETH to
+ * WETH atomically before the LP op pulls WETH. `cfg.external.WETH` is the
+ * canonical WETH9 for the chain.
+ */
+export function wethDepositAction(cfg: ChainConfig, amountWei: ethers.BigNumber): ProposalAction {
+  const weth = cfg.external.WETH;
+  if (!weth) throw new Error(`No WETH address configured for chain ${cfg.chainId}`);
+  const iface = new ethers.utils.Interface(["function deposit() payable"]);
+  return {
+    to: weth,
+    value: amountWei.toString(),
+    data: iface.encodeFunctionData("deposit", []),
+    summary: `Wrap ${ethers.utils.formatEther(amountWei)} ETH → WETH`,
+  };
+}
+
 // --- Uniswap V4 LP lifecycle (modifyLiquidities pass-through) --------------
 
 /**
