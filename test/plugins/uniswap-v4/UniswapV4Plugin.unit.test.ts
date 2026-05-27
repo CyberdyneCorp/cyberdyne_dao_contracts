@@ -678,6 +678,32 @@ describe("UniswapV4Plugin", () => {
       ).to.be.revertedWithCustomError(plugin, "UnlockDataTooShort");
     });
 
+    it("skips non-MINT_POSITION actions in the stream (recipient check is mint-only)", async () => {
+      // Action stream is INCREASE_LIQUIDITY (0x00) — the recipient guard must
+      // `continue` past it (no owner field to check) and let the op proceed.
+      const actionStream = "0x" + "00"; // INCREASE_LIQUIDITY
+      const incParam = ethers.utils.defaultAbiCoder.encode(["uint256"], [1]); // opaque to the guard
+      const env = ethers.utils.defaultAbiCoder.encode(
+        ["bytes", "bytes[]"],
+        [actionStream, [incParam]]
+      );
+      await expect(
+        plugin.connect(voter).modifyLiquidities(env, FUTURE_DEADLINE, [], [], [], [])
+      ).to.emit(plugin, "LiquidityModified");
+    });
+
+    it("tolerates an action stream shorter than params (min-length guard)", async () => {
+      // actionStream length 0 < params length 1 → the guard's min() picks 0 and
+      // the loop never runs. A well-formed envelope with no actions is a no-op.
+      const env = ethers.utils.defaultAbiCoder.encode(
+        ["bytes", "bytes[]"],
+        ["0x", [ethers.utils.defaultAbiCoder.encode(["uint256"], [1])]]
+      );
+      await expect(
+        plugin.connect(voter).modifyLiquidities(env, FUTURE_DEADLINE, [], [], [], [])
+      ).to.emit(plugin, "LiquidityModified");
+    });
+
     it("previewModifyLiquiditiesActions also enforces the MINT_POSITION recipient", async () => {
       const stranger = ethers.Wallet.createRandom().address;
       const bad = envelopeWithMint(stranger);
