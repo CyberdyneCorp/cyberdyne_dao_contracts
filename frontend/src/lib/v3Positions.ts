@@ -74,7 +74,14 @@ export async function listV3PositionsOwnedBy(
   for (let i = 0; i < n; i++) {
     ids.push(await npm.tokenOfOwnerByIndex(owner, i));
   }
-  return Promise.all(ids.map((id) => readV3Position(npmAddress, provider, id)));
+  // Isolate per-position reads — one failing detail read (e.g. a flaky RPC
+  // storage fetch on a fork) shouldn't blank the whole list.
+  const results = await Promise.allSettled(
+    ids.map((id) => readV3Position(npmAddress, provider, id))
+  );
+  return results
+    .filter((r): r is PromiseFulfilledResult<V3PositionRead> => r.status === "fulfilled")
+    .map((r) => r.value);
 }
 
 export type V3PoolState = {

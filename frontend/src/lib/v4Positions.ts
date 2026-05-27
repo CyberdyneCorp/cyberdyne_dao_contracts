@@ -93,11 +93,18 @@ export async function readV4Position(
  * connected node — on a fresh anvil fork this is the pin block, which is what
  * we want.
  */
+// Most RPCs cap eth_getLogs at ~10k blocks; scan in chunks under that. The
+// default lookback (~7 days of mainnet blocks) keeps the toy frontend's direct
+// scan shallow — deeper history is the subgraph's job. Pass a larger
+// `lookbackBlocks` (or 0 for "from genesis", chunked) if you need it.
+const LOG_CHUNK = 9_000;
+const DEFAULT_LOOKBACK = 50_000;
+
 export async function listV4PositionsOwnedBy(
   pmAddress: string,
   provider: ethers.providers.Provider,
   owner: string,
-  fromBlock: number = 0
+  lookbackBlocks: number = DEFAULT_LOOKBACK
 ): Promise<V4PositionRead[]> {
   const pm = new ethers.Contract(
     pmAddress,
@@ -107,12 +114,23 @@ export async function listV4PositionsOwnedBy(
     ],
     provider
   );
-  // Filter Transfer(from=0x0, to=owner) — i.e. mints to this owner.
+  const tip = await provider.getBlockNumber();
+  const from = lookbackBlocks > 0 ? Math.max(0, tip - lookbackBlocks) : 0;
+  // Filter Transfer(from=0x0, to=owner) — i.e. mints to this owner — in
+  // ≤LOG_CHUNK windows so a wide range can't blow the RPC's getLogs cap.
   const mintFilter = pm.filters.Transfer(ethers.constants.AddressZero, owner);
-  const events = await pm.queryFilter(mintFilter, fromBlock);
-  const tokenIds = Array.from(
-    new Set(events.map((e) => e.args!.tokenId.toString()))
-  ).map((s) => ethers.BigNumber.from(s));
+  const events: ethers.Event[] = [];
+  for (let end = tip; end >= from; end -= LOG_CHUNK) {
+    const start = Math.max(from, end - LOG_CHUNK + 1);
+    try {
+      events.push(...(await pm.queryFilter(mintFilter, start, end)));
+    } catch {
+      /* skip an unreadable range */
+    }
+  }
+  const tokenIds = Array.from(new Set(events.map((e) => e.args!.tokenId.toString()))).map((s) =>
+    ethers.BigNumber.from(s)
+  );
 
   // Filter out positions transferred away after mint.
   const stillOwned: ethers.BigNumber[] = [];
@@ -124,5 +142,12 @@ export async function listV4PositionsOwnedBy(
       /* burned / not found */
     }
   }
-  return Promise.all(stillOwned.map((id) => readV4Position(pmAddress, provider, id)));
+  // Isolate per-position reads — one failing detail read (e.g. a flaky RPC
+  // storage fetch) shouldn't blank the whole list.
+  const results = await Promise.allSettled(
+    stillOwned.map((id) => readV4Position(pmAddress, provider, id))
+  );
+  return results
+    .filter((r): r is PromiseFulfilledResult<V4PositionRead> => r.status === "fulfilled")
+    .map((r) => r.value);
 }

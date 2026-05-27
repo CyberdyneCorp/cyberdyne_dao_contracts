@@ -203,10 +203,20 @@
     return n === 0 ? "auto" : new Date(n * 1000).toISOString().slice(0, 16).replace("T", " ");
   }
 
-  // Auto-load the list whenever the connected chain provides a governance addr.
+  // Auto-load the list ONCE per connected account. Keying on chainId+address
+  // (not `proposals.length === 0`) avoids an infinite refresh loop when the
+  // DAO genuinely has zero proposals — an empty result would otherwise keep
+  // re-satisfying the trigger.
+  let autoLoadedFor: string | undefined;
   $: cfg = $wallet.status === "connected" ? chainConfig($wallet.chainId) : undefined;
   $: hasGov = cfg ? governanceConfigured(cfg) : false;
-  $: if (hasGov && proposals.length === 0 && !loading && !listErr) refresh();
+  $: maybeAutoLoad($wallet.status === "connected" ? `${$wallet.chainId}:${$wallet.address}` : undefined);
+
+  function maybeAutoLoad(key: string | undefined): void {
+    if (!hasGov || !key || key === autoLoadedFor) return;
+    autoLoadedFor = key;
+    refresh();
+  }
 
   const needsArgB = new Set<Kind>([
     "uniswap-setAllowedToken",
