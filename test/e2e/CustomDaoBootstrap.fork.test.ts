@@ -1,8 +1,9 @@
 /**
- * Full 4-plugin DAO bootstrap, end-to-end on a real OSx fork.
+ * Full 5-plugin DAO bootstrap, end-to-end on a real OSx fork.
  *
  * What this validates (ROADMAP P5 exit criteria):
- *   - DAOFactory.createDao succeeds with our 3 plugins installed atomically.
+ *   - DAOFactory.createDao succeeds with all 5 plugins (Payroll, UniswapV4,
+ *     UniswapV3, AAVE, CostRegistry) installed atomically in one tx.
  *   - `IProtocolVersion(daoFactory).protocolVersion() == [1, 4, 0]` — the
  *     audited OSx core boundary defined in TRD §3.
  *   - Every permission in TRD §9 is granted by the PermissionManager
@@ -39,8 +40,11 @@ import {
   PayrollPlugin__factory,
   PayrollPluginSetup__factory,
   UniswapV4PluginSetup__factory,
+  UniswapV3PluginSetup__factory,
+  AaveLendingPlugin__factory,
   AaveLendingPluginSetup__factory,
   AaveV3Adapter__factory,
+  CostRegistryPluginSetup__factory,
 } from "../../typechain-types";
 
 const ROOT_PERMISSION_ID = ethers.utils.id("ROOT_PERMISSION");
@@ -52,6 +56,10 @@ const UPDATE_ROUTER_PERMISSION_ID = ethers.utils.id("UPDATE_ROUTER_PERMISSION");
 const MANAGE_ALLOWLIST_PERMISSION_ID = ethers.utils.id("MANAGE_ALLOWLIST_PERMISSION");
 const TRIGGER_LENDING_PERMISSION_ID = ethers.utils.id("TRIGGER_LENDING_PERMISSION");
 const UPDATE_ADAPTER_PERMISSION_ID = ethers.utils.id("UPDATE_ADAPTER_PERMISSION");
+const MANAGE_POSITIONS_PERMISSION_ID = ethers.utils.id("MANAGE_POSITIONS_PERMISSION");
+const UPDATE_POSITION_MANAGER_PERMISSION_ID = ethers.utils.id("UPDATE_POSITION_MANAGER_PERMISSION");
+const MANAGE_COSTS_PERMISSION_ID = ethers.utils.id("MANAGE_COSTS_PERMISSION");
+const UPDATE_PAYMENT_TOKEN_PERMISSION_ID = ethers.utils.id("UPDATE_PAYMENT_TOKEN_PERMISSION");
 
 // Inline ABIs — avoids pulling the full OSx framework (with its transitive
 // ENS imports) into our Hardhat compile.
@@ -78,6 +86,16 @@ const ERC20_ABI = [
   "function transfer(address to, uint256 amount) returns (bool)",
 ];
 
+const AAVE_POOL_ABI = [
+  "function getReserveData(address asset) view returns (uint256 configuration, uint128 liquidityIndex, uint128 currentLiquidityRate, uint128 variableBorrowIndex, uint128 currentVariableBorrowRate, uint128 currentStableBorrowRate, uint40 lastUpdateTimestamp, uint16 id, address aTokenAddress, address stableDebtTokenAddress, address variableDebtTokenAddress, address interestRateStrategyAddress)",
+];
+
+// Known USDC whale for funding the DAO treasury in the governance fund-move test.
+const USDC_WHALE: Record<string, string> = {
+  mainnet: "0x40ec5B33f54e0E8A33A975908C5BA1c14e5BbbDf",
+  base: "0x0B0A5886664376F59C351ba3f598C8A8B4D0A6f3",
+};
+
 // Minimal TokenVoting surface for the create → vote → execute round-trip.
 // Matches the build pinned in lib/osx-commons token-voting ABIs.
 const TOKEN_VOTING_ABI = [
@@ -91,12 +109,29 @@ const TOKEN_VOTING_ABI = [
 // VoteOption enum: 0 None, 1 Abstain, 2 Yes, 3 No.
 const VOTE_YES = 2;
 
-// Optional: a verified TokenVoting PluginRepo for this fork. When set, the
-// bootstrap installs TokenVoting as plugins[0] and the voting-flow test runs.
-const TOKEN_VOTING_REPO = process.env.TOKEN_VOTING_REPO;
+// Canonical mainnet TokenVoting PluginRepo (build 1 is PUSH0-free → works on
+// a cancun fork). On a mainnet-state fork we default to it so the governance
+// round-trip tests run by default; an explicit env var still overrides.
+const TOKEN_VOTING_REPO_MAINNET = "0xb7401cD221ceAFC54093168B814Cc3d42579287f";
+function resolveTokenVotingRepo(): string | undefined {
+  if (process.env.TOKEN_VOTING_REPO) return process.env.TOKEN_VOTING_REPO;
+  // Default-on ONLY for localFork — a developer-controlled anvil fork of
+  // mainnet started with `--hardfork cancun` (just fork-local), where the
+  // pinned repo + its PUSH0-using impl are guaranteed to run. CI's
+  // mainnetFork/baseFork keep the governance round-trips env-gated (unchanged
+  // behaviour) because we can't assume the CI fork's hardfork; the 5-plugin
+  // bootstrap + §9 matrix below need no TokenVoting and run on every fork.
+  if (network.name === "localFork") return TOKEN_VOTING_REPO_MAINNET;
+  return undefined;
+}
+const TOKEN_VOTING_REPO = resolveTokenVotingRepo();
+// Build 1 for the pinned mainnet repo (7-arg createProposal, PUSH0-free).
+const TOKEN_VOTING_BUILD = Number(
+  process.env.TOKEN_VOTING_BUILD ?? (TOKEN_VOTING_REPO === TOKEN_VOTING_REPO_MAINNET ? 1 : 3)
+);
 
 function chainKey(): ExternalChain {
-  if (network.name === "mainnetFork") return "mainnet";
+  if (network.name === "mainnetFork" || network.name === "localFork") return "mainnet";
   if (network.name === "baseFork") return "base";
   if (network.name === "sepoliaFork") {
     throw new Error("sepoliaFork has no USDC mapping in EXTERNAL — adjust before use");
@@ -104,7 +139,7 @@ function chainKey(): ExternalChain {
   throw new Error(`Unsupported fork: ${network.name}`);
 }
 
-onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
+onlyOn(["mainnetFork", "baseFork", "sepoliaFork", "localFork"], () => {
   describe(`CustomDaoBootstrap end-to-end (fork: ${network.name}) [fork]`, function () {
     // Retry transient public-RPC zero-reads (see AAVE fork test for rationale).
     this.retries(2);
@@ -117,7 +152,9 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
     let daoAddress: string;
     let payrollAddress: string;
     let uniswapAddress: string;
+    let uniswapV3Address: string;
     let aaveAddress: string;
+    let costRegistryAddress: string;
     let daoFactoryAddress: string;
     let tokenVotingAddress: string | undefined; // set only if TOKEN_VOTING_REPO provided
 
@@ -139,17 +176,18 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
       await payrollSetup.deployed();
       const uniswapSetup = await new UniswapV4PluginSetup__factory(deployer).deploy();
       await uniswapSetup.deployed();
+      const uniswapV3Setup = await new UniswapV3PluginSetup__factory(deployer).deploy();
+      await uniswapV3Setup.deployed();
       const aaveSetup = await new AaveLendingPluginSetup__factory(deployer).deploy();
       await aaveSetup.deployed();
+      const costSetup = await new CostRegistryPluginSetup__factory(deployer).deploy();
+      await costSetup.deployed();
 
-      // AAVE adapter pointing at the real Pool on this chain.
-      // (sepoliaFork branch should set its own adapter or skip the AAVE
-      //  plugin entirely — current setup assumes AAVE is live on this chain.)
-      const aavePool =
-        network.name === "mainnetFork" || network.name === "baseFork"
-          ? EXTERNAL[chainKey()].AAVE_V3_POOL
-          : ethers.constants.AddressZero;
-      if (aavePool === ethers.constants.AddressZero) {
+      // AAVE adapter pointing at the real Pool on this chain. chainKey()
+      // resolves mainnetFork/localFork → mainnet and baseFork → base; sepolia
+      // throws earlier (no USDC mapping), so AAVE is always live here.
+      const aavePool = EXTERNAL[chainKey()].AAVE_V3_POOL;
+      if (!aavePool || aavePool === ethers.constants.AddressZero) {
         throw new Error(`AAVE not configured for ${network.name}`);
       }
       const aaveAdapter = await new AaveV3Adapter__factory(deployer).deploy(aavePool);
@@ -189,9 +227,11 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
 
       const payrollRepo = await publish("cyberdyne-payroll", payrollSetup.address);
       const uniswapRepo = await publish("cyberdyne-uniswap", uniswapSetup.address);
+      const uniswapV3Repo = await publish("cyberdyne-uniswap-v3", uniswapV3Setup.address);
       const aaveRepo = await publish("cyberdyne-aave", aaveSetup.address);
+      const costRepo = await publish("cyberdyne-cost-registry", costSetup.address);
 
-      // Phase 2: createDao with the 3 plugins.
+      // Phase 2: createDao with all 5 plugins.
       const daoFactory = new ethers.Contract(daoFactoryAddress, DAO_FACTORY_ABI, deployer);
 
       const externals = EXTERNAL[chainKey()];
@@ -201,7 +241,7 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
       // deployer so it controls 100% of voting power for the round-trip test.
       const pluginSettings: unknown[] = [];
       if (TOKEN_VOTING_REPO) {
-        const tvBuild = Number(process.env.TOKEN_VOTING_BUILD ?? 3);
+        const tvBuild = TOKEN_VOTING_BUILD;
         const votingSettings = {
           votingMode: 1, // EarlyExecution — lets the 100%-power holder execute immediately
           supportThreshold: 500000, // 50%
@@ -254,11 +294,22 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
           ),
         },
         {
+          pluginSetupRef: {versionTag: {release: 1, build: 1}, pluginSetupRepo: uniswapV3Repo},
+          data: ethers.utils.defaultAbiCoder.encode(
+            ["address", "address[]"],
+            [externals.UNISWAP_V3_NPM, []]
+          ),
+        },
+        {
           pluginSetupRef: {versionTag: {release: 1, build: 1}, pluginSetupRepo: aaveRepo},
           data: ethers.utils.defaultAbiCoder.encode(
             ["address", "address[]"],
             [aaveAdapter.address, []]
           ),
+        },
+        {
+          pluginSetupRef: {versionTag: {release: 1, build: 1}, pluginSetupRepo: costRepo},
+          data: ethers.utils.defaultAbiCoder.encode(["address"], [externals.USDC]),
         }
       );
 
@@ -272,12 +323,15 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
         pluginSettings
       );
       daoAddress = result.dao;
-      // Plugin order in installedPlugins mirrors pluginSettings order.
+      // Plugin order in installedPlugins mirrors pluginSettings order:
+      // [TokenVoting?] payroll, uniswapV4, uniswapV3, aave, costRegistry.
       const base = TOKEN_VOTING_REPO ? 1 : 0;
       if (TOKEN_VOTING_REPO) tokenVotingAddress = result.installedPlugins[0].plugin;
       payrollAddress = result.installedPlugins[base + 0].plugin;
       uniswapAddress = result.installedPlugins[base + 1].plugin;
-      aaveAddress = result.installedPlugins[base + 2].plugin;
+      uniswapV3Address = result.installedPlugins[base + 2].plugin;
+      aaveAddress = result.installedPlugins[base + 3].plugin;
+      costRegistryAddress = result.installedPlugins[base + 4].plugin;
 
       await (
         await daoFactory.createDao(
@@ -313,8 +367,14 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
       // The DAO IS the PermissionManager (DAO inherits PermissionManager).
       const pm = new ethers.Contract(daoAddress, PERMISSION_MANAGER_ABI, ethers.provider);
 
-      // DAO → plugin: EXECUTE for each.
-      for (const plugin of [payrollAddress, uniswapAddress, aaveAddress]) {
+      // DAO → plugin: EXECUTE for each (all 5).
+      for (const plugin of [
+        payrollAddress,
+        uniswapAddress,
+        uniswapV3Address,
+        aaveAddress,
+        costRegistryAddress,
+      ]) {
         expect(await pm.hasPermission(daoAddress, plugin, EXECUTE_PERMISSION_ID, "0x")).to.equal(
           true,
           `EXECUTE not granted to ${plugin}`
@@ -353,6 +413,41 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
       ).to.equal(true);
       expect(
         await pm.hasPermission(aaveAddress, daoAddress, UPGRADE_PLUGIN_PERMISSION_ID, "0x")
+      ).to.equal(true);
+
+      // UniswapV3: MANAGE_POSITIONS, UPDATE_POSITION_MANAGER, MANAGE_ALLOWLIST, UPGRADE.
+      expect(
+        await pm.hasPermission(uniswapV3Address, daoAddress, MANAGE_POSITIONS_PERMISSION_ID, "0x")
+      ).to.equal(true);
+      expect(
+        await pm.hasPermission(
+          uniswapV3Address,
+          daoAddress,
+          UPDATE_POSITION_MANAGER_PERMISSION_ID,
+          "0x"
+        )
+      ).to.equal(true);
+      expect(
+        await pm.hasPermission(uniswapV3Address, daoAddress, MANAGE_ALLOWLIST_PERMISSION_ID, "0x")
+      ).to.equal(true);
+      expect(
+        await pm.hasPermission(uniswapV3Address, daoAddress, UPGRADE_PLUGIN_PERMISSION_ID, "0x")
+      ).to.equal(true);
+
+      // CostRegistry: MANAGE_COSTS, UPDATE_PAYMENT_TOKEN, UPGRADE.
+      expect(
+        await pm.hasPermission(costRegistryAddress, daoAddress, MANAGE_COSTS_PERMISSION_ID, "0x")
+      ).to.equal(true);
+      expect(
+        await pm.hasPermission(
+          costRegistryAddress,
+          daoAddress,
+          UPDATE_PAYMENT_TOKEN_PERMISSION_ID,
+          "0x"
+        )
+      ).to.equal(true);
+      expect(
+        await pm.hasPermission(costRegistryAddress, daoAddress, UPGRADE_PLUGIN_PERMISSION_ID, "0x")
       ).to.equal(true);
     });
 
@@ -461,6 +556,84 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
       expect(recipients.some((r) => r.payee.toLowerCase() === newPayee.toLowerCase())).to.equal(
         true
       );
+    });
+
+    // THE product promise: governance moving real treasury funds. A vote
+    // executes an AAVE supply built via the plugin's `previewSupplyActions`
+    // multi-action pattern — proving the full preview…Actions → proposal →
+    // vote → execute path works end-to-end against the real AAVE Pool, not
+    // just via a direct plugin call. Gated on TokenVoting being installed.
+    it("governance moves treasury: AAVE supply via vote → execute (preview…Actions)", async function () {
+      if (!TOKEN_VOTING_REPO || !tokenVotingAddress) {
+        this.skip();
+        return;
+      }
+      this.timeout(600_000);
+
+      const externals = EXTERNAL[chainKey()];
+      const usdc = new ethers.Contract(externals.USDC, ERC20_ABI, ethers.provider);
+      const amount = ethers.utils.parseUnits("1000", 6); // 1000 USDC
+
+      // Fund the DAO treasury with USDC from a whale.
+      const whale = USDC_WHALE[chainKey()];
+      await ethers.provider.send("hardhat_impersonateAccount", [whale]);
+      await ethers.provider.send("hardhat_setBalance", [
+        whale,
+        ethers.utils.hexValue(ethers.utils.parseEther("10")),
+      ]);
+      const whaleSigner = await ethers.getSigner(whale);
+      await (await usdc.connect(whaleSigner).transfer(daoAddress, amount)).wait();
+
+      // Resolve the AAVE aToken for USDC to assert the supply landed in the DAO.
+      const pool = new ethers.Contract(externals.AAVE_V3_POOL, AAVE_POOL_ABI, ethers.provider);
+      const reserve = await pool.getReserveData(externals.USDC);
+      const aToken = new ethers.Contract(reserve.aTokenAddress, ERC20_ABI, ethers.provider);
+      const aBefore = await aToken.balanceOf(daoAddress);
+      const daoUsdcBefore = await usdc.balanceOf(daoAddress);
+
+      // Build the governance-safe action batch via the plugin's view helper.
+      // Returns [approve(pool, amount), pool.supply(asset, amount, onBehalfOf=DAO)].
+      const aave = AaveLendingPlugin__factory.connect(aaveAddress, ethers.provider);
+      const raw = await aave.previewSupplyActions(externals.USDC, amount);
+      const actions = raw.map((a) => ({to: a.to, value: a.value, data: a.data}));
+      expect(actions.length).to.be.greaterThan(1); // multi-action batch (approve + supply)
+
+      const tv = new ethers.Contract(tokenVotingAddress, TOKEN_VOTING_ABI, deployer);
+      const createTx = await tv.createProposal(
+        ethers.utils.toUtf8Bytes("ipfs://e2e-aave-supply"),
+        actions,
+        0, // allowFailureMap — every action must succeed
+        0,
+        0,
+        VOTE_YES,
+        true // tryEarlyExecution (deployer holds 100% power)
+      );
+      const receipt = await createTx.wait();
+      const created = receipt.logs.find(
+        (l: {topics: string[]}) =>
+          l.topics[0] ===
+          ethers.utils.id(
+            "ProposalCreated(uint256,address,uint64,uint64,bytes,(address,uint256,bytes)[],uint256)"
+          )
+      );
+      const proposalId = created
+        ? ethers.BigNumber.from(created.topics[1])
+        : ethers.BigNumber.from(0);
+
+      let proposal = await tv.getProposal(proposalId);
+      if (!proposal.executed) {
+        await time.increase(3600 + 1);
+        await (await tv.execute(proposalId)).wait();
+        proposal = await tv.getProposal(proposalId);
+      }
+      expect(proposal.executed).to.equal(true);
+
+      // Treasury moved: DAO spent its USDC and received aUSDC 1:1 (minus dust).
+      expect(daoUsdcBefore.sub(await usdc.balanceOf(daoAddress))).to.equal(amount);
+      const aGained = (await aToken.balanceOf(daoAddress)).sub(aBefore);
+      expect(aGained).to.be.gte(amount.sub(2)); // aToken is ~1:1, allow rounding dust
+      // The plugin never custodies — aTokens are the DAO's.
+      expect(await usdc.balanceOf(aaveAddress)).to.equal(0);
     });
   });
 });
