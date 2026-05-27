@@ -42,6 +42,22 @@ import type {SnapshotRestorer} from "@nomicfoundation/hardhat-network-helpers";
 
 const TRIGGER_SWAP_PERMISSION_ID = ethers.utils.id("TRIGGER_SWAP_PERMISSION");
 const EXECUTE_PERMISSION_ID = ethers.utils.id("EXECUTE_PERMISSION");
+const UPDATE_ROUTER_PERMISSION_ID = ethers.utils.id("UPDATE_ROUTER_PERMISSION");
+const MANAGE_POSITIONS_PERMISSION_ID = ethers.utils.id("MANAGE_POSITIONS_PERMISSION");
+
+// v4-periphery PositionManager (mainnet). The LP test is mainnet-only — Base
+// has a different PM and pool set, and the v4 LP path is identical code.
+const V4_POSITION_MANAGER_MAINNET = "0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e";
+// Known WETH whale (same as the V3 fork test).
+const WETH_WHALE = "0x8EB8a3b98659Cce290402893d0123abb75E3ab28";
+
+// v4 Actions enum opcodes (v4-periphery).
+const V4_MINT_POSITION = 0x02;
+const V4_SETTLE_PAIR = 0x0d;
+
+function packActions(bytes: number[]): string {
+  return "0x" + Buffer.from(bytes).toString("hex");
+}
 
 // Known USDC whales on each fork target. Same set as PayrollPlugin.fork.test.ts.
 const WHALES: Record<ExternalChain, string> = {
@@ -81,6 +97,8 @@ async function deployProxied(
 
 function chainKey(): ExternalChain {
   if (network.name === "mainnetFork") return "mainnet";
+  // localFork is an anvil fork of mainnet state with chainId 31337.
+  if (network.name === "localFork") return "mainnet";
   if (network.name === "baseFork") return "base";
   throw new Error(`Unsupported fork network: ${network.name}`);
 }
@@ -117,7 +135,7 @@ function encodeV3ExactInSingle(opts: {
   return {commands, inputs};
 }
 
-onlyOn(["mainnetFork", "baseFork"], () => {
+onlyOn(["mainnetFork", "baseFork", "localFork"], () => {
   describe(`UniswapV4Plugin (fork: ${network.name}) [fork]`, function () {
     // Retry transient public-RPC zero-reads (see AAVE fork test for rationale).
     this.retries(2);
@@ -272,6 +290,137 @@ onlyOn(["mainnetFork", "baseFork"], () => {
     // payload with the production PoolKey/hook config.
     it.skip("V4-native single-hop USDC → WETH swap (deferred to P5 e2e)", async () => {
       /* see preamble */
+    });
+
+    // ----- V4 LP lifecycle against the REAL v4 PositionManager -----
+    //
+    // Mints a real V4 USDC/WETH position owned by the DAO via the
+    // modifyLiquidities pass-through, exercising the full
+    // approve → Permit2 → PM.modifyLiquidities → reset batch + the on-chain
+    // MintRecipientMustBeDao guard. Mainnet-only (the PM address + pool are
+    // mainnet-specific); the LP code path itself is chain-agnostic.
+    //
+    // Pool (probed live at the pinned block): USDC/WETH, fee 3000,
+    // tickSpacing 60, no hooks, current tick ~199951.
+    it("mints a real V4 USDC/WETH position owned by the DAO", async function () {
+      if (chainKey() !== "mainnet") {
+        this.skip();
+        return;
+      }
+      // First touch of v4 PoolManager storage on a cold fork is heavy.
+      this.timeout(600_000);
+
+      // Wire the v4 PositionManager via the vote-gated setter.
+      await dao.grant(plugin.address, await voter.getAddress(), UPDATE_ROUTER_PERMISSION_ID);
+      await dao.grant(plugin.address, await voter.getAddress(), MANAGE_POSITIONS_PERMISSION_ID);
+      await plugin.connect(voter).setV4PositionManager(V4_POSITION_MANAGER_MAINNET);
+
+      // Fund the DAO generously; the PM pulls only what the chosen liquidity
+      // needs (well under these maxes for the small liquidity below).
+      const maxUsdc = ethers.utils.parseUnits("10000", 6);
+      const maxWeth = ethers.utils.parseEther("5");
+      await fundFromWhale(usdcAddress, WHALES[chainKey()], dao.address, maxUsdc);
+      await fundFromWhale(wethAddress, WETH_WHALE, dao.address, maxWeth);
+
+      // currency0 < currency1 (USDC < WETH numerically on mainnet).
+      const [c0, c1] =
+        usdcAddress.toLowerCase() < wethAddress.toLowerCase()
+          ? [usdcAddress, wethAddress]
+          : [wethAddress, usdcAddress];
+      const poolKey = {currency0: c0, currency1: c1, fee: 3000, tickSpacing: 60, hooks: ethers.constants.AddressZero};
+
+      // Range straddling the current tick (199951), aligned to tickSpacing 60.
+      const tickLower = 199800; // 199800 / 60 = 3330
+      const tickUpper = 200100; // 200100 / 60 = 3335
+      const liquidity = ethers.BigNumber.from("1000000000000"); // 1e12, ~10% of pool's
+
+      const mintParams = ethers.utils.defaultAbiCoder.encode(
+        ["(address,address,uint24,int24,address)", "int24", "int24", "uint256", "uint128", "uint128", "address", "bytes"],
+        [
+          [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks],
+          tickLower,
+          tickUpper,
+          liquidity,
+          maxUsdc, // amount0Max
+          maxWeth, // amount1Max
+          dao.address, // owner — MUST be the DAO or the plugin reverts
+          "0x",
+        ]
+      );
+      const settleParams = ethers.utils.defaultAbiCoder.encode(
+        ["address", "address"],
+        [poolKey.currency0, poolKey.currency1]
+      );
+      const unlockData = ethers.utils.defaultAbiCoder.encode(
+        ["bytes", "bytes[]"],
+        [packActions([V4_MINT_POSITION, V4_SETTLE_PAIR]), [mintParams, settleParams]]
+      );
+
+      const pm = new ethers.Contract(
+        V4_POSITION_MANAGER_MAINNET,
+        ["function nextTokenId() view returns (uint256)", "function ownerOf(uint256) view returns (address)"],
+        ethers.provider
+      );
+      const expectedTokenId = await pm.nextTokenId();
+
+      // Derive the deadline from the FORK's clock, not wall-clock: a shared
+      // anvil fork may have had block.timestamp advanced far into the future
+      // by earlier time-travel tests (payroll jumps to 2027/2028).
+      const nowTs = (await ethers.provider.getBlock("latest")).timestamp;
+      const deadline = nowTs + 3600;
+      await expect(
+        plugin
+          .connect(voter)
+          .modifyLiquidities(
+            unlockData,
+            deadline,
+            [usdcAddress, wethAddress], // input currencies
+            [maxUsdc, maxWeth], // maxIn
+            [], // no output-side slippage assertions on a pure mint
+            []
+          )
+      ).to.emit(plugin, "LiquidityModified");
+
+      // The freshly-minted NFT is owned by the DAO.
+      expect(await pm.ownerOf(expectedTokenId)).to.equal(dao.address);
+      // The plugin custodies nothing; residual DAO→Permit2 allowance is zero.
+      expect(await usdc.balanceOf(plugin.address)).to.equal(0);
+      expect(await weth.balanceOf(plugin.address)).to.equal(0);
+      expect(await usdc.allowance(dao.address, permit2)).to.equal(0);
+      expect(await weth.allowance(dao.address, permit2)).to.equal(0);
+    });
+
+    it("reverts a V4 mint whose encoded owner is not the DAO", async function () {
+      if (chainKey() !== "mainnet") {
+        this.skip();
+        return;
+      }
+      this.timeout(600_000);
+      await dao.grant(plugin.address, await voter.getAddress(), UPDATE_ROUTER_PERMISSION_ID);
+      await dao.grant(plugin.address, await voter.getAddress(), MANAGE_POSITIONS_PERMISSION_ID);
+      await plugin.connect(voter).setV4PositionManager(V4_POSITION_MANAGER_MAINNET);
+
+      const [c0, c1] =
+        usdcAddress.toLowerCase() < wethAddress.toLowerCase()
+          ? [usdcAddress, wethAddress]
+          : [wethAddress, usdcAddress];
+      const stranger = ethers.Wallet.createRandom().address;
+      const mintParams = ethers.utils.defaultAbiCoder.encode(
+        ["(address,address,uint24,int24,address)", "int24", "int24", "uint256", "uint128", "uint128", "address", "bytes"],
+        [[c0, c1, 3000, 60, ethers.constants.AddressZero], 199800, 200100, 1, 1, 1, stranger, "0x"]
+      );
+      const settleParams = ethers.utils.defaultAbiCoder.encode(["address", "address"], [c0, c1]);
+      const unlockData = ethers.utils.defaultAbiCoder.encode(
+        ["bytes", "bytes[]"],
+        [packActions([V4_MINT_POSITION, V4_SETTLE_PAIR]), [mintParams, settleParams]]
+      );
+
+      const nowTs2 = (await ethers.provider.getBlock("latest")).timestamp;
+      await expect(
+        plugin
+          .connect(voter)
+          .modifyLiquidities(unlockData, nowTs2 + 3600, [], [], [], [])
+      ).to.be.revertedWithCustomError(plugin, "MintRecipientMustBeDao");
     });
   });
 });
