@@ -156,6 +156,27 @@ frontend-check:
 frontend-build:
     cd frontend && npm run build
 
+# Playwright e2e against the local forked stack (read smoke + governance
+# write flow + screenshots). Prereq: `just demo-up` running in another
+# terminal. Screenshots land in frontend/test-results/screens/.
+frontend-e2e:
+    cd frontend && npm run e2e
+
+# --- Local demo stack (anvil fork + deploy + seed) ---
+
+# One-command stack: forked mainnet (archive RPC) + DAO/5 plugins/TokenVoting
+# (EarlyExecution) + seeded activity. Leaves anvil running (pid .demo-anvil.pid).
+demo-up:
+    bash scripts/demo-up.sh
+
+# Stop the demo anvil started by `just demo-up`.
+demo-down:
+    @[ -f .demo-anvil.pid ] && kill "$(cat .demo-anvil.pid)" 2>/dev/null && rm -f .demo-anvil.pid && echo "demo anvil stopped" || echo "no demo anvil pid"
+
+# Re-seed the already-deployed local DAO (idempotency not guaranteed).
+seed-local:
+    node scripts/seed-local.mjs
+
 # --- ABI export ---
 
 build-abi:

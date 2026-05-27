@@ -270,6 +270,11 @@ contract DeployCyberdyneDao is Script {
             vm.envOr("VOTE_PARTICIPATION", uint256(voting.minParticipation))
         );
         voting.minDuration = uint64(vm.envOr("VOTE_DURATION", uint256(voting.minDuration)));
+        // VotingMode: 0 Standard (default — vote then a separate execute tx),
+        // 1 EarlyExecution (execute as soon as the outcome is decided), 2
+        // VoteReplacement. EarlyExecution is convenient for single-holder
+        // testnet/demo DAOs where a passing vote should be executable at once.
+        voting.votingMode = uint8(vm.envOr("VOTE_MODE", uint256(voting.votingMode)));
 
         TokenVotingParams.TokenSettings memory token = TokenVotingParams.TokenSettings({
             addr: address(0), // mint a fresh GovernanceERC20

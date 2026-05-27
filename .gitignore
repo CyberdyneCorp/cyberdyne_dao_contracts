@@ -58,3 +58,6 @@ addresses.json
 # Logs
 logs/
 *.log
+
+# Local demo stack runtime pid (written by scripts/demo-up.sh)
+.demo-anvil.pid

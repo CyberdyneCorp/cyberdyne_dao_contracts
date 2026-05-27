@@ -22,13 +22,16 @@ export const VoteOption = {None: 0, Abstain: 1, Yes: 2, No: 3} as const;
 export type VoteOptionValue = (typeof VoteOption)[keyof typeof VoteOption];
 
 const TOKEN_VOTING_ABI = [
-  "function createProposal(bytes _metadata, (address to,uint256 value,bytes data)[] _actions, uint64 _startDate, uint64 _endDate, bytes _data) returns (uint256 proposalId)",
+  "function createProposal(bytes _metadata, (address to,uint256 value,bytes data)[] _actions, uint256 _allowFailureMap, uint64 _startDate, uint64 _endDate, uint8 _voteOption, bool _tryEarlyExecution) returns (uint256 proposalId)",
   "function vote(uint256 _proposalId, uint8 _voteOption, bool _tryEarlyExecution)",
   "function execute(uint256 _proposalId)",
   "function canExecute(uint256 _proposalId) view returns (bool)",
   "function canVote(uint256 _proposalId, address _voter, uint8 _voteOption) view returns (bool)",
   "function getVoteOption(uint256 _proposalId, address _voter) view returns (uint8)",
-  "function hasSucceeded(uint256 _proposalId) view returns (bool)",
+  // NB: build 1 of the pinned mainnet TokenVoting repo does NOT implement
+  // hasSucceeded(uint256) — calling it empty-reverts. Derive "passable" from
+  // canExecute()/getProposal() instead. Do not re-add without verifying the
+  // selector exists on the deployed build.
   "function getProposal(uint256 _proposalId) view returns (bool open, bool executed, (uint8 votingMode,uint32 supportThreshold,uint64 startDate,uint64 endDate,uint64 snapshotBlock,uint256 minVotingPower) parameters, (uint256 abstain,uint256 yes,uint256 no) tally, (address to,uint256 value,bytes data)[] actions, uint256 allowFailureMap, (address target,uint8 operation) targetConfig)",
   "event ProposalCreated(uint256 indexed proposalId, address indexed creator, uint64 startDate, uint64 endDate, bytes metadata, (address to,uint256 value,bytes data)[] actions, uint256 allowFailureMap)",
   "event ProposalExecuted(uint256 indexed proposalId)",
@@ -132,16 +135,18 @@ export async function proposeActions(
     }
   }
 
-  const data = ethers.utils.defaultAbiCoder.encode(
-    ["uint256", "uint8", "bool"],
-    [0, VoteOption.None, false]
-  );
+  // 7-arg overload (build 1 of the pinned mainnet TokenVoting repo): the
+  // proposer does not auto-vote (VoteOption.None, tryEarlyExecution=false) —
+  // vote separately from the Proposals page. allowFailureMap=0 so every action
+  // must succeed; startDate/endDate=0 lets the plugin use "now" + minDuration.
   const tx: ethers.ContractTransaction = await tv.createProposal(
     ethers.utils.toUtf8Bytes(metadataString),
     onchainActions,
     0,
     0,
-    data
+    0,
+    VoteOption.None,
+    false
   );
   const receipt = await tx.wait();
   let proposalId: string | null = null;
