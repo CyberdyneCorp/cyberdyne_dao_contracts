@@ -72,7 +72,10 @@ function chainKey(): ExternalChain {
 }
 
 onlyOn(["mainnetFork", "baseFork"], () => {
-  describe(`CostRegistryPlugin (fork: ${network.name}) [fork]`, () => {
+  describe(`CostRegistryPlugin (fork: ${network.name}) [fork]`, function () {
+    // Retry transient public-RPC zero-reads (see AAVE fork test for rationale).
+    this.retries(2);
+
     let deployer: Signer;
     let voter: Signer;
     let dao: MinimalDAO;

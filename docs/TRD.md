@@ -601,8 +601,10 @@ This gives a chain that mirrors mainnet state, supports `anvil_impersonateAccoun
 
 **One-shot fork mode (for CI):** start the matching `just fork-<chain>` node, then
 ```bash
-npx hardhat test 'test/plugins/**/*.fork.test.ts' 'test/e2e/*.fork.test.ts' --network mainnetFork
-npx hardhat test 'test/plugins/**/*.fork.test.ts' 'test/e2e/*.fork.test.ts' --network baseFork
+just test-fork mainnetFork
+just test-fork baseFork
+# (the recipe runs `npx hardhat test $(find test -name '*.fork.test.ts') --network <net>`;
+#  Hardhat resolves paths literally, so a quoted `**` glob won't expand — enumerate with find)
 ```
 
 Each test file declares which networks it supports via a small helper:

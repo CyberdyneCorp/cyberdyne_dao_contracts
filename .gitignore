@@ -1,9 +1,8 @@
 # Foundry
 out/
 cache/
-broadcast/*/dry-run/
-broadcast/*/*.json
-!broadcast/*/run-latest.json
+# Local deploy artifacts (forge script broadcast logs) — never committed.
+broadcast/
 
 # Hardhat
 artifacts/
@@ -43,8 +42,9 @@ frontend/.netlify/
 # OS
 Thumbs.db
 
-# Deployments (per-run logs)
-deployments/*-tmp-*
+# Deployments (per-run manifests written by DeployCyberdyneDao) — local artifacts.
+# Force-add a specific file if you ever want to commit a real network record.
+deployments/
 
 # Frontend ABI export (built fresh by `npm run build:abi`; published per-release)
 frontend-abi/

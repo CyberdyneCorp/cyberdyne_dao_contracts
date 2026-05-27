@@ -87,7 +87,12 @@ async function deployProxied(
 }
 
 onlyOn(["mainnetFork", "baseFork"], () => {
-  describe(`AaveLendingPlugin (fork: ${network.name}) [fork]`, () => {
+  describe(`AaveLendingPlugin (fork: ${network.name}) [fork]`, function () {
+    // Public-RPC forks intermittently return a zeroed state read under load
+    // (anvil lazy-fetches state on demand). Retry transient failures; a real
+    // contract bug still fails all attempts. Block-pinning reduces this further.
+    this.retries(2);
+
     let deployer: Signer;
     let voter: Signer;
     let dao: MinimalDAO;

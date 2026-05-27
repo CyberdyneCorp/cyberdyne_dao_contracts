@@ -117,7 +117,10 @@ function encodeV3ExactInSingle(opts: {
 }
 
 onlyOn(["mainnetFork", "baseFork"], () => {
-  describe(`UniswapV4Plugin (fork: ${network.name}) [fork]`, () => {
+  describe(`UniswapV4Plugin (fork: ${network.name}) [fork]`, function () {
+    // Retry transient public-RPC zero-reads (see AAVE fork test for rationale).
+    this.retries(2);
+
     let deployer: Signer;
     let voter: Signer;
     let dao: MinimalDAO;

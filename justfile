@@ -36,12 +36,14 @@ slither:
 test:
     npx hardhat test
 
-# Run the *.fork + e2e tests against a running forked node (default mainnetFork).
+# Run every *.fork test against a running forked node (default mainnetFork).
 # Prereq: a forked node must already be running on the matching port —
 # start one with `just fork-mainnet` / `just fork-base` in another terminal.
-# The fork tests self-gate via onlyOn(...), so non-matching suites are skipped.
+# `find` enumerates the files (Hardhat resolves paths literally, so a quoted
+# `**` glob won't expand); the fork tests self-gate via onlyOn(...), so suites
+# for other networks are skipped.
 test-fork network='mainnetFork':
-    npx hardhat test 'test/plugins/**/*.fork.test.ts' 'test/e2e/*.fork.test.ts' --network {{network}}
+    npx hardhat test $(find test -name '*.fork.test.ts') --network {{network}}
 
 # Run the full coverage suite and gate at >=90%.
 coverage:

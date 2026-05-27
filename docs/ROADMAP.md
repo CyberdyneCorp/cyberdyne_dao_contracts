@@ -481,7 +481,7 @@ just test-fork mainnetFork
 **CI (one-shot, pinned to a block):** start the fork pinned, then run the fork suites.
 ```bash
 just fork-mainnet 21500000              # anvil pins fetched state at the block
-npx hardhat test 'test/plugins/**/*.fork.test.ts' 'test/e2e/*.fork.test.ts' --network mainnetFork
+just test-fork mainnetFork              # npx hardhat test $(find test -name '*.fork.test.ts') --network mainnetFork
 ```
 
 **Impersonation pattern** — every fork test that needs DAO-side funds uses this helper:
