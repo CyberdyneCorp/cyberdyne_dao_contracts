@@ -6,6 +6,7 @@ import {Script, console2} from "forge-std/Script.sol";
 import {PayrollPluginSetup} from "../src/plugins/payroll/PayrollPluginSetup.sol";
 import {UniswapV4PluginSetup} from "../src/plugins/uniswap-v4/UniswapV4PluginSetup.sol";
 import {AaveLendingPluginSetup} from "../src/plugins/aave/AaveLendingPluginSetup.sol";
+import {CostRegistryPluginSetup} from "../src/plugins/cost-registry/CostRegistryPluginSetup.sol";
 import {AaveV3Adapter} from "../src/plugins/aave/adapters/AaveV3Adapter.sol";
 import {IAavePool} from "../src/plugins/aave/adapters/IAavePool.sol";
 
@@ -50,6 +51,8 @@ contract DeployCyberdyneDao is Script {
         IPluginRepo aaveRepo;
         AaveLendingPluginSetup aaveSetup;
         AaveV3Adapter aaveAdapter;
+        IPluginRepo costRegistryRepo;
+        CostRegistryPluginSetup costRegistrySetup;
     }
 
     function run() external returns (address dao, PublishedPlugins memory published) {
@@ -95,6 +98,15 @@ contract DeployCyberdyneDao is Script {
             bytes("ipfs://"),
             bytes("ipfs://")
         );
+
+        p.costRegistrySetup = new CostRegistryPluginSetup();
+        p.costRegistryRepo = pluginRepoFactory.createPluginRepoWithFirstVersion(
+            _uniqueSubdomain("cyberdyne-cost-registry"),
+            address(p.costRegistrySetup),
+            maintainer,
+            bytes("ipfs://"),
+            bytes("ipfs://")
+        );
     }
 
     function _createDao(PublishedPlugins memory p) internal returns (address dao) {
@@ -122,7 +134,8 @@ contract DeployCyberdyneDao is Script {
             "TOKEN_VOTING_REPO",
             OsxAddresses.tokenVotingRepo(block.chainid)
         );
-        uint256 pluginCount = (tokenVotingRepo != address(0)) ? 4 : 3;
+        // 4 Cyberdyne plugins (payroll, uniswap, aave, cost-registry) + optional TokenVoting.
+        uint256 pluginCount = (tokenVotingRepo != address(0)) ? 5 : 4;
         pluginSettings = new IDAOFactory.PluginSettings[](pluginCount);
         uint256 idx;
 
@@ -167,6 +180,17 @@ contract DeployCyberdyneDao is Script {
                 pluginSetupRepo: p.aaveRepo
             }),
             data: abi.encode(address(p.aaveAdapter), new address[](0))
+        });
+
+        // CostRegistry pays recurring operating costs in USDC. Token override
+        // via COST_USDC (testnets without canonical USDC), else per-chain default.
+        address costUsdc = vm.envOr("COST_USDC", OsxAddresses.usdc(block.chainid));
+        pluginSettings[idx++] = IDAOFactory.PluginSettings({
+            pluginSetupRef: PluginSetupRef({
+                versionTag: Tag({release: 1, build: 1}),
+                pluginSetupRepo: p.costRegistryRepo
+            }),
+            data: abi.encode(costUsdc)
         });
     }
 
@@ -217,6 +241,7 @@ contract DeployCyberdyneDao is Script {
         console2.log("Uniswap V4 repo:", address(p.uniswapRepo));
         console2.log("AAVE repo:", address(p.aaveRepo));
         console2.log("AAVE adapter:", address(p.aaveAdapter));
+        console2.log("Cost registry repo:", address(p.costRegistryRepo));
         _writeDeploymentJson(dao, p);
     }
 
@@ -239,7 +264,13 @@ contract DeployCyberdyneDao is Script {
         vm.serializeAddress(root, "uniswapRepo", address(p.uniswapRepo));
         vm.serializeAddress(root, "aaveSetup", address(p.aaveSetup));
         vm.serializeAddress(root, "aaveRepo", address(p.aaveRepo));
-        string memory finalJson = vm.serializeAddress(root, "aaveAdapter", address(p.aaveAdapter));
+        vm.serializeAddress(root, "aaveAdapter", address(p.aaveAdapter));
+        vm.serializeAddress(root, "costRegistrySetup", address(p.costRegistrySetup));
+        string memory finalJson = vm.serializeAddress(
+            root,
+            "costRegistryRepo",
+            address(p.costRegistryRepo)
+        );
 
         string memory path = string(
             abi.encodePacked(

@@ -19,12 +19,14 @@ import addresses from "./addresses.json" with {type: "json"};
 import payrollAbi from "./frontend-abi/PayrollPlugin.json" with {type: "json"};
 import uniswapAbi from "./frontend-abi/UniswapV4Plugin.json" with {type: "json"};
 import aaveAbi from "./frontend-abi/AaveLendingPlugin.json" with {type: "json"};
+import costRegistryAbi from "./frontend-abi/CostRegistryPlugin.json" with {type: "json"};
 
 /** @type {Record<string, any[]>} */
 const ABIS = {
   PayrollPlugin: payrollAbi.abi,
   UniswapV4Plugin: uniswapAbi.abi,
   AaveLendingPlugin: aaveAbi.abi,
+  CostRegistryPlugin: costRegistryAbi.abi,
 };
 
 export {addresses};

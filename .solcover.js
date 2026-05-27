@@ -11,6 +11,7 @@ module.exports = {
     "plugins/aave/adapters/IAaveAdapter.sol",
     "plugins/aave/adapters/IAavePool.sol",
     "plugins/payroll/IPayrollPlugin.sol",
+    "plugins/cost-registry/ICostRegistryPlugin.sol",
     // Vendored 3rd-party math lib.
     "plugins/payroll/lib/BokkyPooBahsDateTimeLibrary.sol",
     // P4-stub: AAVE v4 adapter is a placeholder until v4 launches (TRD §16

@@ -31,6 +31,14 @@ library OsxAddresses {
         revert UnsupportedChain(chainId);
     }
 
+    function usdc(uint256 chainId) internal pure returns (address) {
+        // Payment token for the CostRegistry plugin. Mirrors the USDC entries
+        // in npm-artifacts/src/addresses.json / build-addresses.js.
+        if (chainId == 1) return 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; // mainnet
+        if (chainId == 8453) return 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913; // base
+        revert UnsupportedChain(chainId);
+    }
+
     function aaveV3Pool(uint256 chainId) internal pure returns (address) {
         // TRD §10. Testnets don't run AAVE — set explicitly when needed.
         if (chainId == 1) return 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2; // mainnet

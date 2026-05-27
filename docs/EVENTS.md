@@ -59,6 +59,22 @@ Signatures freeze at **P1**. Any change after P5 (bootstrap) is breaking for the
 
 ---
 
+## CostRegistryPlugin
+
+| Event | Signature | Indexed | Subgraph entity | UI surface |
+|---|---|---|---|---|
+| `EntryRegistered` | `(uint256 id, address payee, uint256 costUsdc, uint32 frequencyDays, string name)` | `id`, `payee` | `CostEntry` (created) | Operating-costs screen |
+| `EntryUpdated` | `(uint256 id, address payee, uint256 costUsdc, uint32 frequencyDays)` | `id`, `payee` | `CostEntry` (fields updated) | Operating-costs screen |
+| `EntryRemoved` | `(uint256 id)` | `id` | `CostEntry` (active=false) | Operating-costs screen |
+| `CostPaid` | `(uint256 id, address payee, uint256 amount, uint64 paidAt)` | `id`, `payee` | `CostPayment` (one per paid entry) | Per-entry payment history |
+| `CostsProcessed` | `(uint256 fromIndex, uint256 count, uint256 failureMap)` | — | `CostCrankRun` (per batch) | Crank log |
+
+> **Pagination note:** `processDue(offset, limit)` fires `CostPaid` per paid entry and one `CostsProcessed` per batch. `failureMap` is page-local — bit `i` = the `i`-th paid entry of that batch reverted. Entries are idempotent per their own `lastPaidAt`, so there is no period/cursor to aggregate (unlike Payroll).
+
+**Read-side joins:** `CostRegistryPlugin.getEntries(offset, limit)` returns a page of entries plus the total count, sized for the operating-costs screen.
+
+---
+
 ## OSx framework events the UI also consumes
 
 These are emitted by OSx core, not our plugins, but every screen depends on them and the subgraph must index them. Listed here to keep the contract surface complete in one place.
