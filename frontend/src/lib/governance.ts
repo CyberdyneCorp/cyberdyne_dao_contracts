@@ -34,8 +34,39 @@ const TOKEN_VOTING_ABI = [
   "event ProposalExecuted(uint256 indexed proposalId)",
 ];
 
-// ~30 days of mainnet blocks — bounds the ProposalCreated lookback.
-const LOOKBACK_BLOCKS = 216_000;
+// ~7 days of mainnet blocks — bounds the ProposalCreated lookback. For deeper
+// history use the subgraph (PUBLIC_SUBGRAPH_URL); direct RPC log scans are
+// intentionally shallow.
+const LOOKBACK_BLOCKS = 50_000;
+// Most RPCs (and anvil forks forwarding to infura/alchemy) cap eth_getLogs at
+// ~10k blocks per call. Query in chunks under that limit so a wide lookback
+// can't blow the range cap (which manifested as the proposals list hanging on
+// "Loading…" against a fork). Chunks are walked newest-first.
+const LOG_CHUNK = 9_000;
+
+/**
+ * `queryFilter` that splits [from, to] into ≤LOG_CHUNK ranges so it never
+ * exceeds the RPC's getLogs range cap. Chunks run newest-first; a failing
+ * chunk is skipped (best-effort) rather than aborting the whole list.
+ */
+async function queryFilterChunked(
+  contract: ethers.Contract,
+  filter: ethers.EventFilter,
+  from: number,
+  to: number
+): Promise<ethers.Event[]> {
+  const out: ethers.Event[] = [];
+  for (let end = to; end >= from; end -= LOG_CHUNK) {
+    const start = Math.max(from, end - LOG_CHUNK + 1);
+    try {
+      const evs = await contract.queryFilter(filter, start, end);
+      out.push(...evs);
+    } catch {
+      /* skip an unreadable range (e.g. transient RPC error) */
+    }
+  }
+  return out;
+}
 
 export function governanceConfigured(cfg: ChainConfig): boolean {
   return !!cfg.dao?.governance;
@@ -233,8 +264,8 @@ export async function fetchProposals(
   const tv = tokenVotingContract(cfg, provider);
   const tip = await provider.getBlockNumber();
   const from = Math.max(0, tip - LOOKBACK_BLOCKS);
-  const created = await tv.queryFilter(tv.filters.ProposalCreated(), from, tip);
-  const executedEvents = await tv.queryFilter(tv.filters.ProposalExecuted(), from, tip);
+  const created = await queryFilterChunked(tv, tv.filters.ProposalCreated(), from, tip);
+  const executedEvents = await queryFilterChunked(tv, tv.filters.ProposalExecuted(), from, tip);
   const executedIds = new Set(executedEvents.map((e) => e.args?.proposalId.toString()));
 
   const out: ProposalView[] = await Promise.all(
