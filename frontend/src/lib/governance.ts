@@ -10,6 +10,12 @@
 import {ethers} from "ethers";
 import type {ChainConfig} from "./types";
 import type {ProposalAction} from "./actions";
+import {
+  ipfsEnabled,
+  buildProposalMetadata,
+  pinProposalMetadata,
+  resolveMetadataTitle,
+} from "./ipfs";
 
 // VoteOption enum (MajorityVotingBase): None=0, Abstain=1, Yes=2, No=3.
 export const VoteOption = {None: 0, Abstain: 1, Yes: 2, No: 3} as const;
@@ -64,21 +70,41 @@ export type ProposalView = {
  * use "now" + its configured minDuration. The proposer does not auto-vote
  * (VoteOption.None); vote separately from the list. allowFailureMap = 0 so
  * every action must succeed.
+ *
+ * Metadata: when IPFS pinning is configured (PUBLIC_PINATA_JWT), a structured
+ * metadata document is pinned and the on-chain `metadata` bytes are the
+ * `ipfs://<cid>` pointer (production-shaped). Otherwise the `summary` string
+ * is stored inline as UTF-8 bytes (the toy-frontend default). If pinning is
+ * configured but fails, we fall back to inline rather than block the proposal.
  */
 export async function proposeActions(
   cfg: ChainConfig,
   signer: ethers.Signer,
   actions: ProposalAction[],
   metadata: string
-): Promise<{hash: string; proposalId: string | null}> {
+): Promise<{hash: string; proposalId: string | null; metadataUri: string}> {
   const tv = tokenVotingContract(cfg, signer);
   const onchainActions = actions.map((a) => ({to: a.to, value: a.value, data: a.data}));
+
+  // Resolve the metadata bytes: ipfs://CID when pinning works, else inline.
+  let metadataString = metadata;
+  if (ipfsEnabled()) {
+    try {
+      const doc = buildProposalMetadata(metadata, metadata, onchainActions);
+      metadataString = await pinProposalMetadata(doc);
+    } catch (err) {
+      // Non-fatal: surface to console, fall back to inline UTF-8.
+      console.warn("IPFS pin failed, storing metadata inline:", (err as Error).message);
+      metadataString = metadata;
+    }
+  }
+
   const data = ethers.utils.defaultAbiCoder.encode(
     ["uint256", "uint8", "bool"],
     [0, VoteOption.None, false]
   );
   const tx: ethers.ContractTransaction = await tv.createProposal(
-    ethers.utils.toUtf8Bytes(metadata),
+    ethers.utils.toUtf8Bytes(metadataString),
     onchainActions,
     0,
     0,
@@ -97,7 +123,7 @@ export async function proposeActions(
       /* not our event */
     }
   }
-  return {hash: tx.hash, proposalId};
+  return {hash: tx.hash, proposalId, metadataUri: metadataString};
 }
 
 export async function castVote(
@@ -250,6 +276,11 @@ export async function fetchProposals(
       if (canExec.status === "fulfilled") base.canExecute = canExec.value;
       if (myVote.status === "fulfilled" && myVote.value !== null) {
         base.myVote = Number(myVote.value) as VoteOptionValue;
+      }
+      // If the metadata is an ipfs:// pointer, resolve it to a human title
+      // (best-effort; falls back to the raw URI on any failure).
+      if (base.summary.startsWith("ipfs://")) {
+        base.summary = await resolveMetadataTitle(base.summary);
       }
       return base;
     })

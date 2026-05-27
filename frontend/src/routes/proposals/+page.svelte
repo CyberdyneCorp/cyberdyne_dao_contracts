@@ -112,8 +112,9 @@
     submitting = true;
     try {
       const cfg = cfgOrThrow();
-      const {hash, proposalId} = await proposeActions(cfg, $signer, [built], built.summary);
-      submitMsg = `Proposal ${proposalId ?? "?"} created (${hash.slice(0, 10)}…).`;
+      const {hash, proposalId, metadataUri} = await proposeActions(cfg, $signer, [built], built.summary);
+      const meta = metadataUri.startsWith("ipfs://") ? ` · metadata ${metadataUri}` : "";
+      submitMsg = `Proposal ${proposalId ?? "?"} created (${hash.slice(0, 10)}…)${meta}.`;
       await refresh();
     } catch (err) {
       submitMsg = `Failed: ${(err as Error).message}`;
