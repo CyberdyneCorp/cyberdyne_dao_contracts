@@ -26,7 +26,9 @@ fs.mkdirSync(DST, {recursive: true});
 const wanted = [
   "PayrollPlugin",
   "UniswapV4Plugin",
+  "UniswapV3Plugin",
   "AaveLendingPlugin",
+  "CostRegistryPlugin",
 ];
 let copied = 0;
 for (const name of wanted) {

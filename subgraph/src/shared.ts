@@ -26,3 +26,16 @@ export function payoutItemEntityId(plugin: Bytes, period: BigInt, payee: Bytes):
 export function allowlistEntryId(plugin: Bytes, token: Bytes): string {
   return plugin.toHex() + "." + token.toHex();
 }
+
+// V3 positions are uniquely identified by the NPM-issued tokenId (a global
+// across the chain). The schema id is the decimal string so it's stable
+// across re-indexing.
+export function v3PositionId(tokenId: BigInt): string {
+  return tokenId.toString();
+}
+
+// CostRegistry entries are keyed by (plugin, entry id). One plugin instance
+// has its own auto-incremented entry ids.
+export function costEntryId(plugin: Bytes, entryId: BigInt): string {
+  return plugin.toHex() + "." + entryId.toString();
+}

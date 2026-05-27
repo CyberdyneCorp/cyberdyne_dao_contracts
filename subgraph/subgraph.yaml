@@ -10,7 +10,7 @@
 # a config JSON, or `sed` the placeholders directly.
 
 specVersion: 1.0.0
-description: Cyberdyne DAO — Payroll + Uniswap V4 swaps + AAVE lending
+description: Cyberdyne DAO — Payroll + Uniswap V4 (swaps + LP) + Uniswap V3 LP + AAVE lending + CostRegistry
 repository: https://github.com/CyberdyneCorp/cyberdyne_dao_contracts
 schema:
   file: ./schema.graphql
@@ -67,6 +67,8 @@ dataSources:
         - Swap
         - RouterMigration
         - TokenAllowlistEntry
+        - V4LpOp
+        - V4PositionManagerMigration
         - Dao
       abis:
         - name: UniswapV4Plugin
@@ -78,6 +80,10 @@ dataSources:
           handler: handleAllowedTokenSet
         - event: UniversalRouterUpdated(indexed address,indexed address)
           handler: handleUniversalRouterUpdated
+        - event: V4PositionManagerUpdated(indexed address,indexed address)
+          handler: handleV4PositionManagerUpdated
+        - event: LiquidityModified(indexed uint256)
+          handler: handleLiquidityModified
 
   - kind: ethereum
     name: AaveLendingPlugin
@@ -113,3 +119,77 @@ dataSources:
           handler: handleAdapterUpdated
         - event: AllowedAssetSet(indexed address,bool)
           handler: handleAllowedAssetSet
+
+  - kind: ethereum
+    name: UniswapV3Plugin
+    network: "{{NETWORK}}"
+    source:
+      address: "{{UNISWAP_V3_ADDRESS}}"
+      abi: UniswapV3Plugin
+      startBlock: {{UNISWAP_V3_START_BLOCK}}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/uniswap-v3.ts
+      entities:
+        - UniswapV3Plugin
+        - V3Position
+        - V3Collect
+        - V3TokenAllowlistEntry
+        - V3ManagerMigration
+        - Dao
+      abis:
+        - name: UniswapV3Plugin
+          file: ./abis/UniswapV3Plugin.json
+      eventHandlers:
+        - event: PositionMinted(indexed uint256,indexed address,indexed address,uint24,uint128,uint256,uint256)
+          handler: handlePositionMinted
+        - event: LiquidityIncreased(indexed uint256,uint128,uint256,uint256)
+          handler: handleLiquidityIncreased
+        - event: LiquidityDecreased(indexed uint256,uint128)
+          handler: handleLiquidityDecreased
+        - event: FeesCollected(indexed uint256,uint256,uint256)
+          handler: handleFeesCollected
+        - event: PositionBurned(indexed uint256)
+          handler: handlePositionBurned
+        - event: PositionManagerUpdated(indexed address,indexed address)
+          handler: handlePositionManagerUpdated
+        - event: AllowedTokenSet(indexed address,bool)
+          handler: handleAllowedTokenSet
+
+  - kind: ethereum
+    name: CostRegistryPlugin
+    network: "{{NETWORK}}"
+    source:
+      address: "{{COST_REGISTRY_ADDRESS}}"
+      abi: CostRegistryPlugin
+      startBlock: {{COST_REGISTRY_START_BLOCK}}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.7
+      language: wasm/assemblyscript
+      file: ./src/cost-registry.ts
+      entities:
+        - CostRegistryPlugin
+        - CostEntry
+        - CostPayment
+        - CostCrankRun
+        - PaymentTokenMigration
+        - Dao
+      abis:
+        - name: CostRegistryPlugin
+          file: ./abis/CostRegistryPlugin.json
+      eventHandlers:
+        - event: EntryRegistered(indexed uint256,indexed address,uint256,uint32,string)
+          handler: handleEntryRegistered
+        - event: EntryUpdated(indexed uint256,indexed address,uint256,uint32)
+          handler: handleEntryUpdated
+        - event: EntryRemoved(indexed uint256)
+          handler: handleEntryRemoved
+        - event: CostPaid(indexed uint256,indexed address,uint256,uint64)
+          handler: handleCostPaid
+        - event: CostsProcessed(uint256,uint256,uint256)
+          handler: handleCostsProcessed
+        - event: PaymentTokenUpdated(indexed address,indexed address)
+          handler: handlePaymentTokenUpdated

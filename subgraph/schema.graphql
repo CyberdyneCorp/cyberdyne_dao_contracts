@@ -7,11 +7,17 @@ type Dao @entity {
   createdAt: BigInt!
   payrollPlugin: PayrollPlugin
   uniswapPlugin: UniswapV4Plugin
+  uniswapV3Plugin: UniswapV3Plugin
   aavePlugin: AaveLendingPlugin
+  costRegistryPlugin: CostRegistryPlugin
   swaps: [Swap!]! @derivedFrom(field: "dao")
   lendingActions: [LendingAction!]! @derivedFrom(field: "dao")
   payouts: [PayrollPayout!]! @derivedFrom(field: "dao")
   payrollRecipients: [PayrollRecipient!]! @derivedFrom(field: "dao")
+  v3Positions: [V3Position!]! @derivedFrom(field: "dao")
+  v4LpOps: [V4LpOp!]! @derivedFrom(field: "dao")
+  costEntries: [CostEntry!]! @derivedFrom(field: "dao")
+  costPayments: [CostPayment!]! @derivedFrom(field: "dao")
 }
 
 # ---- Plugin singletons ----
@@ -31,9 +37,32 @@ type UniswapV4Plugin @entity {
   universalRouter: Bytes!
   permit2: Bytes!
   poolManager: Bytes!
+  v4PositionManager: Bytes                       # null before setV4PositionManager
   allowlistEnforced: Boolean!
   swapNonce: BigInt!
+  lpNonce: BigInt!
   swaps: [Swap!]! @derivedFrom(field: "plugin")
+  lpOps: [V4LpOp!]! @derivedFrom(field: "plugin")
+}
+
+type UniswapV3Plugin @entity {
+  id: ID!                                        # plugin address
+  dao: Dao!
+  positionManager: Bytes!                        # canonical V3 NPM
+  allowlistEnforced: Boolean!
+  opNonce: BigInt!
+  positions: [V3Position!]! @derivedFrom(field: "plugin")
+  collects: [V3Collect!]! @derivedFrom(field: "plugin")
+  managerMigrations: [V3ManagerMigration!]! @derivedFrom(field: "plugin")
+}
+
+type CostRegistryPlugin @entity {
+  id: ID!                                        # plugin address
+  dao: Dao!
+  paymentToken: Bytes!                           # current token (USDC by default)
+  entries: [CostEntry!]! @derivedFrom(field: "plugin")
+  payments: [CostPayment!]! @derivedFrom(field: "plugin")
+  crankRuns: [CostCrankRun!]! @derivedFrom(field: "plugin")
 }
 
 type AaveLendingPlugin @entity {
@@ -168,4 +197,135 @@ type AssetAllowlistEntry @entity {
   asset: Bytes!
   allowed: Boolean!
   updatedAt: BigInt!
+}
+
+# ---- Uniswap V3 LP ----
+
+# An NPM-backed position. The DAO owns the NFT (recipient is forced to the
+# DAO on mint + collect). `liquidity` is event-derived (sum of mint /
+# increase / decrease deltas) — for live state the UI reads NPM.positions().
+type V3Position @entity {
+  id: ID!                                        # tokenId (decimal string)
+  dao: Dao!
+  plugin: UniswapV3Plugin!
+  tokenId: BigInt!
+  token0: Bytes!
+  token1: Bytes!
+  fee: Int!
+  liquidity: BigInt!
+  totalAmount0In: BigInt!                        # sum of mint + increase amount0
+  totalAmount1In: BigInt!                        # sum of mint + increase amount1
+  burned: Boolean!
+  mintedAt: BigInt!
+  burnedAt: BigInt
+  collects: [V3Collect!]! @derivedFrom(field: "position")
+}
+
+type V3Collect @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  position: V3Position!
+  plugin: UniswapV3Plugin!
+  amount0: BigInt!
+  amount1: BigInt!
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
+}
+
+type V3TokenAllowlistEntry @entity {
+  id: ID!                                        # plugin-address . token-address
+  plugin: UniswapV3Plugin!
+  token: Bytes!
+  allowed: Boolean!
+  updatedAt: BigInt!
+}
+
+type V3ManagerMigration @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  plugin: UniswapV3Plugin!
+  previous: Bytes!
+  current: Bytes!
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
+}
+
+# ---- Uniswap V4 LP ----
+
+# Plugin emits `LiquidityModified(opNonce)` only — the action stream
+# (mint/inc/dec/burn) is opaque to it. UI/subgraph correlate
+# LiquidityModified ↔ DAO.Executed via the call-id scheme
+# keccak256("UNI_V4_LP:" || opNonce). For position-level state the UI reads
+# IV4PositionManager directly (it's not enumerable; scan Transfer events).
+type V4LpOp @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  dao: Dao!
+  plugin: UniswapV4Plugin!
+  opNonce: BigInt!
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
+}
+
+type V4PositionManagerMigration @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  plugin: UniswapV4Plugin!
+  previous: Bytes!
+  current: Bytes!
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
+}
+
+# ---- Cost registry ----
+
+type CostEntry @entity {
+  id: ID!                                        # plugin-address . entry-id
+  dao: Dao!
+  plugin: CostRegistryPlugin!
+  entryId: BigInt!
+  payee: Bytes!
+  costUsdc: BigInt!
+  frequencyDays: Int!
+  name: String!
+  active: Boolean!
+  registeredAt: BigInt!
+  removedAt: BigInt
+  payments: [CostPayment!]! @derivedFrom(field: "entry")
+}
+
+type CostPayment @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  dao: Dao!
+  plugin: CostRegistryPlugin!
+  entry: CostEntry!
+  payee: Bytes!
+  amount: BigInt!
+  paidAt: BigInt!
+  block: BigInt!
+  txHash: Bytes!
+}
+
+# One CostsProcessed batch. `failureMap` is page-local — bit i = the i-th
+# paid entry of THAT batch reverted (see docs/EVENTS.md).
+type CostCrankRun @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  dao: Dao!
+  plugin: CostRegistryPlugin!
+  fromIndex: BigInt!
+  count: BigInt!
+  failureMap: BigInt!
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
+}
+
+type PaymentTokenMigration @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  plugin: CostRegistryPlugin!
+  previous: Bytes!
+  current: Bytes!
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
 }

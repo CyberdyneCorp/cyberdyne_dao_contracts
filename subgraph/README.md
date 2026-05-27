@@ -31,7 +31,9 @@ After running `just deploy-cyberdyne-dao --broadcast`, you'll have a `deployment
 | `{{PAYROLL_ADDRESS}}` | `installedPlugins[N].plugin` from the DAOFactory `Executed` log, or read from the deployment manifest's `dao` after `IDAO`-style lookups |
 | `{{PAYROLL_START_BLOCK}}` | The block number of the install tx (deploy tx for the DAO) |
 | `{{UNISWAP_ADDRESS}}` / `{{UNISWAP_START_BLOCK}}` | Same — Uniswap V4 plugin entry from the install |
+| `{{UNISWAP_V3_ADDRESS}}` / `{{UNISWAP_V3_START_BLOCK}}` | Same — Uniswap V3 plugin entry |
 | `{{AAVE_ADDRESS}}` / `{{AAVE_START_BLOCK}}` | Same — AAVE plugin entry |
+| `{{COST_REGISTRY_ADDRESS}}` / `{{COST_REGISTRY_START_BLOCK}}` | Same — CostRegistry plugin entry |
 
 For a one-line `sed`:
 
@@ -42,8 +44,12 @@ sed -i.bak \
     -e 's/{{PAYROLL_START_BLOCK}}/21500000/g' \
     -e 's/{{UNISWAP_ADDRESS}}/0x.../g' \
     -e 's/{{UNISWAP_START_BLOCK}}/21500000/g' \
+    -e 's/{{UNISWAP_V3_ADDRESS}}/0x.../g' \
+    -e 's/{{UNISWAP_V3_START_BLOCK}}/21500000/g' \
     -e 's/{{AAVE_ADDRESS}}/0x.../g' \
     -e 's/{{AAVE_START_BLOCK}}/21500000/g' \
+    -e 's/{{COST_REGISTRY_ADDRESS}}/0x.../g' \
+    -e 's/{{COST_REGISTRY_START_BLOCK}}/21500000/g' \
     subgraph.yaml
 ```
 

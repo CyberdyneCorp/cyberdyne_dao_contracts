@@ -440,7 +440,7 @@ Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 
 
 - [x] ✅ **Fork tests beefed up to 6 cases.** Added `increaseLiquidity` grows position; `burn` closes emptied position + `ownerOf` reverts; `DeadlineExpired` mint guard; allowlist rejection of non-listed live tokens. (Existing: mint, decrease+collect.) Guard now accepts both `mainnetFork` and `localFork`.
 - [x] ✅ **Mint pool-state preview (frontend).** New helper `readV3PoolState(npm, provider, token0, token1, fee)` derives the pool address via `NPM.factory().getPool(...)`, reads `slot0` + `liquidity`, and returns `{poolAddress, sqrtPriceX96, tick, rawPriceToken1PerToken0, inRange(lo, hi)}`. The V3 mint form now has a "Quote pool" button that shows the current tick, price, and a clear in/below/above-range verdict so users can set sensible `amount0Min`/`amount1Min` before submit. Exact `liquidity` math is left to on-chain `NPM.mint` (porting Uniswap's `TickMath`/`LiquidityAmounts` would be ~500 LOC of fixed-point math; the preview gets ~95% of the UX value at ~50 LOC).
-- [ ] 🟡 **Subgraph entities** — `V3Position`, `V3Collect`, `V3TokenAllowlistEntry` + mappings for `PositionMinted` / `LiquidityIncreased` / `LiquidityDecreased` / `FeesCollected` / `PositionBurned`. Today the positions page reads RPC only.
+- [x] ✅ **Subgraph entities + mappings** — shipped as part of the unified subgraph pass (see Cross-cutting). `V3Position` (event-derived liquidity + cumulative amounts), `V3Collect`, `V3TokenAllowlistEntry`, `V3ManagerMigration` + the `uniswap-v3.ts` mapping handling all 7 V3 events.
 - [ ] 🔵 **Optional ETH-in helper** — when `token0` / `token1` is WETH, prepend `WETH.deposit{value: x}` to `previewMintActions` so a single proposal can wrap + mint atomically.
 
 ### UniswapV4Plugin
@@ -448,7 +448,7 @@ Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 
 - [ ] 🟡 **Live V4 LP fork test.** Today `UniswapV4Plugin.fork.test.ts` skips both the V4-native single-hop swap and any LP test (`it.skip` at `test/plugins/uniswap-v4/UniswapV4Plugin.fork.test.ts:273`). At minimum: mint + decrease against the real v4 PositionManager + a pool with adequate liquidity at the pinned block.
 - [x] ✅ **On-chain MINT_POSITION-recipient enforcement.** Plugin now decodes the v4 action stream and reverts `MintRecipientMustBeDao(owner, dao)` if any `MINT_POSITION` action carries a non-DAO owner. Enforced in both `modifyLiquidities` and `previewModifyLiquiditiesActions`. Empty payloads revert `UnlockDataTooShort`. Added 4 unit tests.
 - [x] ✅ **V4 LP invariants.** Handler now also drives `modifyLiquidities` (random pull/push legs). Added `invariant_lpNonceMonotonic`; the existing custody + zero-DAO→Permit2-allowance invariants now apply across both swap and LP code paths. Total V4 invariants now 6 (was 5); project-wide invariant count: **25**.
-- [ ] 🟡 **Subgraph entities** — `V4LpOp` (consuming `LiquidityModified`) and `V4PositionManagerMigration`.
+- [x] ✅ **Subgraph entities** — `V4LpOp` (consuming `LiquidityModified`) + `V4PositionManagerMigration`; `UniswapV4Plugin` entity gained `v4PositionManager` + `lpNonce`. New handlers in `uniswap.ts`.
 - [ ] 🔵 **`previewModifyLiquidities` quote helper** — same QuoterV2-equivalent gap as V3, but for V4 (using v4-periphery's QuoterV2 surface).
 
 ### PayrollPlugin
@@ -462,7 +462,7 @@ Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 
 
 - [x] ✅ **`setPaymentToken(address)` vote-gated migration.** Plugin now exposes `setPaymentToken(address)` gated by new permission `UPDATE_PAYMENT_TOKEN_PERMISSION`; emits `PaymentTokenUpdated(previous, current)`. Setup install grant-list grows 3 → 4. Doc warns that switching to a token with different decimals must be paired with `updateEntry` calls in the same proposal.
 - [x] ✅ **`MAX_COST_USDC` cap.** `MAX_COST_USDC = 1_000_000_000_000_000` (= $1B USDC at 6 decimals) — far above any realistic per-payment amount, tight enough that an unintended extra zero trips `CostTooLarge`. Replaces the previous `> uint96.max` ceiling. Public view function on the interface for UI introspection.
-- [ ] 🟡 **Subgraph entities** — `CostEntry`, `CostPayment`, `CostCrankRun` (already named in `docs/EVENTS.md` but never indexed).
+- [x] ✅ **Subgraph entities** — `CostEntry`, `CostPayment`, `CostCrankRun` + `PaymentTokenMigration`, with the `cost-registry.ts` mapping handling all 6 CostRegistry events (register/update/remove/paid/processed/token-migration).
 - [ ] 🔵 **`processAllDue(uint256 maxBatchSize)`** — keeper-friendlier crank that walks every due entry up to `MAX_PER_PAGE` without the caller tracking `offset`.
 - [ ] 🔵 **Vote-gated `setMaxEntries(uint256)`** — same shape as the Payroll item.
 
