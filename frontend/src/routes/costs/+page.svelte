@@ -11,6 +11,28 @@
   import * as actions from "$lib/actions";
   import type {ProposalAction} from "$lib/actions";
   import ProposeAction from "$lib/components/ProposeAction.svelte";
+  import {subgraphEnabled, fetchCostPayments, type CostPaymentRow} from "$lib/subgraph";
+
+  // Payment history (subgraph-only — no cheap RPC equivalent without an
+  // unbounded log scan). Loaded on demand by the "Load history" button.
+  let payments: CostPaymentRow[] | null = null;
+  let payErr: string | null = null;
+  let payLoading = false;
+
+  async function loadPayments(): Promise<void> {
+    payErr = null;
+    payLoading = true;
+    try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      const cfg = chainConfig($wallet.chainId);
+      if (!cfg?.dao) throw new Error("No DAO configured");
+      payments = await fetchCostPayments(cfg.dao.dao);
+    } catch (err) {
+      payErr = (err as Error).message;
+    } finally {
+      payLoading = false;
+    }
+  }
 
   const PAGE = 20;
   let offset = 0;
@@ -197,6 +219,40 @@
     {:catch err}
       <p class="error">Failed: {err.message}</p>
     {/await}
+
+    <h2>Payment history</h2>
+    {#if subgraphEnabled()}
+      <button on:click={loadPayments} disabled={payLoading}>
+        {payLoading ? "Loading…" : payments ? "Refresh" : "Load history"}
+      </button>
+      {#if payErr}<p class="error">{payErr}</p>{/if}
+      {#if payments && payments.length > 0}
+        <table>
+          <thead>
+            <tr><th>When</th><th>Entry</th><th>Payee</th><th>Amount</th><th>Tx</th></tr>
+          </thead>
+          <tbody>
+            {#each payments as p}
+              <tr>
+                <td>{new Date(Number(p.paidAt) * 1000).toISOString().slice(0, 16).replace("T", " ")}</td>
+                <td>#{p.entry.entryId} {p.entry.name}</td>
+                <td><code>{p.payee.slice(0, 10)}…</code></td>
+                <td>{p.amount}</td>
+                <td><code>{p.txHash.slice(0, 10)}…</code></td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {:else if payments}
+        <p class="empty">No payments indexed yet.</p>
+      {/if}
+    {:else}
+      <p class="muted">
+        Set <code>PUBLIC_SUBGRAPH_URL</code> to see per-entry payment history
+        (<code>CostPaid</code> events) here. Without a subgraph, only the live entry
+        list above is available.
+      </p>
+    {/if}
 
     <h2>Crank (permissionless)</h2>
     <p class="muted">
