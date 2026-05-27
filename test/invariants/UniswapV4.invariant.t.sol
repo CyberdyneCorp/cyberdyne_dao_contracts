@@ -11,23 +11,37 @@ import {MinimalDAO} from "../../src/test/mocks/MinimalDAO.sol";
 import {TestERC20} from "../../src/test/mocks/TestERC20.sol";
 import {MockUniversalRouter} from "../../src/test/mocks/MockUniversalRouter.sol";
 import {MockPermit2} from "../../src/test/mocks/MockPermit2.sol";
+import {MockV4PositionManager} from "../../src/test/mocks/MockV4PositionManager.sol";
 
 contract UniswapV4Handler is Test {
     UniswapV4Plugin public plugin;
     MinimalDAO public dao;
     MockUniversalRouter public router;
     MockPermit2 public permit2;
+    MockV4PositionManager public pm;
     TestERC20 public tokenIn;
     TestERC20 public tokenOut;
 
     uint256 public ghostNonce;
+    uint256 public ghostLpNonce;
     uint256 public ghostSuccessfulSwaps;
     uint256 public ghostFailedSwaps;
+    uint256 public ghostSuccessfulLpOps;
+    uint256 public ghostFailedLpOps;
+
+    // Pre-computed valid (but actionless) unlock envelope: the v4 LP MintRecipient
+    // check expects abi.encode(bytes, bytes[]) shape, but a zero-length action
+    // stream is harmless — the handler exercises the surrounding allowance +
+    // PM-call + slippage choreography, not the action stream itself.
+    bytes internal constant EMPTY_UNLOCK =
+        hex"00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
 
     modifier syncGhost() {
         _;
         uint256 current = plugin.swapNonce();
         if (current > ghostNonce) ghostNonce = current;
+        uint256 currentLp = plugin.lpNonce();
+        if (currentLp > ghostLpNonce) ghostLpNonce = currentLp;
     }
 
     constructor(
@@ -35,6 +49,7 @@ contract UniswapV4Handler is Test {
         MinimalDAO _dao,
         MockUniversalRouter _router,
         MockPermit2 _permit2,
+        MockV4PositionManager _pm,
         TestERC20 _tokenIn,
         TestERC20 _tokenOut
     ) {
@@ -42,6 +57,7 @@ contract UniswapV4Handler is Test {
         dao = _dao;
         router = _router;
         permit2 = _permit2;
+        pm = _pm;
         tokenIn = _tokenIn;
         tokenOut = _tokenOut;
     }
@@ -82,6 +98,57 @@ contract UniswapV4Handler is Test {
         }
     }
 
+    /// @notice Exercise the v4 LP path. The handler chooses between a pull-leg
+    ///         (mint/increase shape — DAO pays input) and a push-leg (decrease/
+    ///         burn shape — DAO receives output), then calls modifyLiquidities.
+    ///         Failures are tolerated (e.g. allowlist mismatch); the invariants
+    ///         care about post-call state, not happy-path frequency.
+    function modifyLiquidities(uint256 amount, bool pullLeg, bool useTokenIn) external syncGhost {
+        amount = bound(amount, 1, 1e24);
+        TestERC20 tok = useTokenIn ? tokenIn : tokenOut;
+
+        pm.clearLegs();
+        address[] memory inputs;
+        uint256[] memory maxIns;
+        address[] memory outputs;
+        uint256[] memory minOuts;
+
+        if (pullLeg) {
+            tok.mint(address(dao), amount);
+            pm.addPullLeg(address(tok), amount, address(dao));
+            inputs = new address[](1);
+            inputs[0] = address(tok);
+            maxIns = new uint256[](1);
+            maxIns[0] = amount;
+            outputs = new address[](0);
+            minOuts = new uint256[](0);
+        } else {
+            tok.mint(address(pm), amount);
+            pm.addPushLeg(address(tok), amount, address(dao));
+            inputs = new address[](0);
+            maxIns = new uint256[](0);
+            outputs = new address[](1);
+            outputs[0] = address(tok);
+            minOuts = new uint256[](1);
+            minOuts[0] = amount;
+        }
+
+        try
+            plugin.modifyLiquidities(
+                EMPTY_UNLOCK,
+                block.timestamp + 1 hours,
+                inputs,
+                maxIns,
+                outputs,
+                minOuts
+            )
+        {
+            ghostSuccessfulLpOps++;
+        } catch {
+            ghostFailedLpOps++;
+        }
+    }
+
     function setAllowedToken(uint256 seed, bool allowed) external syncGhost {
         // Cycle through the two known tokens + a random third to exercise
         // both allowed-known and allowed-unknown paths.
@@ -100,6 +167,7 @@ contract UniswapV4InvariantTest is StdInvariant, Test {
     MinimalDAO public dao;
     MockUniversalRouter public router;
     MockPermit2 public permit2;
+    MockV4PositionManager public pm;
     TestERC20 public tokenIn;
     TestERC20 public tokenOut;
     UniswapV4Handler public handler;
@@ -107,6 +175,8 @@ contract UniswapV4InvariantTest is StdInvariant, Test {
     bytes32 internal constant TRIGGER_SWAP_PERMISSION_ID = keccak256("TRIGGER_SWAP_PERMISSION");
     bytes32 internal constant MANAGE_ALLOWLIST_PERMISSION_ID =
         keccak256("MANAGE_ALLOWLIST_PERMISSION");
+    bytes32 internal constant MANAGE_POSITIONS_PERMISSION_ID =
+        keccak256("MANAGE_POSITIONS_PERMISSION");
     bytes32 internal constant EXECUTE_PERMISSION_ID = keccak256("EXECUTE_PERMISSION");
 
     function setUp() public {
@@ -115,6 +185,8 @@ contract UniswapV4InvariantTest is StdInvariant, Test {
         permit2 = new MockPermit2();
         router.setPermit2(address(permit2));
         router.setPullTokenIn(true);
+        pm = new MockV4PositionManager();
+        pm.setPermit2(address(permit2));
 
         tokenIn = new TestERC20("In", "IN", 18);
         tokenOut = new TestERC20("Out", "OUT", 18);
@@ -127,17 +199,18 @@ contract UniswapV4InvariantTest is StdInvariant, Test {
                 address(router),
                 address(permit2),
                 address(0xbeef), // poolManager — opaque to the plugin's logic
-                address(0), // v4PositionManager — swap-only invariants don't need it
+                address(pm),
                 new address[](0)
             )
         );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         plugin = UniswapV4Plugin(address(proxy));
 
-        handler = new UniswapV4Handler(plugin, dao, router, permit2, tokenIn, tokenOut);
+        handler = new UniswapV4Handler(plugin, dao, router, permit2, pm, tokenIn, tokenOut);
 
         dao.grant(address(plugin), address(handler), TRIGGER_SWAP_PERMISSION_ID);
         dao.grant(address(plugin), address(handler), MANAGE_ALLOWLIST_PERMISSION_ID);
+        dao.grant(address(plugin), address(handler), MANAGE_POSITIONS_PERMISSION_ID);
         dao.grant(address(dao), address(plugin), EXECUTE_PERMISSION_ID);
 
         targetContract(address(handler));
@@ -177,5 +250,15 @@ contract UniswapV4InvariantTest is StdInvariant, Test {
     ///         untouched. Catches a regression that resets or wraps the nonce.
     function invariant_swapNonceMonotonic() public {
         assertGe(plugin.swapNonce(), handler.ghostNonce(), "swapNonce regressed");
+    }
+
+    /// @notice lpNonce is monotonic on the same terms as swapNonce, in its own
+    ///         counter space — the V4 LP extension intentionally uses an
+    ///         independent nonce so the subgraph can correlate
+    ///         `LiquidityModified ↔ Executed` 1:1 without aliasing with swap
+    ///         events. A regression here would mean either a reset or a
+    ///         shared-counter regression with `swapNonce`.
+    function invariant_lpNonceMonotonic() public {
+        assertGe(plugin.lpNonce(), handler.ghostLpNonce(), "lpNonce regressed");
     }
 }

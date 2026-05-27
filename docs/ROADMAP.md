@@ -447,7 +447,7 @@ Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 
 
 - [ ] 🟡 **Live V4 LP fork test.** Today `UniswapV4Plugin.fork.test.ts` skips both the V4-native single-hop swap and any LP test (`it.skip` at `test/plugins/uniswap-v4/UniswapV4Plugin.fork.test.ts:273`). At minimum: mint + decrease against the real v4 PositionManager + a pool with adequate liquidity at the pinned block.
 - [x] ✅ **On-chain MINT_POSITION-recipient enforcement.** Plugin now decodes the v4 action stream and reverts `MintRecipientMustBeDao(owner, dao)` if any `MINT_POSITION` action carries a non-DAO owner. Enforced in both `modifyLiquidities` and `previewModifyLiquiditiesActions`. Empty payloads revert `UnlockDataTooShort`. Added 4 unit tests.
-- [ ] 🟡 **V4 LP invariants.** The 5 existing invariants in `test/invariants/UniswapV4.invariant.t.sol` are swap-era. Add: `lpNonce` monotonic, no NFT custody on the plugin, zero residual DAO→Permit2 allowance on any LP input currency after a successful op.
+- [x] ✅ **V4 LP invariants.** Handler now also drives `modifyLiquidities` (random pull/push legs). Added `invariant_lpNonceMonotonic`; the existing custody + zero-DAO→Permit2-allowance invariants now apply across both swap and LP code paths. Total V4 invariants now 6 (was 5); project-wide invariant count: **25**.
 - [ ] 🟡 **Subgraph entities** — `V4LpOp` (consuming `LiquidityModified`) and `V4PositionManagerMigration`.
 - [ ] 🔵 **`previewModifyLiquidities` quote helper** — same QuoterV2-equivalent gap as V3, but for V4 (using v4-periphery's QuoterV2 surface).
 
