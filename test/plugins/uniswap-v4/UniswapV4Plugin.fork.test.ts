@@ -11,16 +11,16 @@
  * TokenVoting + PluginRepo dance.
  *
  * Universal Router command encoding: the plugin treats `commands`/`inputs`
- * as opaque bytes — encoding choices belong to the proposal builder. For
- * the fork happy-path test we use the V3 SWAP_EXACT_IN_SINGLE command
- * (0x00 in the Universal Router command set), because:
- *   - Universal Router routes V2/V3/V4 commands; V3 is well-documented and
- *     has the most reliable pool liquidity on mainnet+Base today.
- *   - V4 single-hop encoding requires PoolKey + hook config + currency
- *     deltas that are non-trivial to assemble by hand here.
- * Full end-to-end V4 swap verification (with PoolKey + currency settlement)
- * is deferred to P5's e2e tests where the proposal builder is part of the
- * scenario. See `it.skip` markers below for the V4-specific assertions.
+ * as opaque bytes — encoding choices belong to the proposal builder. Two
+ * swap routes are exercised here against the real Universal Router:
+ *   - the V3 SWAP_EXACT_IN_SINGLE command (0x00) — deepest liquidity, the
+ *     "happy path" + slippage + allowance assertions; and
+ *   - the V4-native V4_SWAP command (0x10) against the live v4 USDC/WETH
+ *     pool (fee 3000, tickSpacing 60, no hooks), proving a genuine V4 route.
+ *
+ * The full V4 LP lifecycle (mint → decrease → collect → burn) is also
+ * fork-verified below against the canonical v4-periphery PositionManager
+ * (mainnet-only — those tests self-skip on Base).
  *
  * Skipped (describe block not registered) when running on a non-fork
  * network — see test/helpers/fork-guard.ts.
@@ -53,7 +53,10 @@ const WETH_WHALE = "0x8EB8a3b98659Cce290402893d0123abb75E3ab28";
 
 // v4 Actions enum opcodes (v4-periphery).
 const V4_MINT_POSITION = 0x02;
+const V4_DECREASE_LIQUIDITY = 0x01;
+const V4_BURN_POSITION = 0x03;
 const V4_SETTLE_PAIR = 0x0d;
+const V4_TAKE_PAIR = 0x11;
 
 function packActions(bytes: number[]): string {
   return "0x" + Buffer.from(bytes).toString("hex");
@@ -283,13 +286,70 @@ onlyOn(["mainnetFork", "baseFork", "localFork"], () => {
       expect(remaining).to.equal(0);
     });
 
-    // V4-native single-hop swap encoding deferred to P5's e2e tests. The
-    // plugin doesn't care which router command it's passing; the V3 happy-path
-    // test above already proves the approve/Permit2/route action batch flows
-    // end-to-end against the real Universal Router. P5 builds the V4 proposal
-    // payload with the production PoolKey/hook config.
-    it.skip("V4-native single-hop USDC → WETH swap (deferred to P5 e2e)", async () => {
-      /* see preamble */
+    // V4-native single-hop swap: routes USDC → WETH through the real Universal
+    // Router V4_SWAP command (0x10) against the live v4 USDC/WETH pool (fee
+    // 3000, tickSpacing 60, no hooks). Proves the plugin handles a genuine V4
+    // route — not just the V3 command used in the happy-path test above.
+    // Mainnet-only (the pinned v4 pool is mainnet).
+    it("V4-native single-hop USDC → WETH swap via the real Universal Router", async function () {
+      if (chainKey() !== "mainnet") {
+        this.skip();
+        return;
+      }
+      this.timeout(600_000);
+
+      const amountIn = ethers.utils.parseUnits("1000", 6); // 1000 USDC
+      await fundFromWhale(usdcAddress, WHALES[chainKey()], dao.address, amountIn);
+
+      // currency0 < currency1. USDC < WETH on mainnet → USDC is currency0, so
+      // selling USDC for WETH is zeroForOne = true.
+      const [c0, c1] =
+        usdcAddress.toLowerCase() < wethAddress.toLowerCase()
+          ? [usdcAddress, wethAddress]
+          : [wethAddress, usdcAddress];
+      const zeroForOne = usdcAddress.toLowerCase() === c0.toLowerCase();
+      const poolKey = [c0, c1, 3000, 60, ethers.constants.AddressZero];
+      const enc = ethers.utils.defaultAbiCoder;
+
+      // V4Router action opcodes (distinct from the PositionManager set):
+      // SWAP_EXACT_IN_SINGLE = 0x06, SETTLE_ALL = 0x0c, TAKE_ALL = 0x0f.
+      const SWAP_EXACT_IN_SINGLE = 0x06;
+      const SETTLE_ALL = 0x0c;
+      const TAKE_ALL = 0x0f;
+
+      const exactInSingle = enc.encode(
+        ["((address,address,uint24,int24,address),bool,uint128,uint128,bytes)"],
+        [[poolKey, zeroForOne, amountIn, 0, "0x"]]
+      );
+      const settleAll = enc.encode(["address", "uint256"], [usdcAddress, amountIn]);
+      const takeAll = enc.encode(["address", "uint256"], [wethAddress, 0]);
+      const v4Input = enc.encode(
+        ["bytes", "bytes[]"],
+        [
+          packActions([SWAP_EXACT_IN_SINGLE, SETTLE_ALL, TAKE_ALL]),
+          [exactInSingle, settleAll, takeAll],
+        ]
+      );
+
+      // Universal Router command 0x10 = V4_SWAP; its single input is the v4
+      // action stream above.
+      const commands = "0x10";
+      const inputs = [v4Input];
+
+      const deadline = (await ethers.provider.getBlock("latest")).timestamp + 3600;
+      const wethBefore = await weth.balanceOf(dao.address);
+
+      await plugin
+        .connect(voter)
+        .swap(commands, inputs, deadline, usdcAddress, amountIn, wethAddress, 1);
+
+      // DAO received WETH; the plugin's post-swap delta guard (minOut=1) passed.
+      const received = (await weth.balanceOf(dao.address)).sub(wethBefore);
+      expect(received).to.be.gt(0);
+      // No residual allowance, no plugin custody.
+      expect(await usdc.allowance(dao.address, permit2)).to.equal(0);
+      expect(await usdc.balanceOf(plugin.address)).to.equal(0);
+      expect(await weth.balanceOf(plugin.address)).to.equal(0);
     });
 
     // ----- V4 LP lifecycle against the REAL v4 PositionManager -----
@@ -444,6 +504,151 @@ onlyOn(["mainnetFork", "baseFork", "localFork"], () => {
       await expect(
         plugin.connect(voter).modifyLiquidities(unlockData, nowTs2 + 3600, [], [], [], [])
       ).to.be.revertedWithCustomError(plugin, "MintRecipientMustBeDao");
+    });
+
+    // Full V4 LP wind-down against the REAL PositionManager: mint a position,
+    // then decrease + TAKE_PAIR (funds back to the DAO, exercising the output
+    // slippage guard), collect (DECREASE_LIQUIDITY 0 + TAKE_PAIR), and finally
+    // BURN_POSITION. Complements the mint-only test above so the whole LP
+    // lifecycle is fork-verified, not just unit-verified against the mock PM.
+    it("decreases, collects, and burns a real V4 position (funds back to the DAO)", async function () {
+      if (chainKey() !== "mainnet") {
+        this.skip();
+        return;
+      }
+      this.timeout(600_000);
+
+      await dao.grant(plugin.address, await voter.getAddress(), UPDATE_ROUTER_PERMISSION_ID);
+      await dao.grant(plugin.address, await voter.getAddress(), MANAGE_POSITIONS_PERMISSION_ID);
+      await plugin.connect(voter).setV4PositionManager(V4_POSITION_MANAGER_MAINNET);
+
+      const [c0, c1] =
+        usdcAddress.toLowerCase() < wethAddress.toLowerCase()
+          ? [usdcAddress, wethAddress]
+          : [wethAddress, usdcAddress];
+      const poolKey = [c0, c1, 3000, 60, ethers.constants.AddressZero] as const;
+      const tickLower = 199800;
+      const tickUpper = 200100;
+      const liquidity = ethers.BigNumber.from("1000000000000"); // 1e12
+
+      const maxUsdc = ethers.utils.parseUnits("10000", 6);
+      const maxWeth = ethers.utils.parseEther("5");
+      await fundFromWhale(usdcAddress, WHALES[chainKey()], dao.address, maxUsdc);
+      await fundFromWhale(wethAddress, WETH_WHALE, dao.address, maxWeth);
+
+      const pm = new ethers.Contract(
+        V4_POSITION_MANAGER_MAINNET,
+        [
+          "function nextTokenId() view returns (uint256)",
+          "function ownerOf(uint256) view returns (address)",
+          "function getPositionLiquidity(uint256) view returns (uint128)",
+        ],
+        ethers.provider
+      );
+      const tokenId = await pm.nextTokenId();
+      const enc = ethers.utils.defaultAbiCoder;
+      const dl = async () => (await ethers.provider.getBlock("latest")).timestamp + 3600;
+
+      // ---- 1. MINT ----
+      const mintParams = enc.encode(
+        [
+          "(address,address,uint24,int24,address)",
+          "int24",
+          "int24",
+          "uint256",
+          "uint128",
+          "uint128",
+          "address",
+          "bytes",
+        ],
+        [poolKey, tickLower, tickUpper, liquidity, maxUsdc, maxWeth, dao.address, "0x"]
+      );
+      const settlePair = enc.encode(["address", "address"], [c0, c1]);
+      await plugin
+        .connect(voter)
+        .modifyLiquidities(
+          enc.encode(
+            ["bytes", "bytes[]"],
+            [packActions([V4_MINT_POSITION, V4_SETTLE_PAIR]), [mintParams, settlePair]]
+          ),
+          await dl(),
+          [usdcAddress, wethAddress],
+          [maxUsdc, maxWeth],
+          [],
+          []
+        );
+      expect(await pm.ownerOf(tokenId)).to.equal(dao.address);
+      const liqAfterMint = await pm.getPositionLiquidity(tokenId);
+      expect(liqAfterMint).to.equal(liquidity);
+
+      // ---- 2. DECREASE half + TAKE_PAIR (funds back to DAO) ----
+      const daoUsdcBefore = await usdc.balanceOf(dao.address);
+      const daoWethBefore = await weth.balanceOf(dao.address);
+      const half = liquidity.div(2);
+      const decParams = enc.encode(
+        ["uint256", "uint256", "uint128", "uint128", "bytes"],
+        [tokenId, half, 0, 0, "0x"]
+      );
+      const takePair = enc.encode(["address", "address", "address"], [c0, c1, dao.address]);
+      await plugin.connect(voter).modifyLiquidities(
+        enc.encode(
+          ["bytes", "bytes[]"],
+          [packActions([V4_DECREASE_LIQUIDITY, V4_TAKE_PAIR]), [decParams, takePair]]
+        ),
+        await dl(),
+        [],
+        [],
+        [usdcAddress, wethAddress], // output-side slippage guard exercised
+        [0, 0]
+      );
+      expect(await pm.getPositionLiquidity(tokenId)).to.equal(liquidity.sub(half));
+      // At least one currency must have flowed back to the DAO.
+      const gotUsdc = (await usdc.balanceOf(dao.address)).sub(daoUsdcBefore);
+      const gotWeth = (await weth.balanceOf(dao.address)).sub(daoWethBefore);
+      expect(gotUsdc.add(gotWeth)).to.be.gt(0);
+
+      // ---- 3. COLLECT = DECREASE_LIQUIDITY(0) + TAKE_PAIR (fees only) ----
+      const collectParams = enc.encode(
+        ["uint256", "uint256", "uint128", "uint128", "bytes"],
+        [tokenId, 0, 0, 0, "0x"]
+      );
+      await plugin
+        .connect(voter)
+        .modifyLiquidities(
+          enc.encode(
+            ["bytes", "bytes[]"],
+            [packActions([V4_DECREASE_LIQUIDITY, V4_TAKE_PAIR]), [collectParams, takePair]]
+          ),
+          await dl(),
+          [],
+          [],
+          [],
+          []
+        );
+
+      // ---- 4. BURN_POSITION + TAKE_PAIR (removes remaining liquidity, deletes NFT) ----
+      const burnParams = enc.encode(
+        ["uint256", "uint128", "uint128", "bytes"],
+        [tokenId, 0, 0, "0x"]
+      );
+      await plugin
+        .connect(voter)
+        .modifyLiquidities(
+          enc.encode(
+            ["bytes", "bytes[]"],
+            [packActions([V4_BURN_POSITION, V4_TAKE_PAIR]), [burnParams, takePair]]
+          ),
+          await dl(),
+          [],
+          [],
+          [],
+          []
+        );
+      // NFT no longer exists → ownerOf reverts.
+      await expect(pm.ownerOf(tokenId)).to.be.reverted;
+      // Plugin still custodies nothing.
+      expect(await usdc.balanceOf(plugin.address)).to.equal(0);
+      expect(await weth.balanceOf(plugin.address)).to.equal(0);
     });
   });
 });
