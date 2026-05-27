@@ -36,13 +36,16 @@
   let mFull = true;
   let mLower = String(FULL_LOWER);
   let mUpper = String(FULL_UPPER);
-  let mintAction: ProposalAction | null = null;
+  // Governance-safe: previewMintActions returns 5 raw actions which run
+  // atomically in one dao.execute (no nested-execute reentrancy under TV).
+  let mintAction: ProposalAction[] | null = null;
 
-  function buildMint(): void {
+  async function buildMint(): Promise<void> {
     mintAction = null;
     try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
       const cfg = cfgNow();
-      mintAction = actions.v3Mint(cfg, {
+      mintAction = await actions.previewV3Mint(cfg, $wallet.provider, {
         token0: mToken0,
         token1: mToken1,
         fee: parseInt(mFee, 10),
@@ -65,13 +68,14 @@
   let iAmt1 = "";
   let iDec0 = "6";
   let iDec1 = "18";
-  let incAction: ProposalAction | null = null;
-  function buildIncrease(): void {
+  let incAction: ProposalAction[] | null = null;
+  async function buildIncrease(): Promise<void> {
     incAction = null;
     try {
-      const cfg = cfgNow();
-      incAction = actions.v3IncreaseLiquidity(
-        cfg,
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      incAction = await actions.previewV3IncreaseLiquidity(
+        cfgNow(),
+        $wallet.provider,
         ethers.BigNumber.from(opTokenId || "0"),
         ethers.utils.parseUnits(iAmt0 || "0", parseInt(iDec0, 10)),
         ethers.utils.parseUnits(iAmt1 || "0", parseInt(iDec1, 10)),
@@ -85,13 +89,14 @@
   }
 
   let decLiquidity = "";
-  let decAction: ProposalAction | null = null;
-  function buildDecrease(): void {
+  let decAction: ProposalAction[] | null = null;
+  async function buildDecrease(): Promise<void> {
     decAction = null;
     try {
-      const cfg = cfgNow();
-      decAction = actions.v3DecreaseLiquidity(
-        cfg,
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      decAction = await actions.previewV3DecreaseLiquidity(
+        cfgNow(),
+        $wallet.provider,
         ethers.BigNumber.from(opTokenId || "0"),
         ethers.BigNumber.from(decLiquidity || "0"),
         ethers.constants.Zero,
@@ -103,12 +108,14 @@
     }
   }
 
-  let collectAction: ProposalAction | null = null;
-  function buildCollect(): void {
+  let collectAction: ProposalAction[] | null = null;
+  async function buildCollect(): Promise<void> {
     collectAction = null;
     try {
-      collectAction = actions.v3Collect(
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      collectAction = await actions.previewV3Collect(
         cfgNow(),
+        $wallet.provider,
         ethers.BigNumber.from(opTokenId || "0"),
         U128_MAX,
         U128_MAX
@@ -118,11 +125,16 @@
     }
   }
 
-  let burnAction: ProposalAction | null = null;
-  function buildBurn(): void {
+  let burnAction: ProposalAction[] | null = null;
+  async function buildBurn(): Promise<void> {
     burnAction = null;
     try {
-      burnAction = actions.v3Burn(cfgNow(), ethers.BigNumber.from(opTokenId || "0"));
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      burnAction = await actions.previewV3Burn(
+        cfgNow(),
+        $wallet.provider,
+        ethers.BigNumber.from(opTokenId || "0")
+      );
     } catch (err) {
       alert(`Build failed: ${(err as Error).message}`);
     }
@@ -172,16 +184,17 @@
   let v4MaxIn = ""; // comma-sep raw uint256
   let v4OutputCurrencies = "";
   let v4MinOut = "";
-  let v4Action: ProposalAction | null = null;
-  function buildV4Modify(): void {
+  // Governance-safe: previewModifyLiquiditiesActions returns the
+  // approve→Permit2.approve→PM.modifyLiquidities→approve(0) batch. Output-
+  // side min amounts are encoded inside the v4 unlockData stream (TAKE_PAIR
+  // params), not enforced by the plugin on the preview path.
+  let v4Action: ProposalAction[] | null = null;
+  async function buildV4Modify(): Promise<void> {
     v4Action = null;
     try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
       const cfg = cfgNow();
       const inAddrs = v4InputCurrencies
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-      const outAddrs = v4OutputCurrencies
         .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
@@ -190,22 +203,16 @@
         .map((s) => s.trim())
         .filter((s) => s.length > 0)
         .map((s) => ethers.BigNumber.from(s));
-      const outAmts = v4MinOut
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0)
-        .map((s) => ethers.BigNumber.from(s));
       const deadline = v4Deadline?.trim()
         ? ethers.BigNumber.from(v4Deadline.trim())
         : ethers.BigNumber.from(farDeadline());
-      v4Action = actions.v4ModifyLiquidities(
+      v4Action = await actions.previewV4ModifyLiquidities(
         cfg,
+        $wallet.provider,
         v4UnlockData || "0x",
         deadline,
         inAddrs,
-        inAmts,
-        outAddrs,
-        outAmts
+        inAmts
       );
     } catch (err) {
       alert(`Build failed: ${(err as Error).message}`);

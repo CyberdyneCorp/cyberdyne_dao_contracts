@@ -71,23 +71,27 @@
   let lAmount = "";
   let lDecimals = "6"; // USDC default; set 18 for WETH
   let lRateMode = "2"; // 2 = variable (borrow/repay only)
-  let lendingAction: ProposalAction | null = null;
+  // Governance-safe: previewX returns the underlying approve+pool-call batch
+  // as ProposalAction[]. Multi-action proposals avoid the nested-dao.execute
+  // reentrancy that blocked the plugin's wrapper functions under TokenVoting.
+  let lendingAction: ProposalAction[] | null = null;
 
-  function buildLending(): void {
+  async function buildLending(): Promise<void> {
     lendingAction = null;
     try {
-      const cfg = chainConfig($wallet.status === "connected" ? $wallet.chainId : 1);
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      const cfg = chainConfig($wallet.chainId);
       if (!cfg?.dao) throw new Error("No DAO configured");
       const amount = ethers.utils.parseUnits(lAmount || "0", parseInt(lDecimals, 10));
       const mode = parseInt(lRateMode, 10);
       lendingAction =
         op === "supply"
-          ? actions.aaveSupply(cfg, lAsset, amount)
+          ? await actions.previewAaveSupply(cfg, $wallet.provider, lAsset, amount)
           : op === "withdraw"
-            ? actions.aaveWithdraw(cfg, lAsset, amount)
+            ? await actions.previewAaveWithdraw(cfg, $wallet.provider, lAsset, amount)
             : op === "borrow"
-              ? actions.aaveBorrow(cfg, lAsset, amount, mode)
-              : actions.aaveRepay(cfg, lAsset, amount, mode);
+              ? await actions.previewAaveBorrow(cfg, $wallet.provider, lAsset, amount, mode)
+              : await actions.previewAaveRepay(cfg, $wallet.provider, lAsset, amount, mode);
     } catch (err) {
       alert(`Build failed: ${(err as Error).message}`);
     }

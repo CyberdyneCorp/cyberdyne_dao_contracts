@@ -1,9 +1,23 @@
 // Proposal-action builders for every vote-gated plugin function.
 //
-// Each builder returns a `ProposalAction` — the `{to, value, data}` triple the
-// DAO executes, plus a human-readable `summary` for the UI. Permissionless
-// cranks (executePayroll / executePayrollPage) are NOT here: they're called
-// directly by the connected wallet, not routed through a proposal.
+// Two flavors:
+//
+//  • SINGLE-ACTION: encodes a direct call to a plugin function. Used for
+//    admin / storage-mutating actions (e.g. addRecipient, setAllowedToken).
+//    These work via TokenVoting because they don't trigger a nested
+//    dao.execute inside the plugin.
+//
+//  • MULTI-ACTION (preview path): calls the plugin's `preview…Actions(...)`
+//    view to fetch the exact Action[] that would be submitted to dao.execute,
+//    then turns each into a ProposalAction. Used for fund-moving ops
+//    (V3 mint/increase/etc., V4 LP, AAVE supply/withdraw/borrow/repay).
+//    The proposal carries the raw action batch, so when TokenVoting executes
+//    it as `dao.execute(actions)`, no nested dao.execute occurs and the
+//    nonReentrant guard does not trip.
+//
+// Permissionless cranks (executePayroll / executePayrollPage / processDue)
+// are NOT here — they're called directly by the connected wallet, not via
+// proposals (anyone can call them).
 
 import {ethers} from "ethers";
 import {getAbi} from "@cyberdyne/dao-contracts";
@@ -15,6 +29,20 @@ export type ProposalAction = {
   data: string; // 0x calldata
   summary: string;
 };
+
+/** Lift a raw `(address to, uint256 value, bytes data)[]` tuple from a
+ *  preview… call into a ProposalAction array, with a shared summary line. */
+function liftPreview(
+  rawActions: Array<{to: string; value: ethers.BigNumber; data: string}>,
+  summary: string
+): ProposalAction[] {
+  return rawActions.map((a, i) => ({
+    to: a.to ?? (a as unknown as [string])[0],
+    value: ((a.value ?? (a as unknown as [unknown, ethers.BigNumber])[1]) as ethers.BigNumber).toString(),
+    data: a.data ?? (a as unknown as [unknown, unknown, string])[2],
+    summary: rawActions.length === 1 ? summary : `${summary} (${i + 1}/${rawActions.length})`,
+  }));
+}
 
 function ifaceFor(
   name:
@@ -283,6 +311,93 @@ export function v3Burn(cfg: ChainConfig, tokenId: ethers.BigNumberish): Proposal
     `Uniswap V3: burn #${tokenId.toString()}`);
 }
 
+// --- V3 preview-based action builders (governance-safe) ---------------------
+//
+// Each `previewV3*` builder calls the plugin's view function to fetch the
+// EXACT Action[] the wrapper would execute, then returns them as
+// ProposalAction[]. Submitting these via TokenVoting executes the batch
+// atomically without the nested-dao.execute reentrancy.
+
+function v3Contract(cfg: ChainConfig, provider: ethers.providers.Provider): ethers.Contract {
+  return new ethers.Contract(requireV3(cfg), getAbi("UniswapV3Plugin"), provider);
+}
+
+export async function previewV3Mint(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  p: V3MintInput
+): Promise<ProposalAction[]> {
+  const actions = await v3Contract(cfg, provider).previewMintActions(p);
+  return liftPreview(
+    actions,
+    `Uniswap V3: mint ${p.token0}/${p.token1} fee ${p.fee} [${p.tickLower},${p.tickUpper}]`
+  );
+}
+
+export async function previewV3IncreaseLiquidity(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  tokenId: ethers.BigNumberish,
+  amount0Desired: ethers.BigNumber,
+  amount1Desired: ethers.BigNumber,
+  amount0Min: ethers.BigNumber,
+  amount1Min: ethers.BigNumber,
+  deadline: ethers.BigNumberish
+): Promise<ProposalAction[]> {
+  const actions = await v3Contract(cfg, provider).previewIncreaseLiquidityActions(
+    tokenId,
+    amount0Desired,
+    amount1Desired,
+    amount0Min,
+    amount1Min,
+    deadline
+  );
+  return liftPreview(actions, `Uniswap V3: increase liquidity on #${tokenId.toString()}`);
+}
+
+export async function previewV3DecreaseLiquidity(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  tokenId: ethers.BigNumberish,
+  liquidity: ethers.BigNumberish,
+  amount0Min: ethers.BigNumber,
+  amount1Min: ethers.BigNumber,
+  deadline: ethers.BigNumberish
+): Promise<ProposalAction[]> {
+  const actions = await v3Contract(cfg, provider).previewDecreaseLiquidityActions(
+    tokenId,
+    liquidity,
+    amount0Min,
+    amount1Min,
+    deadline
+  );
+  return liftPreview(actions, `Uniswap V3: decrease liquidity on #${tokenId.toString()}`);
+}
+
+export async function previewV3Collect(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  tokenId: ethers.BigNumberish,
+  amount0Max: ethers.BigNumberish,
+  amount1Max: ethers.BigNumberish
+): Promise<ProposalAction[]> {
+  const actions = await v3Contract(cfg, provider).previewCollectActions(
+    tokenId,
+    amount0Max,
+    amount1Max
+  );
+  return liftPreview(actions, `Uniswap V3: collect from #${tokenId.toString()}`);
+}
+
+export async function previewV3Burn(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  tokenId: ethers.BigNumberish
+): Promise<ProposalAction[]> {
+  const actions = await v3Contract(cfg, provider).previewBurnActions(tokenId);
+  return liftPreview(actions, `Uniswap V3: burn #${tokenId.toString()}`);
+}
+
 // --- Uniswap V4 LP lifecycle (modifyLiquidities pass-through) --------------
 
 /**
@@ -307,6 +422,87 @@ export function v4ModifyLiquidities(
     [unlockData, deadline, inputCurrencies, maxIn, outputCurrencies, minOut],
     `Uniswap V4 LP: modifyLiquidities (${inputCurrencies.length} in, ${outputCurrencies.length} out)`
   );
+}
+
+/** Governance-safe builder: returns multi-action ProposalAction[] via
+ *  UniswapV4Plugin.previewModifyLiquiditiesActions. */
+export async function previewV4ModifyLiquidities(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  unlockData: string,
+  deadline: ethers.BigNumberish,
+  inputCurrencies: string[],
+  maxIn: ethers.BigNumber[]
+): Promise<ProposalAction[]> {
+  if (!cfg.dao) throw new Error(`No DAO configured for chain ${cfg.chainId}`);
+  const v4 = new ethers.Contract(cfg.dao.uniswap, getAbi("UniswapV4Plugin"), provider);
+  const actions = await v4.previewModifyLiquiditiesActions(
+    unlockData,
+    deadline,
+    inputCurrencies,
+    maxIn
+  );
+  return liftPreview(
+    actions,
+    `Uniswap V4 LP: modifyLiquidities (${inputCurrencies.length} input currenc${inputCurrencies.length === 1 ? "y" : "ies"})`
+  );
+}
+
+/** Governance-safe AAVE builders: each previewX returns multi-action
+ *  ProposalAction[] from AaveLendingPlugin.previewX(...). */
+function aaveContractFor(cfg: ChainConfig, provider: ethers.providers.Provider): ethers.Contract {
+  if (!cfg.dao) throw new Error(`No DAO configured for chain ${cfg.chainId}`);
+  return new ethers.Contract(cfg.dao.aave, getAbi("AaveLendingPlugin"), provider);
+}
+
+export async function previewAaveSupply(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  asset: string,
+  amount: ethers.BigNumber
+): Promise<ProposalAction[]> {
+  const actions = await aaveContractFor(cfg, provider).previewSupplyActions(asset, amount);
+  return liftPreview(actions, `AAVE: supply ${amount.toString()} ${asset}`);
+}
+
+export async function previewAaveWithdraw(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  asset: string,
+  amount: ethers.BigNumber
+): Promise<ProposalAction[]> {
+  const actions = await aaveContractFor(cfg, provider).previewWithdrawActions(asset, amount);
+  return liftPreview(actions, `AAVE: withdraw ${amount.toString()} ${asset}`);
+}
+
+export async function previewAaveBorrow(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  asset: string,
+  amount: ethers.BigNumber,
+  interestRateMode: number
+): Promise<ProposalAction[]> {
+  const actions = await aaveContractFor(cfg, provider).previewBorrowActions(
+    asset,
+    amount,
+    interestRateMode
+  );
+  return liftPreview(actions, `AAVE: borrow ${amount.toString()} ${asset} (rateMode ${interestRateMode})`);
+}
+
+export async function previewAaveRepay(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  asset: string,
+  amount: ethers.BigNumber,
+  interestRateMode: number
+): Promise<ProposalAction[]> {
+  const actions = await aaveContractFor(cfg, provider).previewRepayActions(
+    asset,
+    amount,
+    interestRateMode
+  );
+  return liftPreview(actions, `AAVE: repay ${amount.toString()} ${asset} (rateMode ${interestRateMode})`);
 }
 
 export function v4SetPositionManager(cfg: ChainConfig, newPositionManager: string): ProposalAction {
