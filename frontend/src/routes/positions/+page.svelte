@@ -11,6 +11,12 @@
   import * as actions from "$lib/actions";
   import type {ProposalAction} from "$lib/actions";
   import ProposeAction from "$lib/components/ProposeAction.svelte";
+  import {listV3PositionsOwnedBy, type V3PositionRead} from "$lib/v3Positions";
+  import {
+    listV4PositionsOwnedBy,
+    readV4Position,
+    type V4PositionRead,
+  } from "$lib/v4Positions";
 
   const U128_MAX = ethers.BigNumber.from(2).pow(128).sub(1);
   const FULL_LOWER = -887220;
@@ -296,16 +302,156 @@
     }
   }
 
+  // --- DAO-owned positions (V3 + V4) ---
+  let v3Positions: V3PositionRead[] | null = null;
+  let v4Positions: V4PositionRead[] | null = null;
+  let listErr: string | null = null;
+  let listing = false;
+
+  async function loadPositions(): Promise<void> {
+    listErr = null;
+    listing = true;
+    v3Positions = null;
+    v4Positions = null;
+    try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      const cfg = chainConfig($wallet.chainId);
+      if (!cfg?.dao) throw new Error("No DAO configured");
+
+      // V3 — NPM is ERC721Enumerable, walk tokenOfOwnerByIndex.
+      if (cfg.dao.uniswapV3) {
+        const v3 = uniswapV3Contract(cfg, $wallet.provider);
+        const npmAddr = (await v3.positionManager()) as string;
+        v3Positions = await listV3PositionsOwnedBy(npmAddr, $wallet.provider, cfg.dao.dao);
+      } else {
+        v3Positions = [];
+      }
+
+      // V4 — PositionManager is NOT enumerable; scan Transfer(0x0, DAO).
+      const v4 = new ethers.Contract(
+        cfg.dao.uniswap,
+        ["function v4PositionManager() view returns (address)"],
+        $wallet.provider
+      );
+      let pmAddr: string = ethers.constants.AddressZero;
+      try {
+        pmAddr = (await v4.v4PositionManager()) as string;
+      } catch {
+        /* plugin pre-LP-extension build */
+      }
+      if (pmAddr !== ethers.constants.AddressZero) {
+        v4Positions = await listV4PositionsOwnedBy(pmAddr, $wallet.provider, cfg.dao.dao);
+      } else {
+        v4Positions = [];
+      }
+    } catch (err) {
+      listErr = (err as Error).message;
+    } finally {
+      listing = false;
+    }
+  }
+
+  // --- V4 single-position lookup (by tokenId) ---
+  let v4LookupId = "";
+  let v4Lookup: V4PositionRead | null = null;
+  let v4LookupErr: string | null = null;
+  async function doV4Lookup(): Promise<void> {
+    v4Lookup = null;
+    v4LookupErr = null;
+    try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      const cfg = chainConfig($wallet.chainId);
+      if (!cfg?.dao) throw new Error("No DAO configured");
+      const v4 = new ethers.Contract(
+        cfg.dao.uniswap,
+        ["function v4PositionManager() view returns (address)"],
+        $wallet.provider
+      );
+      const pmAddr: string = await v4.v4PositionManager();
+      v4Lookup = await readV4Position(
+        pmAddr,
+        $wallet.provider,
+        ethers.BigNumber.from(v4LookupId || "0")
+      );
+    } catch (err) {
+      v4LookupErr = (err as Error).message;
+    }
+  }
+
   $: cfg = $wallet.status === "connected" ? chainConfig($wallet.chainId) : undefined;
 </script>
 
-<h1>Uniswap V3 positions</h1>
+<h1>Uniswap V3 + V4 positions</h1>
 
 {#if $wallet.status !== "connected"}
   <p class="muted">Connect a wallet to manage positions.</p>
 {:else if !cfg?.dao}
   <p class="empty">No DAO configured for chain {$wallet.chainId}.</p>
 {:else}
+  <h2>DAO-owned positions</h2>
+  <p class="muted">
+    Read-only view of every LP NFT currently held by the DAO across both
+    Uniswap V3 (NPM) and V4 (PositionManager). Use the build forms below to
+    propose lifecycle ops against any tokenId.
+  </p>
+  <div class="actions">
+    <button on:click={loadPositions} disabled={listing}>
+      {listing ? "Loading…" : v3Positions || v4Positions ? "Refresh" : "Load positions"}
+    </button>
+  </div>
+  {#if listErr}<p class="error">{listErr}</p>{/if}
+  {#if v3Positions !== null || v4Positions !== null}
+    <h3 class="sub">Uniswap V3 ({v3Positions?.length ?? 0})</h3>
+    {#if v3Positions && v3Positions.length > 0}
+      <table>
+        <thead>
+          <tr><th>tokenId</th><th>pair</th><th>fee</th><th>tick range</th><th>liquidity</th><th>owed0 / owed1</th></tr>
+        </thead>
+        <tbody>
+          {#each v3Positions as p}
+            <tr>
+              <td>{p.tokenId.toString()}</td>
+              <td><code>{p.token0.slice(0, 8)}…</code> / <code>{p.token1.slice(0, 8)}…</code></td>
+              <td>{p.fee}</td>
+              <td>[{p.tickLower}, {p.tickUpper}]</td>
+              <td>{p.liquidity.toString()}</td>
+              <td>{p.tokensOwed0.toString()} / {p.tokensOwed1.toString()}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {:else if v3Positions}
+      <p class="empty">No V3 positions.</p>
+    {/if}
+
+    <h3 class="sub">Uniswap V4 ({v4Positions?.length ?? 0})</h3>
+    {#if v4Positions && v4Positions.length > 0}
+      <table>
+        <thead>
+          <tr><th>tokenId</th><th>pair</th><th>fee / ts</th><th>tick range</th><th>liquidity</th><th>hooks</th></tr>
+        </thead>
+        <tbody>
+          {#each v4Positions as p}
+            <tr>
+              <td>{p.tokenId.toString()}</td>
+              <td><code>{p.poolKey.currency0.slice(0, 8)}…</code> / <code>{p.poolKey.currency1.slice(0, 8)}…</code></td>
+              <td>{p.poolKey.fee} / {p.poolKey.tickSpacing}</td>
+              <td>[{p.tickLower}, {p.tickUpper}]</td>
+              <td>{p.liquidity.toString()}</td>
+              <td>
+                {#if p.poolKey.hooks === ethers.constants.AddressZero}
+                  <span class="muted">none</span>
+                {:else}<code>{p.poolKey.hooks.slice(0, 10)}…</code>{/if}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {:else if v4Positions}
+      <p class="empty">No V4 positions.</p>
+    {/if}
+  {/if}
+
   {#if !cfg.dao.uniswapV3}
     <p class="muted">
       No UniswapV3 plugin configured (7th address in <code>PUBLIC_DAO_*</code>). You can still
@@ -318,7 +464,7 @@
     return to the treasury. Tokens must be ERC20 (use WETH for ETH), ordered token0 &lt; token1.
   </p>
 
-  <h2>Propose: mint position</h2>
+  <h2>Propose: mint position (V3)</h2>
   <div class="form">
     <label>token0 <input bind:value={mToken0} placeholder="0x… (lower addr)" /></label>
     <label>token1 <input bind:value={mToken1} placeholder="0x… (higher addr)" /></label>
@@ -370,7 +516,7 @@
   </div>
   <ProposeAction action={burnAction} />
 
-  <h2>Look up a position</h2>
+  <h2>Look up a V3 position</h2>
   <div class="form">
     <label>tokenId <input bind:value={lookupId} placeholder="123" style="min-width:120px" /></label>
     <button on:click={doLookup}>Read</button>
@@ -384,6 +530,27 @@
         <tr><th>fee</th><td>{lookup.fee}</td></tr>
         <tr><th>liquidity</th><td>{lookup.liquidity}</td></tr>
         <tr><th>owed0 / owed1</th><td>{lookup.owed0} / {lookup.owed1}</td></tr>
+      </tbody>
+    </table>
+  {/if}
+
+  <h2>Look up a V4 position</h2>
+  <div class="form">
+    <label>tokenId <input bind:value={v4LookupId} placeholder="293418" style="min-width:120px" /></label>
+    <button on:click={doV4Lookup}>Read</button>
+  </div>
+  {#if v4LookupErr}<p class="error">{v4LookupErr}</p>{/if}
+  {#if v4Lookup}
+    <table>
+      <tbody>
+        <tr><th>tokenId</th><td>{v4Lookup.tokenId.toString()}</td></tr>
+        <tr><th>currency0</th><td><code>{v4Lookup.poolKey.currency0}</code></td></tr>
+        <tr><th>currency1</th><td><code>{v4Lookup.poolKey.currency1}</code></td></tr>
+        <tr><th>fee / tickSpacing</th><td>{v4Lookup.poolKey.fee} / {v4Lookup.poolKey.tickSpacing}</td></tr>
+        <tr><th>hooks</th><td><code>{v4Lookup.poolKey.hooks}</code></td></tr>
+        <tr><th>tick range</th><td>[{v4Lookup.tickLower}, {v4Lookup.tickUpper}]</td></tr>
+        <tr><th>liquidity</th><td>{v4Lookup.liquidity.toString()}</td></tr>
+        <tr><th>hasSubscriber</th><td>{v4Lookup.hasSubscriber ? "yes" : "no"}</td></tr>
       </tbody>
     </table>
   {/if}

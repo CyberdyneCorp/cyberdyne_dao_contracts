@@ -1,0 +1,128 @@
+// V4 PositionManager read helpers.
+//
+// Decodes the packed `PositionInfo` uint256 returned by
+// `getPoolAndPositionInfo(tokenId)`, and enumerates DAO-owned position NFTs
+// via ERC721 Transfer events (the v4 PositionManager doesn't implement
+// ERC721Enumerable, so we can't `tokenOfOwnerByIndex`).
+//
+// PositionInfo layout (v4-periphery PositionInfoLibrary — matching the
+// canonical lib's tickLower/tickUpper inline-assembly):
+//   bits [0..8)    hasSubscriber (bool flag, low byte)
+//   bits [8..32)   tickLower (int24, sign-extended)
+//   bits [32..56)  tickUpper (int24, sign-extended)
+//   bits [56..256) poolId (top 200 bits — bytes25 of keccak256(PoolKey))
+
+import {ethers} from "ethers";
+
+const V4_PM_ABI = [
+  "function getPoolAndPositionInfo(uint256 tokenId) view returns ((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks), uint256 info)",
+  "function getPositionLiquidity(uint256 tokenId) view returns (uint128)",
+  "function ownerOf(uint256 tokenId) view returns (address)",
+  "function nextTokenId() view returns (uint256)",
+];
+
+export type V4PoolKeyRead = {
+  currency0: string;
+  currency1: string;
+  fee: number;
+  tickSpacing: number;
+  hooks: string;
+};
+
+export type V4PositionRead = {
+  tokenId: ethers.BigNumber;
+  poolKey: V4PoolKeyRead;
+  tickLower: number;
+  tickUpper: number;
+  hasSubscriber: boolean;
+  liquidity: ethers.BigNumber;
+};
+
+function decodePositionInfo(info: ethers.BigNumber): {
+  tickLower: number;
+  tickUpper: number;
+  hasSubscriber: boolean;
+} {
+  const v = info.toBigInt();
+  const hasSubscriber = Number(v & 0xffn) !== 0;
+  // tickLower at bits 8..32, tickUpper at bits 32..56 — both int24 (sign-extend).
+  let tickLower = Number((v >> 8n) & 0xffffffn);
+  if (tickLower >= 0x800000) tickLower -= 0x1000000;
+  let tickUpper = Number((v >> 32n) & 0xffffffn);
+  if (tickUpper >= 0x800000) tickUpper -= 0x1000000;
+  return {tickLower, tickUpper, hasSubscriber};
+}
+
+export function v4PositionManager(
+  pmAddress: string,
+  provider: ethers.providers.Provider
+): ethers.Contract {
+  return new ethers.Contract(pmAddress, V4_PM_ABI, provider);
+}
+
+export async function readV4Position(
+  pmAddress: string,
+  provider: ethers.providers.Provider,
+  tokenId: ethers.BigNumberish
+): Promise<V4PositionRead> {
+  const pm = v4PositionManager(pmAddress, provider);
+  const [poolKey, info] = await pm.getPoolAndPositionInfo(tokenId);
+  const liquidity = await pm.getPositionLiquidity(tokenId);
+  const {tickLower, tickUpper, hasSubscriber} = decodePositionInfo(info);
+  return {
+    tokenId: ethers.BigNumber.from(tokenId),
+    poolKey: {
+      currency0: poolKey.currency0,
+      currency1: poolKey.currency1,
+      fee: Number(poolKey.fee),
+      tickSpacing: Number(poolKey.tickSpacing),
+      hooks: poolKey.hooks,
+    },
+    tickLower,
+    tickUpper,
+    hasSubscriber,
+    liquidity,
+  };
+}
+
+/**
+ * Enumerate position NFTs currently owned by `owner` on the PositionManager.
+ * Scans ERC721 Transfer events: every position mint emits Transfer(0x0, owner, tokenId).
+ * For each mint we also confirm the current owner is still `owner` (positions
+ * transferred away are filtered out). `fromBlock` defaults to genesis on the
+ * connected node — on a fresh anvil fork this is the pin block, which is what
+ * we want.
+ */
+export async function listV4PositionsOwnedBy(
+  pmAddress: string,
+  provider: ethers.providers.Provider,
+  owner: string,
+  fromBlock: number = 0
+): Promise<V4PositionRead[]> {
+  const pm = new ethers.Contract(
+    pmAddress,
+    [
+      ...V4_PM_ABI,
+      "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)",
+    ],
+    provider
+  );
+  // Filter Transfer(from=0x0, to=owner) — i.e. mints to this owner.
+  const mintFilter = pm.filters.Transfer(ethers.constants.AddressZero, owner);
+  const events = await pm.queryFilter(mintFilter, fromBlock);
+  const tokenIds = Array.from(
+    new Set(events.map((e) => e.args!.tokenId.toString()))
+  ).map((s) => ethers.BigNumber.from(s));
+
+  // Filter out positions transferred away after mint.
+  const stillOwned: ethers.BigNumber[] = [];
+  for (const id of tokenIds) {
+    try {
+      const o = await pm.ownerOf(id);
+      if (o.toLowerCase() === owner.toLowerCase()) stillOwned.push(id);
+    } catch {
+      /* burned / not found */
+    }
+  }
+  return Promise.all(stillOwned.map((id) => readV4Position(pmAddress, provider, id)));
+}
