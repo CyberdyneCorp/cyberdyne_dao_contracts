@@ -225,6 +225,19 @@
   let v4PoolHooks = "0x0000000000000000000000000000000000000000";
 
   function v4PoolKey() {
+    // sortCurrencies enforces currency0 < currency1, but a user can paste
+    // the same address into both fields — that's a degenerate PoolKey that
+    // would build a corrupt proposal. Reject up front with a clear error.
+    if (
+      v4PoolToken0 &&
+      v4PoolToken1 &&
+      v4PoolToken0.toLowerCase() === v4PoolToken1.toLowerCase()
+    ) {
+      throw new Error("currency0 and currency1 must differ");
+    }
+    if (!v4PoolToken0 || !v4PoolToken1) {
+      throw new Error("Both currencies are required for the PoolKey");
+    }
     const sorted = v4PoolToken0.toLowerCase() < v4PoolToken1.toLowerCase()
       ? {c0: v4PoolToken0, c1: v4PoolToken1}
       : {c0: v4PoolToken1, c1: v4PoolToken0};

@@ -475,7 +475,7 @@ Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 
 - [x] ✅ **Wrong-network warning.** `ProposeAction.svelte` now distinguishes three failure modes: (1) wallet disconnected → "Connect a wallet" prompt; (2) connected to a chain not in `chains.ts` → explicit wrong-network warning listing supported chainIds; (3) connected to a known chain but no `PUBLIC_DAO_*` env → existing copy-calldata fallback with named chain context.
 - [x] ✅ **V3 fee/PnL view.** Positions table now has a "live fees" column with a per-row "Simulate" button that runs `NPM.callStatic.collect({recipient: dao, max, max}, {from: dao})` to surface the **live** pending fees (the existing `tokensOwed` column is now labeled "stale" so it's obvious that NPM only refreshes it on state-changing ops). New helper `simulateV3Collect` in `frontend/src/lib/v3Positions.ts`. USD pricing is deferred — needs a price-feed integration; raw token amounts cover the audit/inspection use case.
 - [ ] 🔵 **IPFS proposal-metadata pinning.** Slide 12 claims it; the frontend submits `bytes("")` today. Wire a `web3.storage` / Pinata call before `proposeActions` or drop the claim.
-- [ ] 🔵 **V4 LP form validation.** `sortCurrencies()` auto-sorts, but the form still accepts the same address in both currency fields.
+- [x] ✅ **V4 LP form validation.** `v4PoolKey()` builder now throws if `currency0 === currency1` (degenerate PoolKey) or if either currency field is empty. Surfaces a clear error before submit instead of producing a doomed proposal.
 
 ### Cross-cutting
 
