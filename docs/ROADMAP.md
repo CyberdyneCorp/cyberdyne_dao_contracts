@@ -482,7 +482,7 @@ Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 
 - [ ] 🔒 **`BorrowHealthCondition` contract** (from TRD §16 #1) attached to `TRIGGER_LENDING_PERMISSION_ID` via `grantWithCondition` — enforces post-borrow health factor automatically, removes reliance on proposal review.
 - [ ] 🔒 **AAVE v4 adapter** when v4 is live on Ethereum — vote `setAdapter(newAddress)` migration.
 - [ ] 🔒 **DAO sub-treasuries** — child DAOs with capped budgets allocated via parent vote.
-- [ ] 🔵 **Decide the precise CI target chain list** (TRD §16 #5). Today Ethereum + Base are defaults; confirm before locking fork CI per-chain.
+- [x] ✅ **CI target chain list decided: Ethereum + Base.** `.github/workflows/ci.yml`'s `fork` job matrix is `mainnetFork` + `baseFork` (each gated on its RPC secret; the job warns-and-skips when the secret is absent). Other Aragon-supported chains remain opt-in via an `RPC_<NAME>` secret + a `hardhat.config.ts` network entry, no code change — matching TRD §16 #5. Revisit only if a new production target is added.
 
 Each ✅ item is closed by a referenced PR; each 🟡 item is a self-contained PR sized for the v1.1 sprint; each 🔵 is a stretch with no commitment; each 🔒 is multi-PR and gets its own sub-roadmap (P1→P10 mini-cycle).
 
