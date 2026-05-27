@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity 0.8.17;
 
+import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
+
 /// @title IUniswapV3Plugin
 /// @notice Vote-gated management of the DAO's Uniswap V3 liquidity positions:
 ///         mint, increase, decrease, collect fees, burn. Every position NFT is
@@ -51,7 +53,47 @@ interface IUniswapV3Plugin {
     error DeadlineExpired();
     error TokenNotAllowed(address token);
 
-    // --- Vote-gated operations ---
+    // --- Action-builder views (governance path: multi-action proposals) ---
+    //
+    // Each fund-moving op exposes a `preview…Actions(...)` view that returns
+    // the exact `Action[]` the wrapper would invoke via `dao.execute`. The
+    // governance frontend uses these to compose a TokenVoting proposal whose
+    // payload IS the action batch — `dao.execute(actions)` then runs them in
+    // one nonReentrant tx, avoiding the nested-dao.execute reentrancy that
+    // blocked the wrapper functions on the governance path.
+
+    function previewMintActions(
+        MintParams calldata params
+    ) external view returns (Action[] memory);
+
+    function previewIncreaseLiquidityActions(
+        uint256 tokenId,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        uint256 amount0Min,
+        uint256 amount1Min,
+        uint256 deadline
+    ) external view returns (Action[] memory);
+
+    function previewDecreaseLiquidityActions(
+        uint256 tokenId,
+        uint128 liquidity,
+        uint256 amount0Min,
+        uint256 amount1Min,
+        uint256 deadline
+    ) external view returns (Action[] memory);
+
+    function previewCollectActions(
+        uint256 tokenId,
+        uint128 amount0Max,
+        uint128 amount1Max
+    ) external view returns (Action[] memory);
+
+    function previewBurnActions(
+        uint256 tokenId
+    ) external view returns (Action[] memory);
+
+    // --- Vote-gated operations (direct-call entry; same as preview + execute) ---
 
     /// @notice Open a new V3 position; the NFT is minted to the DAO.
     function mint(MintParams calldata params) external;

@@ -117,11 +117,14 @@ library OsxAddresses {
     ///           - on-chain: PluginRepoRegistry events for the "token-voting"
     ///             subdomain on the target chain
     function tokenVotingRepo(uint256 chainId) internal pure returns (address) {
-        // TODO(P11): fill in + VERIFY per chain before testnet/mainnet deploy.
-        // Left as address(0) deliberately — fabricating an unverified address
-        // here is worse than an honest "not configured" that the deploy script
-        // treats as "skip TokenVoting" (or requires the env override).
-        (chainId);
+        // Verified against the on-chain PluginRepoRegistry
+        // (0x5B3B36BdC9470963A2734D6a0d2F6a64C21C159f) PluginRepoRegistered
+        // events on mainnet — the "token-voting" subdomain points at the repo
+        // below. `latestRelease() = 1`, `buildCount(1) = 4` at verification.
+        chainId = _canonical(chainId);
+        if (chainId == 1) return 0xb7401cD221ceAFC54093168B814Cc3d42579287f; // mainnet
+        // TODO: verify per chain for Base / Sepolia / Base-Sepolia before
+        // testnet/mainnet deploys on those.
         return address(0);
     }
 }

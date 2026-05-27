@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity 0.8.17;
 
+import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
+
 import {IAaveAdapter} from "./adapters/IAaveAdapter.sol";
 
 /// @title IAaveLendingPlugin
@@ -22,7 +24,35 @@ interface IAaveLendingPlugin {
     error ZeroAddress();
     error NotImplemented();
 
-    // --- Vote-gated mutators ---
+    // --- Action-builder views (governance path) ---
+    // Each `preview…Actions` returns the Action[] the wrapper would execute
+    // via `dao.execute`. The governance frontend submits these as a multi-
+    // action TokenVoting proposal, avoiding the nested-`dao.execute`
+    // reentrancy that blocks the wrappers on the governance path.
+
+    function previewSupplyActions(
+        address asset,
+        uint256 amount
+    ) external view returns (Action[] memory);
+
+    function previewWithdrawActions(
+        address asset,
+        uint256 amount
+    ) external view returns (Action[] memory);
+
+    function previewBorrowActions(
+        address asset,
+        uint256 amount,
+        uint256 interestRateMode
+    ) external view returns (Action[] memory);
+
+    function previewRepayActions(
+        address asset,
+        uint256 amount,
+        uint256 interestRateMode
+    ) external view returns (Action[] memory);
+
+    // --- Vote-gated mutators (direct-call entry; same as preview + execute) ---
 
     function supply(address asset, uint256 amount) external;
 

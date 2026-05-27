@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity 0.8.17;
 
+import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
+
 /// @title IUniswapV4Plugin
 /// @notice Vote-gated DAO swap surface for Uniswap V4 via the Universal Router + Permit2.
 /// @dev Plugin never custodies funds. The DAO holds `tokenIn` and receives `tokenOut`.
@@ -76,6 +78,20 @@ interface IUniswapV4Plugin {
         address tokenOut,
         uint256 minAmountOut
     ) external;
+
+    /// @notice Action-builder view for the governance path: returns the exact
+    ///         `Action[]` `modifyLiquidities` would submit via `dao.execute`
+    ///         (approve → Permit2.approve → PM.modifyLiquidities → approve(0)).
+    ///         The `outputCurrencies`/`minOut` slippage guard from the wrapper
+    ///         is NOT applied here — that check is wrapper-only. Output-side
+    ///         min amounts are encoded inside the v4 action stream's TAKE_*
+    ///         params and enforced by v4-periphery.
+    function previewModifyLiquiditiesActions(
+        bytes calldata unlockData,
+        uint256 deadline,
+        address[] calldata inputCurrencies,
+        uint256[] calldata maxIn
+    ) external view returns (Action[] memory);
 
     /// @notice Run a v4 LP-lifecycle batch on the v4 PositionManager (mint,
     ///         increase, decrease, burn — any combination encoded in

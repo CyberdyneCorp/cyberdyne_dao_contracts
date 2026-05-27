@@ -677,5 +677,184 @@ describe("UniswapV4Plugin", () => {
       expect(await plugin.lpNonce()).to.equal(2);
       expect(await plugin.swapNonce()).to.equal(swapNonceStart); // unchanged
     });
+
+    // ---------------------------------------------------------------------
+    // Full V4 LP lifecycle exercised through the plugin in ONE test, in the
+    // same order a real proposal-driven flow would: mint → increase → decrease
+    // → collect → burn. Each `modifyLiquidities` call reconfigures the mock PM
+    // with the appropriate pull/push legs (mock ignores the unlockData; the
+    // shape of the v4 action stream is the plugin's pass-through opaque
+    // payload). Asserts the plugin's safety invariants hold at every phase:
+    //   - lpNonce increments per phase (5 ops → 5)
+    //   - plugin holds zero of either token at every checkpoint
+    //   - DAO→Permit2 allowance is zero after each pull phase (reset action)
+    //   - mint/increase debit the DAO; decrease/collect/burn credit the DAO
+    //   - output slippage guard fires when minOut isn't met
+    // ---------------------------------------------------------------------
+    it("full lifecycle: mint → increase → decrease → collect → burn (sequential)", async () => {
+      // Seed the DAO with both tokens and the PM with output liquidity for
+      // later phases. The DAO will pay tokenIn + tokenOut for mint/increase
+      // and receive them back via decrease/collect/burn.
+      const initialIn = ethers.utils.parseUnits("4000", 6);
+      const initialOut = ethers.utils.parseEther("4");
+      await tokenIn.mint(dao.address, initialIn);
+      await tokenOut.mint(dao.address, initialOut);
+      // Pre-fund the PM so it can push tokens back during decrease/collect/burn.
+      await tokenIn.mint(pm.address, ethers.utils.parseUnits("3000", 6));
+      await tokenOut.mint(pm.address, ethers.utils.parseEther("3"));
+
+      const expectPluginHasNothing = async () => {
+        expect(await tokenIn.balanceOf(plugin.address)).to.equal(0);
+        expect(await tokenOut.balanceOf(plugin.address)).to.equal(0);
+      };
+      const expectZeroAllowances = async () => {
+        expect(await tokenIn.allowance(dao.address, permit2.address)).to.equal(0);
+        expect(await tokenOut.allowance(dao.address, permit2.address)).to.equal(0);
+      };
+
+      // ===== Phase 1: MINT_POSITION + SETTLE_PAIR — pull both tokens =====
+      const mintIn0 = ethers.utils.parseUnits("1000", 6);
+      const mintIn1 = ethers.utils.parseEther("1");
+      await pm.clearLegs();
+      await pm.addPullLeg(tokenIn.address, mintIn0, dao.address);
+      await pm.addPullLeg(tokenOut.address, mintIn1, dao.address);
+
+      await expect(
+        plugin
+          .connect(voter)
+          .modifyLiquidities(
+            "0x01", // pretend "MINT_POSITION + SETTLE_PAIR" actions byte
+            FUTURE_DEADLINE,
+            [tokenIn.address, tokenOut.address],
+            [mintIn0, mintIn1],
+            [],
+            []
+          )
+      )
+        .to.emit(plugin, "LiquidityModified")
+        .withArgs(1);
+      expect(await plugin.lpNonce()).to.equal(1);
+      expect(await tokenIn.balanceOf(dao.address)).to.equal(initialIn.sub(mintIn0));
+      expect(await tokenOut.balanceOf(dao.address)).to.equal(initialOut.sub(mintIn1));
+      await expectPluginHasNothing();
+      await expectZeroAllowances();
+
+      // ===== Phase 2: INCREASE_LIQUIDITY + SETTLE_PAIR — pull more =====
+      const incIn0 = ethers.utils.parseUnits("500", 6);
+      const incIn1 = ethers.utils.parseEther("0.5");
+      await pm.clearLegs();
+      await pm.addPullLeg(tokenIn.address, incIn0, dao.address);
+      await pm.addPullLeg(tokenOut.address, incIn1, dao.address);
+
+      await plugin
+        .connect(voter)
+        .modifyLiquidities(
+          "0x02",
+          FUTURE_DEADLINE,
+          [tokenIn.address, tokenOut.address],
+          [incIn0, incIn1],
+          [],
+          []
+        );
+      expect(await plugin.lpNonce()).to.equal(2);
+      const daoInAfterInc = initialIn.sub(mintIn0).sub(incIn0);
+      const daoOutAfterInc = initialOut.sub(mintIn1).sub(incIn1);
+      expect(await tokenIn.balanceOf(dao.address)).to.equal(daoInAfterInc);
+      expect(await tokenOut.balanceOf(dao.address)).to.equal(daoOutAfterInc);
+      await expectPluginHasNothing();
+      await expectZeroAllowances();
+
+      // ===== Phase 3: DECREASE_LIQUIDITY + TAKE_PAIR — push back =====
+      const decOut0 = ethers.utils.parseUnits("400", 6);
+      const decOut1 = ethers.utils.parseEther("0.4");
+      await pm.clearLegs();
+      await pm.addPushLeg(tokenIn.address, decOut0, dao.address);
+      await pm.addPushLeg(tokenOut.address, decOut1, dao.address);
+
+      await plugin
+        .connect(voter)
+        .modifyLiquidities(
+          "0x03",
+          FUTURE_DEADLINE,
+          [],
+          [],
+          [tokenIn.address, tokenOut.address],
+          [decOut0, decOut1] // minOut hits exactly
+        );
+      expect(await plugin.lpNonce()).to.equal(3);
+      expect(await tokenIn.balanceOf(dao.address)).to.equal(daoInAfterInc.add(decOut0));
+      expect(await tokenOut.balanceOf(dao.address)).to.equal(daoOutAfterInc.add(decOut1));
+      await expectPluginHasNothing();
+
+      // ===== Phase 4: COLLECT (DECREASE_LIQUIDITY 0 + TAKE_PAIR) — push fees =====
+      // In v4, fee collection is modelled as DECREASE_LIQUIDITY(liquidity=0) +
+      // TAKE_PAIR. From the plugin's perspective it's an output-only op.
+      const feesOut0 = ethers.utils.parseUnits("5", 6);
+      const feesOut1 = ethers.utils.parseEther("0.001");
+      await pm.clearLegs();
+      await pm.addPushLeg(tokenIn.address, feesOut0, dao.address);
+      await pm.addPushLeg(tokenOut.address, feesOut1, dao.address);
+
+      // Slippage guard fires when minOut > received — assert before the happy path.
+      await expect(
+        plugin
+          .connect(voter)
+          .modifyLiquidities(
+            "0x04",
+            FUTURE_DEADLINE,
+            [],
+            [],
+            [tokenIn.address, tokenOut.address],
+            [feesOut0.add(1), feesOut1.add(1)] // demand one more than the PM will push
+          )
+      ).to.be.revertedWithCustomError(plugin, "OutputShortfall");
+      // The failed call cleared the legs (they were consumed via try/catch?) — re-add.
+      await pm.clearLegs();
+      await pm.addPushLeg(tokenIn.address, feesOut0, dao.address);
+      await pm.addPushLeg(tokenOut.address, feesOut1, dao.address);
+
+      await plugin
+        .connect(voter)
+        .modifyLiquidities(
+          "0x04",
+          FUTURE_DEADLINE,
+          [],
+          [],
+          [tokenIn.address, tokenOut.address],
+          [feesOut0, feesOut1]
+        );
+      expect(await plugin.lpNonce()).to.equal(4);
+      await expectPluginHasNothing();
+
+      // ===== Phase 5: BURN_POSITION + TAKE_PAIR — push residual =====
+      // Real BURN_POSITION can also push leftover principal; here a small dust.
+      const burnOut0 = ethers.utils.parseUnits("1", 6);
+      await pm.clearLegs();
+      await pm.addPushLeg(tokenIn.address, burnOut0, dao.address);
+
+      await plugin
+        .connect(voter)
+        .modifyLiquidities(
+          "0x05",
+          FUTURE_DEADLINE,
+          [],
+          [],
+          [tokenIn.address],
+          [burnOut0]
+        );
+      expect(await plugin.lpNonce()).to.equal(5);
+      await expectPluginHasNothing();
+
+      // Final cross-check: cumulative DAO balance changes equal the mock's net
+      // (mint/increase pulled, decrease/collect/burn pushed back).
+      const cumIn =
+        // pulled out:
+        mintIn0.add(incIn0)
+        // pushed back:
+        .sub(decOut0).sub(feesOut0).sub(burnOut0);
+      const cumOut = mintIn1.add(incIn1).sub(decOut1).sub(feesOut1);
+      expect(await tokenIn.balanceOf(dao.address)).to.equal(initialIn.sub(cumIn));
+      expect(await tokenOut.balanceOf(dao.address)).to.equal(initialOut.sub(cumOut));
+    });
   });
 });

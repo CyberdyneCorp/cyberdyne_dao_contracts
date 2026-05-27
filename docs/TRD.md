@@ -521,6 +521,22 @@ Permissions explicitly *not* granted:
 - No EOA / multisig has `ROOT_PERMISSION_ID`. The DAO is fully self-sovereign from genesis.
 - `executePayroll()` carries **no** permission — by design.
 
+### 9a. Governance-path action builders (`preview…Actions`)
+
+OSx `DAO.execute` is `nonReentrant`. Plugins whose vote-gated functions internally call `dao.execute(actions)` (V3 mint, V4 LP `modifyLiquidities`, AAVE supply/withdraw/borrow/repay) **cannot** be invoked through a TokenVoting proposal that does `to=plugin, data=mint(params)` — the proposal's own `dao.execute(outer)` re-enters the guard when the plugin's wrapper calls `dao.execute(inner)`.
+
+The canonical OSx workaround is to compose multi-action proposals directly. Each fund-moving plugin therefore exposes a **view helper** that builds the same `Action[]` the wrapper would have submitted:
+
+| Plugin | View helper(s) |
+|---|---|
+| `UniswapV3Plugin` | `previewMintActions`, `previewIncreaseLiquidityActions`, `previewDecreaseLiquidityActions`, `previewCollectActions`, `previewBurnActions` |
+| `UniswapV4Plugin` | `previewModifyLiquiditiesActions` (LP) |
+| `AaveLendingPlugin` | `previewSupplyActions`, `previewWithdrawActions`, `previewBorrowActions`, `previewRepayActions` |
+
+Each plugin's existing direct entry (`mint`, `supply`, …) is now a thin wrapper: `actions = preview…(args); dao.execute(actions); emit X`. Behavior is unchanged for non-governance callers (admin / multisig / cron). The frontend's governance path calls `preview…Actions` via the connected provider, lifts each entry into a `ProposalAction`, and submits the **N-action TokenVoting proposal** — `dao.execute(actions)` then runs them atomically under the single `nonReentrant` lock with no nested execute call.
+
+Permissionless cranks (`executePayroll`, `executePayrollPage`, `processDue`) keep their original shape: they're called directly (no proposal), so the nested-`execute` doesn't apply.
+
 ## 10. External protocol integrations (Ethereum mainnet addresses)
 
 | Protocol | Contract | Address |

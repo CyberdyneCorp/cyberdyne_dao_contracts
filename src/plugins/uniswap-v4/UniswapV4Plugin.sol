@@ -305,6 +305,28 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
         }
     }
 
+    /// @inheritdoc IUniswapV4Plugin
+    /// @dev Same preflight as the wrapper (deadline, length match for inputs,
+    ///      PositionManager set, input-side allowlist). Output-side checks are
+    ///      wrapper-only because the slippage guard requires balance snapshots
+    ///      around `dao.execute`.
+    function previewModifyLiquiditiesActions(
+        bytes calldata unlockData,
+        uint256 deadline,
+        address[] calldata inputCurrencies,
+        uint256[] calldata maxIn
+    ) external view override returns (Action[] memory) {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        if (inputCurrencies.length != maxIn.length) revert LengthMismatch();
+        if (v4PositionManager == address(0)) revert PositionManagerUnset();
+        if (allowlistEnforced) {
+            for (uint256 i; i < inputCurrencies.length; ++i) {
+                if (!allowedToken[inputCurrencies[i]]) revert TokenNotAllowed(inputCurrencies[i]);
+            }
+        }
+        return _buildLpActions(unlockData, deadline, inputCurrencies, maxIn);
+    }
+
     /// @dev Pulled out of `modifyLiquidities` to relieve stack pressure (the
     ///      compiler hits the 16-local limit otherwise). Builds the
     ///      `approve → Permit2.approve → PM.modifyLiquidities → approve(0)`

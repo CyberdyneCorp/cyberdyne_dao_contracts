@@ -66,14 +66,15 @@ contract UniswapV3Plugin is PluginUUPSUpgradeable, IUniswapV3Plugin {
         }
     }
 
-    // --- Vote-gated operations ---------------------------------------------
+    // --- Action-builder views (governance path) ----------------------------
 
     /// @inheritdoc IUniswapV3Plugin
-    /// @dev 5-action batch: approve0, approve1, NPM.mint(recipient=dao),
-    ///      approve0=0, approve1=0. The mint return (`tokenId, liquidity,
-    ///      amount0, amount1`) is decoded from the executor result so the new
-    ///      `tokenId` can be surfaced in the event.
-    function mint(MintParams calldata p) external override auth(MANAGE_POSITIONS_PERMISSION_ID) {
+    /// @dev Returned `Action[]` is what the wrapper executes via `dao.execute`.
+    ///      Same checks as the wrapper (deadline, allowlist) so building a
+    ///      proposal whose execution would revert fails at build time.
+    function previewMintActions(
+        MintParams calldata p
+    ) public view override returns (Action[] memory actions) {
         if (block.timestamp > p.deadline) revert DeadlineExpired();
         _checkAllowed(p.token0);
         _checkAllowed(p.token1);
@@ -81,7 +82,7 @@ contract UniswapV3Plugin is PluginUUPSUpgradeable, IUniswapV3Plugin {
         address npm = positionManager;
         address daoAddr = address(dao());
 
-        Action[] memory actions = new Action[](5);
+        actions = new Action[](5);
         actions[0] = _approve(p.token0, npm, p.amount0Desired);
         actions[1] = _approve(p.token1, npm, p.amount1Desired);
         actions[2] = Action({
@@ -108,29 +109,17 @@ contract UniswapV3Plugin is PluginUUPSUpgradeable, IUniswapV3Plugin {
         });
         actions[3] = _approve(p.token0, npm, 0);
         actions[4] = _approve(p.token1, npm, 0);
-
-        (bytes[] memory results, ) = IExecutor(daoAddr).execute(
-            _nextCallId("UNI_V3_MINT:"),
-            actions,
-            0
-        );
-
-        (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1) = abi.decode(
-            results[2],
-            (uint256, uint128, uint256, uint256)
-        );
-        emit PositionMinted(tokenId, p.token0, p.token1, p.fee, liquidity, amount0, amount1);
     }
 
     /// @inheritdoc IUniswapV3Plugin
-    function increaseLiquidity(
+    function previewIncreaseLiquidityActions(
         uint256 tokenId,
         uint256 amount0Desired,
         uint256 amount1Desired,
         uint256 amount0Min,
         uint256 amount1Min,
         uint256 deadline
-    ) external override auth(MANAGE_POSITIONS_PERMISSION_ID) {
+    ) public view override returns (Action[] memory actions) {
         if (block.timestamp > deadline) revert DeadlineExpired();
 
         address npm = positionManager;
@@ -138,7 +127,7 @@ contract UniswapV3Plugin is PluginUUPSUpgradeable, IUniswapV3Plugin {
         _checkAllowed(token0);
         _checkAllowed(token1);
 
-        Action[] memory actions = new Action[](5);
+        actions = new Action[](5);
         actions[0] = _approve(token0, npm, amount0Desired);
         actions[1] = _approve(token1, npm, amount1Desired);
         actions[2] = Action({
@@ -160,13 +149,122 @@ contract UniswapV3Plugin is PluginUUPSUpgradeable, IUniswapV3Plugin {
         });
         actions[3] = _approve(token0, npm, 0);
         actions[4] = _approve(token1, npm, 0);
+    }
 
+    /// @inheritdoc IUniswapV3Plugin
+    function previewDecreaseLiquidityActions(
+        uint256 tokenId,
+        uint128 liquidity,
+        uint256 amount0Min,
+        uint256 amount1Min,
+        uint256 deadline
+    ) public view override returns (Action[] memory actions) {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+
+        actions = new Action[](1);
+        actions[0] = Action({
+            to: positionManager,
+            value: 0,
+            data: abi.encodeCall(
+                INPM.decreaseLiquidity,
+                (
+                    INPM.DecreaseLiquidityParams({
+                        tokenId: tokenId,
+                        liquidity: liquidity,
+                        amount0Min: amount0Min,
+                        amount1Min: amount1Min,
+                        deadline: deadline
+                    })
+                )
+            )
+        });
+    }
+
+    /// @inheritdoc IUniswapV3Plugin
+    /// @dev `recipient` is forced to the DAO so collected tokens land in the
+    ///      treasury, never elsewhere.
+    function previewCollectActions(
+        uint256 tokenId,
+        uint128 amount0Max,
+        uint128 amount1Max
+    ) public view override returns (Action[] memory actions) {
+        actions = new Action[](1);
+        actions[0] = Action({
+            to: positionManager,
+            value: 0,
+            data: abi.encodeCall(
+                INPM.collect,
+                (
+                    INPM.CollectParams({
+                        tokenId: tokenId,
+                        recipient: address(dao()),
+                        amount0Max: amount0Max,
+                        amount1Max: amount1Max
+                    })
+                )
+            )
+        });
+    }
+
+    /// @inheritdoc IUniswapV3Plugin
+    function previewBurnActions(
+        uint256 tokenId
+    ) public view override returns (Action[] memory actions) {
+        actions = new Action[](1);
+        actions[0] = Action({
+            to: positionManager,
+            value: 0,
+            data: abi.encodeCall(INPM.burn, (tokenId))
+        });
+    }
+
+    // --- Vote-gated operations (direct-call entrypoints) -------------------
+    //
+    // Each direct entry is a thin wrapper around the matching `preview…`:
+    //    actions = preview…(args); dao.execute(actions); emit plugin event.
+    // The wrapper is `auth(MANAGE_POSITIONS_PERMISSION)` for direct callers
+    // (admin / multisig). Governance proposals bypass the wrapper and submit
+    // the action[] returned by `preview…` directly — this avoids the nested
+    // `dao.execute` reentrancy that `nonReentrant` on OSx DAO.execute blocks
+    // when TokenVoting executes the proposal.
+
+    /// @inheritdoc IUniswapV3Plugin
+    function mint(MintParams calldata p) external override auth(MANAGE_POSITIONS_PERMISSION_ID) {
+        Action[] memory actions = previewMintActions(p);
+        (bytes[] memory results, ) = IExecutor(address(dao())).execute(
+            _nextCallId("UNI_V3_MINT:"),
+            actions,
+            0
+        );
+        (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1) = abi.decode(
+            results[2],
+            (uint256, uint128, uint256, uint256)
+        );
+        emit PositionMinted(tokenId, p.token0, p.token1, p.fee, liquidity, amount0, amount1);
+    }
+
+    /// @inheritdoc IUniswapV3Plugin
+    function increaseLiquidity(
+        uint256 tokenId,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        uint256 amount0Min,
+        uint256 amount1Min,
+        uint256 deadline
+    ) external override auth(MANAGE_POSITIONS_PERMISSION_ID) {
+        Action[] memory actions = previewIncreaseLiquidityActions(
+            tokenId,
+            amount0Desired,
+            amount1Desired,
+            amount0Min,
+            amount1Min,
+            deadline
+        );
         (bytes[] memory results, ) = IExecutor(address(dao())).execute(
             _nextCallId("UNI_V3_INCREASE:"),
             actions,
             0
         );
-
         (uint128 liquidity, uint256 amount0, uint256 amount1) = abi.decode(
             results[2],
             (uint128, uint256, uint256)
@@ -184,74 +282,36 @@ contract UniswapV3Plugin is PluginUUPSUpgradeable, IUniswapV3Plugin {
         uint256 amount1Min,
         uint256 deadline
     ) external override auth(MANAGE_POSITIONS_PERMISSION_ID) {
-        if (block.timestamp > deadline) revert DeadlineExpired();
-
-        Action[] memory actions = new Action[](1);
-        actions[0] = Action({
-            to: positionManager,
-            value: 0,
-            data: abi.encodeCall(
-                INPM.decreaseLiquidity,
-                (
-                    INPM.DecreaseLiquidityParams({
-                        tokenId: tokenId,
-                        liquidity: liquidity,
-                        amount0Min: amount0Min,
-                        amount1Min: amount1Min,
-                        deadline: deadline
-                    })
-                )
-            )
-        });
-
+        Action[] memory actions = previewDecreaseLiquidityActions(
+            tokenId,
+            liquidity,
+            amount0Min,
+            amount1Min,
+            deadline
+        );
         IExecutor(address(dao())).execute(_nextCallId("UNI_V3_DECREASE:"), actions, 0);
         emit LiquidityDecreased(tokenId, liquidity);
     }
 
     /// @inheritdoc IUniswapV3Plugin
-    /// @dev `recipient` is forced to the DAO so collected tokens land in the
-    ///      treasury, never elsewhere.
     function collect(
         uint256 tokenId,
         uint128 amount0Max,
         uint128 amount1Max
     ) external override auth(MANAGE_POSITIONS_PERMISSION_ID) {
-        Action[] memory actions = new Action[](1);
-        actions[0] = Action({
-            to: positionManager,
-            value: 0,
-            data: abi.encodeCall(
-                INPM.collect,
-                (
-                    INPM.CollectParams({
-                        tokenId: tokenId,
-                        recipient: address(dao()),
-                        amount0Max: amount0Max,
-                        amount1Max: amount1Max
-                    })
-                )
-            )
-        });
-
+        Action[] memory actions = previewCollectActions(tokenId, amount0Max, amount1Max);
         (bytes[] memory results, ) = IExecutor(address(dao())).execute(
             _nextCallId("UNI_V3_COLLECT:"),
             actions,
             0
         );
-
         (uint256 amount0, uint256 amount1) = abi.decode(results[0], (uint256, uint256));
         emit FeesCollected(tokenId, amount0, amount1);
     }
 
     /// @inheritdoc IUniswapV3Plugin
     function burn(uint256 tokenId) external override auth(MANAGE_POSITIONS_PERMISSION_ID) {
-        Action[] memory actions = new Action[](1);
-        actions[0] = Action({
-            to: positionManager,
-            value: 0,
-            data: abi.encodeCall(INPM.burn, (tokenId))
-        });
-
+        Action[] memory actions = previewBurnActions(tokenId);
         IExecutor(address(dao())).execute(_nextCallId("UNI_V3_BURN:"), actions, 0);
         emit PositionBurned(tokenId);
     }

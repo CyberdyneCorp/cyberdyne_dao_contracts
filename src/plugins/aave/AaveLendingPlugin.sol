@@ -60,24 +60,18 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
         }
     }
 
-    // --- Vote-gated lending operations ------------------------------------
+    // --- Action-builder views (governance path) ----------------------------
 
     /// @inheritdoc IAaveLendingPlugin
-    /// @dev Two-action batch executed by the DAO — the DAO calls the pool
-    ///      DIRECTLY (msg.sender at the pool = DAO), so the approval is
-    ///      honored and aTokens are minted to the DAO:
-    ///         1. `IERC20(asset).approve(pool, amount)` — exact-amount approval.
-    ///         2. `pool.supply(asset, amount, dao, refCode)` — adapter-encoded.
-    function supply(
+    /// @dev 2-action batch (approve, supply). Same allowlist gate as the wrapper.
+    function previewSupplyActions(
         address asset,
         uint256 amount
-    ) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
+    ) public view override returns (Action[] memory actions) {
         _checkAllowlist(asset);
-
         IAaveAdapter _adapter = adapter;
         address pool = _adapter.poolAddress();
-
-        Action[] memory actions = new Action[](2);
+        actions = new Action[](2);
         actions[0] = Action({
             to: asset,
             value: 0,
@@ -88,90 +82,51 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
             value: 0,
             data: _adapter.encodeSupply(asset, amount, address(dao()))
         });
-
-        IExecutor(address(dao())).execute(_nextCallId("AAVE_SUPPLY:"), actions, 0);
-
-        emit Supplied(asset, amount);
     }
 
     /// @inheritdoc IAaveLendingPlugin
-    /// @dev Computes `received` as the DAO's `asset` balance delta. AAVE may
-    ///      return less than `amount` (e.g. `type(uint256).max` semantics or
-    ///      partial liquidity) — the event surfaces the actual amount.
-    function withdraw(
+    function previewWithdrawActions(
         address asset,
         uint256 amount
-    ) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
+    ) public view override returns (Action[] memory actions) {
         _checkAllowlist(asset);
-
         IAaveAdapter _adapter = adapter;
-
-        // The DAO holds the aTokens, so it must be msg.sender at the pool for
-        // the burn to resolve. No approve needed — withdraw burns the caller's
-        // aTokens and sends the underlying to `to = dao`.
-        Action[] memory actions = new Action[](1);
+        actions = new Action[](1);
         actions[0] = Action({
             to: _adapter.poolAddress(),
             value: 0,
             data: _adapter.encodeWithdraw(asset, amount, address(dao()))
         });
-
-        uint256 before = IERC20(asset).balanceOf(address(dao()));
-        IExecutor(address(dao())).execute(_nextCallId("AAVE_WITHDRAW:"), actions, 0);
-        uint256 received = IERC20(asset).balanceOf(address(dao())) - before;
-
-        emit Withdrawn(asset, amount, received);
     }
 
     /// @inheritdoc IAaveLendingPlugin
-    /// @dev Single-action batch; debt token is issued to the DAO.
-    function borrow(
+    function previewBorrowActions(
         address asset,
         uint256 amount,
         uint256 interestRateMode
-    ) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
+    ) public view override returns (Action[] memory actions) {
         _checkAllowlist(asset);
-
         IAaveAdapter _adapter = adapter;
-
-        // The DAO borrows against its OWN collateral (msg.sender = DAO =
-        // onBehalfOf), so the debt token is issued to the DAO and no credit
-        // delegation is required.
-        Action[] memory actions = new Action[](1);
+        actions = new Action[](1);
         actions[0] = Action({
             to: _adapter.poolAddress(),
             value: 0,
             data: _adapter.encodeBorrow(asset, amount, interestRateMode, address(dao()))
         });
-
-        IExecutor(address(dao())).execute(_nextCallId("AAVE_BORROW:"), actions, 0);
-
-        emit Borrowed(asset, amount, interestRateMode);
     }
 
     /// @inheritdoc IAaveLendingPlugin
-    /// @dev Three-action batch — DAO calls the pool directly so the approval
-    ///      + debt burn resolve against the DAO:
-    ///         1. `IERC20(asset).approve(pool, amount)` — exact-amount approval.
-    ///         2. `pool.repay(asset, amount, mode, dao)` — adapter-encoded.
-    ///         3. `IERC20(asset).approve(pool, 0)` — reset residual.
-    ///      AAVE's `repay` caps at outstanding debt: if `amount` exceeds debt,
-    ///      `transferFrom` pulls only `min(amount, debt)`, leaving a residual
-    ///      DAO->pool allowance. Action 3 resets it to 0 so no orphan approval
-    ///      survives the call (caught by `invariant_zeroResidualPoolAllowance`).
-    ///      `paid` is the DAO's `asset` balance delta so the event reflects
-    ///      what the pool actually pulled (<= amount).
-    function repay(
+    /// @dev 3-action batch (approve, repay, approve=0) — see direct wrapper for
+    ///      rationale on the trailing reset.
+    function previewRepayActions(
         address asset,
         uint256 amount,
         uint256 interestRateMode
-    ) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
+    ) public view override returns (Action[] memory actions) {
         _checkAllowlist(asset);
-
         IAaveAdapter _adapter = adapter;
         address pool = _adapter.poolAddress();
-
-        Action[] memory actions = new Action[](3);
+        actions = new Action[](3);
         actions[0] = Action({
             to: asset,
             value: 0,
@@ -183,11 +138,56 @@ contract AaveLendingPlugin is PluginUUPSUpgradeable, IAaveLendingPlugin {
             data: _adapter.encodeRepay(asset, amount, interestRateMode, address(dao()))
         });
         actions[2] = Action({to: asset, value: 0, data: abi.encodeCall(IERC20.approve, (pool, 0))});
+    }
 
+    // --- Vote-gated lending operations (direct-call entry) -----------------
+
+    /// @inheritdoc IAaveLendingPlugin
+    function supply(
+        address asset,
+        uint256 amount
+    ) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
+        Action[] memory actions = previewSupplyActions(asset, amount);
+        IExecutor(address(dao())).execute(_nextCallId("AAVE_SUPPLY:"), actions, 0);
+        emit Supplied(asset, amount);
+    }
+
+    /// @inheritdoc IAaveLendingPlugin
+    /// @dev Computes `received` as the DAO's `asset` balance delta. AAVE may
+    ///      return less than `amount` (e.g. `type(uint256).max` semantics or
+    ///      partial liquidity) — the event surfaces the actual amount.
+    function withdraw(
+        address asset,
+        uint256 amount
+    ) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
+        Action[] memory actions = previewWithdrawActions(asset, amount);
+        uint256 before = IERC20(asset).balanceOf(address(dao()));
+        IExecutor(address(dao())).execute(_nextCallId("AAVE_WITHDRAW:"), actions, 0);
+        uint256 received = IERC20(asset).balanceOf(address(dao())) - before;
+        emit Withdrawn(asset, amount, received);
+    }
+
+    /// @inheritdoc IAaveLendingPlugin
+    function borrow(
+        address asset,
+        uint256 amount,
+        uint256 interestRateMode
+    ) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
+        Action[] memory actions = previewBorrowActions(asset, amount, interestRateMode);
+        IExecutor(address(dao())).execute(_nextCallId("AAVE_BORROW:"), actions, 0);
+        emit Borrowed(asset, amount, interestRateMode);
+    }
+
+    /// @inheritdoc IAaveLendingPlugin
+    function repay(
+        address asset,
+        uint256 amount,
+        uint256 interestRateMode
+    ) external override auth(TRIGGER_LENDING_PERMISSION_ID) {
+        Action[] memory actions = previewRepayActions(asset, amount, interestRateMode);
         uint256 before = IERC20(asset).balanceOf(address(dao()));
         IExecutor(address(dao())).execute(_nextCallId("AAVE_REPAY:"), actions, 0);
         uint256 paid = before - IERC20(asset).balanceOf(address(dao()));
-
         emit Repaid(asset, amount, interestRateMode, paid);
     }
 
