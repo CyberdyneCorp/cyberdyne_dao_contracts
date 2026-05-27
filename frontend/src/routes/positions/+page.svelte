@@ -14,6 +14,8 @@
   import {
     listV3PositionsOwnedBy,
     simulateV3Collect,
+    readV3PoolState,
+    type V3PoolState,
     type V3PositionRead,
   } from "$lib/v3Positions";
   import {
@@ -49,6 +51,31 @@
   // Governance-safe: previewMintActions returns 5 raw actions which run
   // atomically in one dao.execute (no nested-execute reentrancy under TV).
   let mintAction: ProposalAction[] | null = null;
+  // Live V3 pool state preview — set by quoteMint() before submit so users
+  // see whether their [tickLower, tickUpper] is in range and what the
+  // current price implies for their amounts.
+  type QuoteState = V3PoolState | {error: string} | "loading" | null;
+  let mintQuote: QuoteState = null;
+
+  async function quoteMint(): Promise<void> {
+    mintQuote = "loading";
+    try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      const cfg = cfgNow();
+      if (!cfg.dao?.uniswapV3) throw new Error("V3 plugin not configured");
+      const v3 = uniswapV3Contract(cfg, $wallet.provider);
+      const npmAddr = (await v3.positionManager()) as string;
+      mintQuote = await readV3PoolState(
+        npmAddr,
+        $wallet.provider,
+        mToken0,
+        mToken1,
+        parseInt(mFee, 10)
+      );
+    } catch (err) {
+      mintQuote = {error: (err as Error).message};
+    }
+  }
 
   async function buildMint(): Promise<void> {
     mintAction = null;
@@ -526,8 +553,45 @@
       <label>tickLower <input bind:value={mLower} style="min-width:90px" /></label>
       <label>tickUpper <input bind:value={mUpper} style="min-width:90px" /></label>
     {/if}
+    <button on:click={quoteMint}>Quote pool</button>
     <button on:click={buildMint}>Build</button>
   </div>
+  {#if mintQuote !== null}
+    {#if mintQuote === "loading"}
+      <p class="muted">Loading pool state…</p>
+    {:else if "error" in mintQuote}
+      <p class="error">Quote failed: {mintQuote.error}</p>
+    {:else}
+      {@const lo = mFull ? FULL_LOWER : parseInt(mLower, 10)}
+      {@const hi = mFull ? FULL_UPPER : parseInt(mUpper, 10)}
+      {@const inRange = mintQuote.inRange(lo, hi)}
+      <table class="quote">
+        <tbody>
+          <tr><th>pool</th><td><code>{mintQuote.poolAddress}</code></td></tr>
+          <tr><th>current tick</th><td>{mintQuote.tick}</td></tr>
+          <tr><th>raw price (token1 per token0)</th><td>{mintQuote.rawPriceToken1PerToken0.toExponential(6)}</td></tr>
+          <tr><th>pool liquidity</th><td>{mintQuote.liquidity.toString()}</td></tr>
+          <tr><th>your range</th><td>[{lo}, {hi}]</td></tr>
+          <tr>
+            <th>in range?</th>
+            <td class={inRange ? "ok" : "warn"}>
+              {#if inRange}
+                ✓ current tick {mintQuote.tick} is inside [{lo}, {hi}] — position will use BOTH tokens
+              {:else if mintQuote.tick < lo}
+                ⚠ current tick {mintQuote.tick} is BELOW {lo} — position uses ONLY token0 until price rises into range
+              {:else}
+                ⚠ current tick {mintQuote.tick} is ABOVE {hi} — position uses ONLY token1 until price falls into range
+              {/if}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="muted">
+        Use this as context for setting <code>amount0Min</code> / <code>amount1Min</code> — exact
+        liquidity math is delegated to the on-chain <code>NPM.mint</code> call.
+      </p>
+    {/if}
+  {/if}
   <ProposeAction action={mintAction} />
 
   <h2>Manage an existing position</h2>
@@ -689,5 +753,21 @@
   button.small {
     padding: 0.1rem 0.4rem;
     font-size: 0.8rem;
+  }
+  table.quote {
+    margin: 0.5rem 0;
+    font-size: 0.9rem;
+  }
+  table.quote th {
+    text-align: left;
+    padding-right: 1rem;
+    font-weight: 500;
+    color: #555;
+  }
+  .ok {
+    color: #1e5e2c;
+  }
+  .warn {
+    color: #8a4a00;
   }
 </style>

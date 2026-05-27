@@ -17,6 +17,18 @@ const NPM_ABI = [
   // `from` override is required because NPM checks the caller is approved for
   // the tokenId.
   "function collect((uint256 tokenId, address recipient, uint128 amount0Max, uint128 amount1Max) params) external returns (uint256 amount0, uint256 amount1)",
+  "function factory() view returns (address)",
+];
+
+const V3_FACTORY_ABI = [
+  "function getPool(address tokenA, address tokenB, uint24 fee) view returns (address)",
+];
+
+const V3_POOL_ABI = [
+  "function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)",
+  "function liquidity() view returns (uint128)",
+  "function token0() view returns (address)",
+  "function token1() view returns (address)",
 ];
 
 export type V3PositionRead = {
@@ -63,6 +75,63 @@ export async function listV3PositionsOwnedBy(
     ids.push(await npm.tokenOfOwnerByIndex(owner, i));
   }
   return Promise.all(ids.map((id) => readV3Position(npmAddress, provider, id)));
+}
+
+export type V3PoolState = {
+  poolAddress: string;
+  sqrtPriceX96: ethers.BigNumber;
+  tick: number;
+  liquidity: ethers.BigNumber;
+  /** Decimal price expressed as token1 per 1 token0 (raw units, no decimals applied). */
+  rawPriceToken1PerToken0: number;
+  /** Whether `[tickLower, tickUpper]` contains the current tick. */
+  inRange: (tickLower: number, tickUpper: number) => boolean;
+};
+
+/**
+ * Read the live pool state for (token0, token1, fee) via the canonical V3
+ * factory. Used by the mint form to show context (current tick, price) so
+ * users can set sensible amount0Min / amount1Min slippage before submitting
+ * a proposal. Pool address is derived on-chain via `factory.getPool`, so we
+ * don't have to embed factory/init-code-hash constants per chain.
+ *
+ * Reverts (via the underlying contract calls) if no pool exists for the
+ * (token0, token1, fee) tuple — the form should surface that as "no live
+ * pool" rather than building a doomed proposal.
+ */
+export async function readV3PoolState(
+  npmAddress: string,
+  provider: ethers.providers.Provider,
+  token0: string,
+  token1: string,
+  fee: number
+): Promise<V3PoolState> {
+  const npm = new ethers.Contract(npmAddress, NPM_ABI, provider);
+  const factoryAddr = (await npm.factory()) as string;
+  const factory = new ethers.Contract(factoryAddr, V3_FACTORY_ABI, provider);
+  const poolAddress = (await factory.getPool(token0, token1, fee)) as string;
+  if (poolAddress === ethers.constants.AddressZero) {
+    throw new Error(`No V3 pool for ${token0} / ${token1} / fee=${fee}`);
+  }
+  const pool = new ethers.Contract(poolAddress, V3_POOL_ABI, provider);
+  const [slot0, liquidity] = await Promise.all([pool.slot0(), pool.liquidity()]);
+  // price = (sqrtPriceX96 / 2^96) ** 2. JS float is fine for a UI preview —
+  // any operational proposal still uses the on-chain math via NPM.mint.
+  const sqrtPriceX96 = slot0.sqrtPriceX96 as ethers.BigNumber;
+  const numerator = parseFloat(sqrtPriceX96.toString());
+  const Q96 = 2 ** 96;
+  const ratio = numerator / Q96;
+  const rawPriceToken1PerToken0 = ratio * ratio;
+  const currentTick = Number(slot0.tick);
+  return {
+    poolAddress,
+    sqrtPriceX96,
+    tick: currentTick,
+    liquidity,
+    rawPriceToken1PerToken0,
+    inRange: (tickLower: number, tickUpper: number) =>
+      currentTick >= tickLower && currentTick < tickUpper,
+  };
 }
 
 /**

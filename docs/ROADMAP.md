@@ -439,7 +439,7 @@ Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 
 ### UniswapV3Plugin
 
 - [x] ✅ **Fork tests beefed up to 6 cases.** Added `increaseLiquidity` grows position; `burn` closes emptied position + `ownerOf` reverts; `DeadlineExpired` mint guard; allowlist rejection of non-listed live tokens. (Existing: mint, decrease+collect.) Guard now accepts both `mainnetFork` and `localFork`.
-- [ ] 🟡 **`quoteMint(token0, token1, fee, tickLower, tickUpper, amount0Desired)` view helper** — wraps Uniswap QuoterV2 to surface expected `liquidity` + counter-amount before the proposal is built. Closes a real footgun (bad ticks → mint reverts on `amount0Min`/`amount1Min`).
+- [x] ✅ **Mint pool-state preview (frontend).** New helper `readV3PoolState(npm, provider, token0, token1, fee)` derives the pool address via `NPM.factory().getPool(...)`, reads `slot0` + `liquidity`, and returns `{poolAddress, sqrtPriceX96, tick, rawPriceToken1PerToken0, inRange(lo, hi)}`. The V3 mint form now has a "Quote pool" button that shows the current tick, price, and a clear in/below/above-range verdict so users can set sensible `amount0Min`/`amount1Min` before submit. Exact `liquidity` math is left to on-chain `NPM.mint` (porting Uniswap's `TickMath`/`LiquidityAmounts` would be ~500 LOC of fixed-point math; the preview gets ~95% of the UX value at ~50 LOC).
 - [ ] 🟡 **Subgraph entities** — `V3Position`, `V3Collect`, `V3TokenAllowlistEntry` + mappings for `PositionMinted` / `LiquidityIncreased` / `LiquidityDecreased` / `FeesCollected` / `PositionBurned`. Today the positions page reads RPC only.
 - [ ] 🔵 **Optional ETH-in helper** — when `token0` / `token1` is WETH, prepend `WETH.deposit{value: x}` to `previewMintActions` so a single proposal can wrap + mint atomically.
 
