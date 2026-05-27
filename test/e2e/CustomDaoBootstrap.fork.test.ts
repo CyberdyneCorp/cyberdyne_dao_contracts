@@ -44,6 +44,7 @@ import {
   AaveLendingPlugin__factory,
   AaveLendingPluginSetup__factory,
   AaveV3Adapter__factory,
+  BorrowHealthCondition__factory,
   CostRegistryPlugin__factory,
   CostRegistryPluginSetup__factory,
 } from "../../typechain-types";
@@ -702,6 +703,71 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork", "localFork"], () => {
 
       expect(await payroll.MAX_RECIPIENTS()).to.equal(500);
       expect(await cost.MAX_ENTRIES()).to.equal(750);
+    });
+
+    // BorrowHealthCondition's floor is governance-settable: the DAO is the
+    // `governor`, so only a passed proposal can retune it. Deploy a condition
+    // owned by the bootstrapped DAO, then change the floor via a real
+    // create -> vote -> execute round-trip (the production retune path).
+    it("governance retunes BorrowHealthCondition floor via vote -> execute", async function () {
+      if (!TOKEN_VOTING_REPO || !tokenVotingAddress) {
+        this.skip();
+        return;
+      }
+
+      const aavePool = EXTERNAL[chainKey()].AAVE_V3_POOL;
+      const condition = await new BorrowHealthCondition__factory(deployer).deploy(
+        aavePool,
+        daoAddress, // governor = the DAO
+        ethers.utils.parseEther("1.5")
+      );
+      await condition.deployed();
+      expect(await condition.minHealthFactor()).to.equal(ethers.utils.parseEther("1.5"));
+
+      const newFloor = ethers.utils.parseEther("2");
+      const actions = [
+        {
+          to: condition.address,
+          value: 0,
+          data: BorrowHealthCondition__factory.createInterface().encodeFunctionData(
+            "setMinHealthFactor",
+            [newFloor]
+          ),
+        },
+      ];
+
+      const tv = new ethers.Contract(tokenVotingAddress, TOKEN_VOTING_ABI, deployer);
+      const createTx = await tv.createProposal(
+        ethers.utils.toUtf8Bytes("ipfs://e2e-health-floor"),
+        actions,
+        0,
+        0,
+        0,
+        VOTE_YES,
+        true
+      );
+      const receipt = await createTx.wait();
+      const created = receipt.logs.find(
+        (l: {topics: string[]}) =>
+          l.topics[0] ===
+          ethers.utils.id(
+            "ProposalCreated(uint256,address,uint64,uint64,bytes,(address,uint256,bytes)[],uint256)"
+          )
+      );
+      const proposalId = created
+        ? ethers.BigNumber.from(created.topics[1])
+        : ethers.BigNumber.from(0);
+
+      let proposal = await tv.getProposal(proposalId);
+      if (!proposal.executed) {
+        await time.increase(3600 + 1);
+        await (await tv.execute(proposalId)).wait();
+        proposal = await tv.getProposal(proposalId);
+      }
+      expect(proposal.executed).to.equal(true);
+
+      // The DAO-executed setter retuned the floor.
+      expect(await condition.minHealthFactor()).to.equal(newFloor);
     });
   });
 });

@@ -27,6 +27,8 @@ function borrowData(asset: string, amount: ethers.BigNumber, rateMode = 2): stri
 
 describe("BorrowHealthCondition", () => {
   let deployer: Signer;
+  let governor: Signer; // stands in for the DAO that may retune the floor
+  let stranger: Signer;
   let dao: string; // the borrower account passed as `who`
   let mock: MockAaveForHealthCondition;
   let asset: TestERC20; // 6-decimal asset, $1 each
@@ -36,7 +38,7 @@ describe("BorrowHealthCondition", () => {
   const amt = (whole: number) => ethers.BigNumber.from(10).pow(6).mul(whole); // 6-dec units
 
   beforeEach(async () => {
-    [deployer] = await ethers.getSigners();
+    [deployer, governor, stranger] = await ethers.getSigners();
     dao = ethers.Wallet.createRandom().address;
 
     mock = await new MockAaveForHealthCondition__factory(deployer).deploy();
@@ -44,7 +46,11 @@ describe("BorrowHealthCondition", () => {
     asset = await new TestERC20__factory(deployer).deploy("USD Coin", "USDC", 6);
     await asset.deployed();
 
-    cond = await new BorrowHealthCondition__factory(deployer).deploy(mock.address, FLOOR);
+    cond = await new BorrowHealthCondition__factory(deployer).deploy(
+      mock.address,
+      await governor.getAddress(),
+      FLOOR
+    );
     await cond.deployed();
 
     // $2000 collateral, no debt yet, 80% liquidation threshold; asset = $1.
@@ -53,9 +59,21 @@ describe("BorrowHealthCondition", () => {
   });
 
   describe("constructor guards", () => {
-    it("rejects a zero pool", async () => {
+    it("rejects a zero pool or zero governor", async () => {
+      const gov = await governor.getAddress();
       await expect(
-        new BorrowHealthCondition__factory(deployer).deploy(ethers.constants.AddressZero, FLOOR)
+        new BorrowHealthCondition__factory(deployer).deploy(
+          ethers.constants.AddressZero,
+          gov,
+          FLOOR
+        )
+      ).to.be.revertedWithCustomError(cond, "ZeroAddress");
+      await expect(
+        new BorrowHealthCondition__factory(deployer).deploy(
+          mock.address,
+          ethers.constants.AddressZero,
+          FLOOR
+        )
       ).to.be.revertedWithCustomError(cond, "ZeroAddress");
     });
 
@@ -63,8 +81,40 @@ describe("BorrowHealthCondition", () => {
       await expect(
         new BorrowHealthCondition__factory(deployer).deploy(
           mock.address,
+          await governor.getAddress(),
           ethers.utils.parseEther("0.9")
         )
+      ).to.be.revertedWithCustomError(cond, "InvalidMinHealthFactor");
+    });
+  });
+
+  describe("setMinHealthFactor (governance-settable floor)", () => {
+    it("lets the governor retune the floor and emits", async () => {
+      const newFloor = ethers.utils.parseEther("2");
+      await expect(cond.connect(governor).setMinHealthFactor(newFloor))
+        .to.emit(cond, "MinHealthFactorUpdated")
+        .withArgs(FLOOR, newFloor);
+      expect(await cond.minHealthFactor()).to.equal(newFloor);
+    });
+
+    it("applies the new floor to isGranted immediately", async () => {
+      // $1000 borrow → projected HF 1.6e18. Passes at 1.5 floor…
+      const data = borrowData(asset.address, amt(1000));
+      expect(await cond.isGranted(asset.address, dao, PERM, data)).to.equal(true);
+      // …raise floor to 1.7 → same borrow now denied.
+      await cond.connect(governor).setMinHealthFactor(ethers.utils.parseEther("1.7"));
+      expect(await cond.isGranted(asset.address, dao, PERM, data)).to.equal(false);
+    });
+
+    it("reverts NotGovernor for anyone else", async () => {
+      await expect(
+        cond.connect(stranger).setMinHealthFactor(ethers.utils.parseEther("2"))
+      ).to.be.revertedWithCustomError(cond, "NotGovernor");
+    });
+
+    it("reverts InvalidMinHealthFactor below 1e18", async () => {
+      await expect(
+        cond.connect(governor).setMinHealthFactor(ethers.utils.parseEther("0.99"))
       ).to.be.revertedWithCustomError(cond, "InvalidMinHealthFactor");
     });
   });

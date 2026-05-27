@@ -88,7 +88,13 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       await dao.grant(plugin.address, await voter.getAddress(), TRIGGER_LENDING_PERMISSION_ID);
       await dao.grant(dao.address, plugin.address, EXECUTE_PERMISSION_ID);
 
-      cond = await new BorrowHealthCondition__factory(deployer).deploy(poolAddress, FLOOR);
+      // governor = deployer here so the retune test can call setMinHealthFactor
+      // directly (in production it's the DAO, exercised via a vote).
+      cond = await new BorrowHealthCondition__factory(deployer).deploy(
+        poolAddress,
+        await deployer.getAddress(),
+        FLOOR
+      );
       await cond.deployed();
 
       // Seed a real collateral position: 5 WETH supplied by the DAO.
@@ -164,5 +170,24 @@ onlyOn(["mainnetFork", "baseFork"], () => {
         "HealthFactorBelowFloor"
       );
     });
+
+    it("a governance retune of the floor changes enforcement against the live pool", async () => {
+      const small = ethers.utils.parseUnits("100", 6);
+      const data = AaveLendingPlugin__factory.createInterface().encodeFunctionData("borrow", [
+        usdcAddress,
+        small,
+        VARIABLE_RATE,
+      ]);
+      // Conservative borrow passes at the 1.5 floor.
+      expect(await cond.isGranted(plugin.address, dao.address, TRIGGER_LENDING_PERMISSION_ID, data))
+        .to.equal(true);
+
+      // Governor (the DAO in prod) raises the floor sky-high → same borrow now
+      // denied; the projection is recomputed against the live position.
+      await cond.connect(deployer).setMinHealthFactor(ethers.utils.parseEther("1000000"));
+      expect(await cond.isGranted(plugin.address, dao.address, TRIGGER_LENDING_PERMISSION_ID, data))
+        .to.equal(false);
+    });
   });
 });
+

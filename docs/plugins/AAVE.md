@@ -188,8 +188,14 @@ underlying to the DAO directly.
 
 `src/plugins/aave/conditions/BorrowHealthCondition.sol` turns "don't
 over-leverage" into an on-chain guard. The floor (`minHealthFactor`, 18-dec,
-e.g. `1.5e18`) and the AAVE Pool are fixed at deploy. **Fail-closed:** if the
-oracle / pool / token-metadata reads revert, the check reverts too.
+e.g. `1.5e18`) is set at deploy and **governance-settable** thereafter: only
+`governor` (the DAO, set immutably at deploy) may call
+`setMinHealthFactor(newFloor)` (`newFloor ≥ 1e18`), so a passed proposal can
+retune the floor without redeploying — it emits `MinHealthFactorUpdated` and is
+a plain storage write (no `dao.execute`, so no nested-execute concern). The
+AAVE Pool stays immutable (stable per chain; a v4 migration deploys a fresh
+condition). **Fail-closed:** if the oracle / pool / token-metadata reads
+revert, the check reverts too.
 
 There are **two borrow paths**, and they need different enforcement surfaces —
 the condition exposes one for each:

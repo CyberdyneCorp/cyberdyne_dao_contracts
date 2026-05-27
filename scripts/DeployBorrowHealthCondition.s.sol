@@ -17,14 +17,17 @@ import {OsxAddresses} from "./lib/OsxAddresses.sol";
 contract DeployBorrowHealthCondition is Script {
     function run() external returns (BorrowHealthCondition condition) {
         uint256 minHealthFactor = vm.envOr("MIN_HEALTH_FACTOR", uint256(1.5e18));
+        // The DAO that may retune the floor via `setMinHealthFactor` (a vote).
+        address governor = vm.envAddress("GOVERNOR");
         address pool = OsxAddresses.aaveV3Pool(block.chainid);
 
         vm.startBroadcast();
-        condition = new BorrowHealthCondition(IAavePoolView(pool), minHealthFactor);
+        condition = new BorrowHealthCondition(IAavePoolView(pool), governor, minHealthFactor);
         vm.stopBroadcast();
 
         console2.log("BorrowHealthCondition:", address(condition));
         console2.log("  AAVE pool:", pool);
+        console2.log("  governor (DAO):", governor);
         console2.log("  minHealthFactor:", minHealthFactor);
     }
 }

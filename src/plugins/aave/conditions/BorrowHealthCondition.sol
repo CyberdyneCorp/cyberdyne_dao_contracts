@@ -43,7 +43,12 @@ interface IAaveOracleView {
 ///         from a proposal-review convention into an on-chain guard.
 ///
 /// @dev    AAVE health factor is 18-decimal: `< 1e18` is liquidatable. The
-///         floor (`minHealthFactor`, e.g. `1.5e18`) is fixed at deploy.
+///         floor (`minHealthFactor`, e.g. `1.5e18`) is set at deploy and is
+///         retunable through governance via `setMinHealthFactor` — the
+///         `governor` (the DAO) is the only caller, so a passed proposal can
+///         raise/lower the floor without redeploying. `pool` stays immutable
+///         (the AAVE Pool is stable per chain; a v4 migration deploys a fresh
+///         condition).
 ///
 ///         Two enforcement surfaces, because the plugin has two borrow paths:
 ///
@@ -70,9 +75,16 @@ contract BorrowHealthCondition is PermissionCondition {
     /// @notice The AAVE v3 Pool this condition reads positions + the oracle from.
     IAavePoolView public immutable pool;
 
+    /// @notice The only address allowed to retune `minHealthFactor` — the DAO.
+    ///         A governance vote executes as the DAO, so the floor is changed
+    ///         by a passed proposal calling `setMinHealthFactor`. Immutable: to
+    ///         re-home governance, deploy a fresh condition.
+    address public immutable governor;
+
     /// @notice Minimum acceptable health factor (18-decimal). A borrow that
     ///         would put the account's HF below this is denied / reverted.
-    uint256 public immutable minHealthFactor;
+    ///         Governance-settable via `setMinHealthFactor`.
+    uint256 public minHealthFactor;
 
     /// @notice The `AaveLendingPlugin.borrow` selector this condition gates.
     ///         Calls with any other selector pass `isGranted` untouched.
@@ -80,16 +92,36 @@ contract BorrowHealthCondition is PermissionCondition {
 
     error ZeroAddress();
     error InvalidMinHealthFactor();
+    /// @notice `setMinHealthFactor` called by someone other than `governor`.
+    error NotGovernor();
     /// @notice `assertHealthFactor` found the account below the floor.
     error HealthFactorBelowFloor(address account, uint256 healthFactor, uint256 floor);
 
+    /// @notice The floor was retuned by governance.
+    event MinHealthFactorUpdated(uint256 oldFloor, uint256 newFloor);
+
     /// @param _pool            AAVE v3 Pool (e.g. `0x8787…4E2` on mainnet).
+    /// @param _governor        Address allowed to retune the floor (the DAO).
     /// @param _minHealthFactor Floor, 18-decimal. Must be ≥ 1e18 (≥ liquidation).
-    constructor(IAavePoolView _pool, uint256 _minHealthFactor) {
-        if (address(_pool) == address(0)) revert ZeroAddress();
+    constructor(IAavePoolView _pool, address _governor, uint256 _minHealthFactor) {
+        if (address(_pool) == address(0) || _governor == address(0)) revert ZeroAddress();
         if (_minHealthFactor < 1e18) revert InvalidMinHealthFactor();
         pool = _pool;
+        governor = _governor;
         minHealthFactor = _minHealthFactor;
+    }
+
+    /// @notice Retune the health-factor floor. Only `governor` (the DAO) — so
+    ///         only a passed governance proposal — may call it. A plain storage
+    ///         write (no `dao.execute`), so it rides through a TokenVoting
+    ///         proposal as a single action with no nested-execute concern.
+    /// @param newFloor New floor, 18-decimal. Must be ≥ 1e18.
+    function setMinHealthFactor(uint256 newFloor) external {
+        if (msg.sender != governor) revert NotGovernor();
+        if (newFloor < 1e18) revert InvalidMinHealthFactor();
+        uint256 oldFloor = minHealthFactor;
+        minHealthFactor = newFloor;
+        emit MinHealthFactorUpdated(oldFloor, newFloor);
     }
 
     /// @inheritdoc IPermissionCondition
