@@ -57,6 +57,8 @@ EOF
 
 Pin scripts that ship later (e.g. CI-side bulk-pin on proposal-batch import) should call this same script so the schema validation stays in one place.
 
+**Toy frontend integration:** `frontend/src/lib/ipfs.ts` pins this exact schema (`schema: "cyberdyne-proposal/1"`, `title`, `description`, `encodedActions[]` with `humanReadable`) from the browser when `PUBLIC_PINATA_JWT` is set; `proposeActions` then stores the `ipfs://CID` as the proposal's on-chain metadata. When the JWT is absent it falls back to storing the summary string inline as UTF-8 bytes (no IPFS dependency for local/dev use). The proposals list resolves `ipfs://` back to the `title` via `PUBLIC_IPFS_GATEWAY` (default ipfs.io).
+
 ## How it's consumed
 
 - **Frontend (custom UI + toy)**: fetches `ipfs://<cid>` via a public gateway (cloudflare-ipfs.com, ipfs.io) or a configured private gateway. Parses, displays. Falls back to "metadata unavailable" if all gateways time out.

@@ -16,14 +16,17 @@ import {env} from "$env/dynamic/public";
 // Bump when the document shape changes so consumers can branch on it.
 export const METADATA_SCHEMA_VERSION = "cyberdyne-proposal/1";
 
+// Matches the canonical schema in docs/PROPOSAL_METADATA.md so the toy
+// frontend, the production UI, and the subgraph all decode it consistently.
+// `schema`/`createdAt` are extra top-level fields (tolerated per the doc).
 export type ProposalMetadata = {
   schema: string;
   title: string;
   description: string;
-  // Decoded action summaries for human review; the authoritative actions
-  // live on-chain in the proposal itself.
-  actions: {to: string; value: string; data: string}[];
-  createdAt: number; // unix seconds
+  // Pre-decoded action descriptors for UI display; the on-chain Action[] is
+  // the source of truth. `humanReadable` is the action's summary line.
+  encodedActions: {to: string; value: string; data: string; humanReadable?: string}[];
+  createdAt: number; // unix seconds (extra field; not in the required set)
 };
 
 export function ipfsEnabled(): boolean {
@@ -38,13 +41,18 @@ export function ipfsEnabled(): boolean {
 export function buildProposalMetadata(
   title: string,
   description: string,
-  actions: {to: string; value: string; data: string}[]
+  actions: {to: string; value: string; data: string; summary?: string}[]
 ): ProposalMetadata {
   return {
     schema: METADATA_SCHEMA_VERSION,
     title,
     description,
-    actions,
+    encodedActions: actions.map((a) => ({
+      to: a.to,
+      value: a.value,
+      data: a.data,
+      humanReadable: a.summary,
+    })),
     createdAt: Math.floor(Date.now() / 1000),
   };
 }

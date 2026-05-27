@@ -34,6 +34,7 @@ dataSources:
         - PayrollPayout
         - PayrollPayoutItem
         - RecipientAmountChange
+        - KeeperBountyPayment
         - Dao
       abis:
         - name: PayrollPlugin
@@ -49,6 +50,10 @@ dataSources:
           handler: handlePayDayUpdated
         - event: PayrollExecuted(indexed uint256,uint256,uint256)
           handler: handlePayrollExecuted
+        - event: KeeperBountyConfigured(indexed address,uint256,uint256)
+          handler: handleKeeperBountyConfigured
+        - event: KeeperBountyPaid(indexed address,indexed address,uint256,indexed uint256)
+          handler: handleKeeperBountyPaid
 
   - kind: ethereum
     name: UniswapV4Plugin

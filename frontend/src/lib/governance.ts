@@ -90,7 +90,9 @@ export async function proposeActions(
   let metadataString = metadata;
   if (ipfsEnabled()) {
     try {
-      const doc = buildProposalMetadata(metadata, metadata, onchainActions);
+      // Pass the full actions (with .summary) so encodedActions[].humanReadable
+      // is populated per the canonical schema (docs/PROPOSAL_METADATA.md).
+      const doc = buildProposalMetadata(metadata, metadata, actions);
       metadataString = await pinProposalMetadata(doc);
     } catch (err) {
       // Non-fatal: surface to console, fall back to inline UTF-8.

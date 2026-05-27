@@ -235,6 +235,8 @@ sequenceDiagram
 - Failed individual transfers don't block the rest (per-action `allowFailureMap`).
 - `payDayOfMonth` constrained to 1–28 to avoid month-length edge cases.
 - Calendar math via vendored BokkyPooBah DateTime library.
+- Large payrolls paginate via `executePayrollPage` (`MAX_RECIPIENTS_PER_PAGE = 100`, `MAX_RECIPIENTS = 300`); native ETH payees supported (`token = address(0)`).
+- Optional **keeper bounty** (`setKeeperBounty`, vote-gated): pays the crank caller a capped ETH/ERC20 bounty so keepers are incentivized on high-gas days.
 
 ### 5. CostRegistry Plugin (recurring operating costs)
 
@@ -264,8 +266,9 @@ sequenceDiagram
 
 - Each entry pays a fixed USDC amount on its own recurring cadence (`frequencyDays`).
 - Entries pay **independently** by `lastPaidAt + frequencyDays` (no shared period).
-- `processDue(offset, limit)` is keeper-callable and paginated — `failureMap` tags page-local failures.
+- `processDue(offset, limit)` is keeper-callable and paginated — `failureMap` tags page-local failures; `processAllDue()` is the offset-free convenience wrapper.
 - Same `allowFailureMap` semantics as Payroll: one payee revert doesn't block the rest.
+- Per-payment cap (`MAX_COST_USDC`) guards against typo'd amounts; payment token is migratable via the vote-gated `setPaymentToken`.
 
 ---
 
@@ -432,8 +435,8 @@ npm install --legacy-peer-deps
 just build-package         # forge + hardhat compile + ABIs + addresses.json
 
 # Test (every command below has a `just` recipe; see `just --list`)
-just test                  # 84 unit tests (~6s)
-just invariants            # 14 Foundry invariants, 50k sequences (CI profile)
+just test                  # 156 unit tests
+just invariants            # 25 Foundry invariants, 50k sequences (CI profile)
 
 # Fork tests: start a fork in one terminal, run the *.fork suites in another.
 # RPC_MAINNET is read from .env.

@@ -133,14 +133,15 @@ CI gate: `slither --fail-high`. None of the above are high-severity.
 
 ## 9. Tests
 
-- Unit: `test/plugins/cost-registry/CostRegistryPlugin.unit.test.ts` — 23 cases
-  (CRUD validations + events, paginated `getEntries`, crank due/not-due/inactive,
-  no back-pay, per-entry failure isolation, windowing, `isDue`/`nextPaymentAt`).
+- Unit: `test/plugins/cost-registry/CostRegistryPlugin.unit.test.ts` — 30 cases
+  (CRUD validations + events, `MAX_COST_USDC` cap, `setPaymentToken` migration,
+  paginated `getEntries`, crank due/not-due/inactive, `processAllDue`, no
+  back-pay, per-entry failure isolation, windowing, `isDue`/`nextPaymentAt`).
   ≥90% coverage on `src/plugins/cost-registry/**`.
 - Invariant: `test/invariants/CostRegistry.invariant.t.sol` — plugin holds no
   token / no ETH, `entryCount` bounded, `lastPaidAt` never set into the future.
 - Fork: `test/plugins/cost-registry/CostRegistryPlugin.fork.test.ts` — pays real
   USDC from a whale-seeded DAO on `mainnetFork` / `baseFork` (gated via
   `onlyOn(...)`); validates the day-based crank + no-back-pay against real tokens.
-- Permission matrix: `test/plugins/PluginSetup.unit.test.ts` — asserts the 3-grant
-  install set (EXECUTE, MANAGE_COSTS, UPGRADE_PLUGIN).
+- Permission matrix: `test/plugins/PluginSetup.unit.test.ts` — asserts the 4-grant
+  install set (EXECUTE, MANAGE_COSTS, UPGRADE_PLUGIN, UPDATE_PAYMENT_TOKEN).

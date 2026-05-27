@@ -8,6 +8,8 @@ import {
   RecipientAmountUpdated,
   PayDayUpdated,
   PayrollExecuted,
+  KeeperBountyConfigured,
+  KeeperBountyPaid,
 } from "../generated/PayrollPlugin/PayrollPlugin";
 import {
   Dao,
@@ -16,6 +18,7 @@ import {
   RecipientAmountChange,
   PayrollPayout,
   PayrollPayoutItem,
+  KeeperBountyPayment,
 } from "../generated/schema";
 import {
   txEventId,
@@ -133,4 +136,27 @@ export function handlePayrollExecuted(event: PayrollExecuted): void {
     item.failed = !bit.isZero();
     item.save();
   }
+}
+
+export function handleKeeperBountyConfigured(event: KeeperBountyConfigured): void {
+  let plugin = getOrCreatePlugin(event.address, event.block.timestamp);
+  plugin.bountyToken = event.params.token;
+  plugin.bountyPerCrank = event.params.perCrank;
+  plugin.bountyMaxPerPeriod = event.params.maxPerPeriod;
+  plugin.save();
+}
+
+export function handleKeeperBountyPaid(event: KeeperBountyPaid): void {
+  let plugin = getOrCreatePlugin(event.address, event.block.timestamp);
+  let id = txEventId(event);
+  let p = new KeeperBountyPayment(id);
+  p.plugin = plugin.id;
+  p.keeper = event.params.keeper;
+  p.token = event.params.token;
+  p.amount = event.params.amount;
+  p.period = event.params.period;
+  p.timestamp = event.block.timestamp;
+  p.block = event.block.number;
+  p.txHash = event.transaction.hash;
+  p.save();
 }

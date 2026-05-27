@@ -76,6 +76,8 @@ Signatures freeze at **P1**. Any change after P5 (bootstrap) is breaking for the
 | `PayDayUpdated` | `(uint8 oldDay, uint8 newDay)` | — | `PayrollConfig` (mutable singleton) | Payroll schedule screen — next-payout countdown |
 | `PayrollExecuted` | `(uint256 period, uint256 recipientCount, uint256 failureMap)` | `period` | `PayrollPayout` (per batch) + N×`PayrollPayoutItem` (one per recipient, `failed` derived from `failureMap`) | Payroll schedule screen → per-month execution log |
 | `PayrollPeriodCompleted` | `(uint256 period)` | `period` | marks the `period`'s payout as complete (final page) | Payroll execution log — "period closed" marker |
+| `KeeperBountyConfigured` | `(address token, uint256 perCrank, uint256 maxPerPeriod)` | `token` | `PayrollConfig` (bounty fields) | Payroll admin: keeper-bounty config |
+| `KeeperBountyPaid` | `(address keeper, address token, uint256 amount, uint256 period)` | `keeper`, `token`, `period` | `KeeperBountyPayment` | Payroll execution log — bounty line |
 
 > **Pagination note:** a large payroll fires `PayrollExecuted` **once per page** (not once per period); `recipientCount` and `failureMap` are page-local — bit `i` of `failureMap` is the `i`-th recipient *of that page*. Aggregate batches by `period`, and treat `PayrollPeriodCompleted(period)` as the "period fully paid" signal. A payroll that fits one page fires a single `PayrollExecuted` followed by `PayrollPeriodCompleted`, identical to the v1 single-batch shape plus the completion marker.
 
@@ -92,8 +94,9 @@ Signatures freeze at **P1**. Any change after P5 (bootstrap) is breaking for the
 | `EntryRemoved` | `(uint256 id)` | `id` | `CostEntry` (active=false) | Operating-costs screen |
 | `CostPaid` | `(uint256 id, address payee, uint256 amount, uint64 paidAt)` | `id`, `payee` | `CostPayment` (one per paid entry) | Per-entry payment history |
 | `CostsProcessed` | `(uint256 fromIndex, uint256 count, uint256 failureMap)` | — | `CostCrankRun` (per batch) | Crank log |
+| `PaymentTokenUpdated` | `(address previous, address current)` | `previous`, `current` | `PaymentTokenMigration` + `CostRegistryPlugin.paymentToken` | Inspector: token-migration history |
 
-> **Pagination note:** `processDue(offset, limit)` fires `CostPaid` per paid entry and one `CostsProcessed` per batch. `failureMap` is page-local — bit `i` = the `i`-th paid entry of that batch reverted. Entries are idempotent per their own `lastPaidAt`, so there is no period/cursor to aggregate (unlike Payroll).
+> **Pagination note:** `processDue(offset, limit)` (and the offset-free `processAllDue()` convenience wrapper) fire `CostPaid` per paid entry and one `CostsProcessed` per batch. `failureMap` is page-local — bit `i` = the `i`-th paid entry of that batch reverted. Entries are idempotent per their own `lastPaidAt`, so there is no period/cursor to aggregate (unlike Payroll).
 
 **Read-side joins:** `CostRegistryPlugin.getEntries(offset, limit)` returns a page of entries plus the total count, sized for the operating-costs screen.
 

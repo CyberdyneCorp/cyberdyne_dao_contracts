@@ -27,8 +27,13 @@ type PayrollPlugin @entity {
   dao: Dao!
   payDayOfMonth: Int!
   lastPayoutPeriod: BigInt!
+  # Keeper-bounty config (v1.1). All zero = disabled (default).
+  bountyToken: Bytes
+  bountyPerCrank: BigInt
+  bountyMaxPerPeriod: BigInt
   recipients: [PayrollRecipient!]! @derivedFrom(field: "plugin")
   payouts: [PayrollPayout!]! @derivedFrom(field: "plugin")
+  bountyPayments: [KeeperBountyPayment!]! @derivedFrom(field: "plugin")
 }
 
 type UniswapV4Plugin @entity {
@@ -121,6 +126,21 @@ type PayrollPayoutItem @entity(immutable: true) {
   recipient: PayrollRecipient!
   amount: BigInt!
   failed: Boolean!
+}
+
+# A keeper bounty paid out on a successful crank (v1.1). At most one per
+# executePayroll(Page) call; only emitted when the period's accumulated
+# bounty is below the per-period cap.
+type KeeperBountyPayment @entity(immutable: true) {
+  id: ID!                                        # txHash-logIndex
+  plugin: PayrollPlugin!
+  keeper: Bytes!
+  token: Bytes!                                  # 0x0 = native ETH
+  amount: BigInt!
+  period: BigInt!
+  timestamp: BigInt!
+  block: BigInt!
+  txHash: Bytes!
 }
 
 # ---- Uniswap ----

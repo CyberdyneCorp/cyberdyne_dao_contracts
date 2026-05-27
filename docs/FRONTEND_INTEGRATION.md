@@ -98,8 +98,12 @@ Per screen, the canonical read pattern:
 | Proposal list | `TokenVoting.getProposalIds()` (or events via subgraph) | `proposals(first: N, orderBy: createdAt desc)` |
 | Proposal detail | `TokenVoting.getProposal(id)` for live tally + status | `proposal(id) { votes, executions }` for history |
 | Payroll schedule | `PayrollPlugin.allActiveRecipients()` + `payDayOfMonth()` + `lastPayoutPeriod()` | `payrollRecipient(id) { payoutItems }` for per-recipient history |
-| Lending positions | `Pool.getUserAccountData(dao)` for health factor; per-asset `aToken.balanceOf(dao)` + `variableDebtToken.balanceOf(dao)` | `dao.lendingActions` for tx history |
+| Lending positions | `Pool.getUserAccountData(dao)` for health factor (toy frontend shows a color-coded tier banner); per-asset `aToken.balanceOf(dao)` + `variableDebtToken.balanceOf(dao)` | `dao.lendingActions` for tx history |
 | Swap history | none (event-only) | `swaps(first: N, orderBy: timestamp desc)` |
+| V3 LP positions | `NPM.tokenOfOwnerByIndex(dao, i)` + `positions(tokenId)`; live fees via `NPM.callStatic.collect(...)`; pool state via `factory.getPool` + `slot0` | `v3Positions(where: {dao})` + `v3Collects` |
+| V4 LP positions | `IV4PositionManager.getPoolAndPositionInfo(tokenId)` + `getPositionLiquidity`; enumerate via `Transfer(0x0, dao)` scan | `v4LpOps(where: {dao})` |
+| Operating costs | `CostRegistryPlugin.getEntries(offset, limit)` (paginated) | `costEntries(where: {dao})` + `costPayments` history |
+| Proposal pre-execute check | `dao.callStatic.execute(callId, actions, 0)` with `from = TokenVoting` (toy frontend "Sim" column) | none |
 
 ---
 
