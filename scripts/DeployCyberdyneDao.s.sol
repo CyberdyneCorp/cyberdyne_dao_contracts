@@ -58,6 +58,21 @@ contract DeployCyberdyneDao is Script {
         UniswapV3PluginSetup uniswapV3Setup;
     }
 
+    /// @notice Installed plugin INSTANCE addresses (the proxies the DAO talks
+    ///         to), captured from `DAOFactory.createDao`. These — not the repos
+    ///         — are what the frontend / subgraph consume. `governance` is the
+    ///         TokenVoting instance (address(0) if no repo was configured).
+    struct Installed {
+        address governance;
+        address payroll;
+        address uniswapV4;
+        address aave;
+        address costRegistry;
+        address uniswapV3;
+    }
+
+    Installed public installed;
+
     function run() external returns (address dao, PublishedPlugins memory published) {
         address maintainer = vm.envOr("MAINTAINER", msg.sender);
 
@@ -132,7 +147,25 @@ contract DeployCyberdyneDao is Script {
             metadata: bytes("ipfs://")
         });
 
-        (dao, ) = daoFactory.createDao(daoSettings, pluginSettings);
+        IDAOFactory.InstalledPlugin[] memory plugins;
+        (dao, plugins) = daoFactory.createDao(daoSettings, pluginSettings);
+
+        // Map installed instances by the SAME order _buildPluginSettings used:
+        // [TokenVoting?], payroll, uniswapV4, aave, costRegistry, uniswapV3.
+        bool hasTV = _resolveTokenVotingRepo() != address(0);
+        uint256 i = hasTV ? 1 : 0;
+        if (hasTV) installed.governance = plugins[0].plugin;
+        installed.payroll = plugins[i++].plugin;
+        installed.uniswapV4 = plugins[i++].plugin;
+        installed.aave = plugins[i++].plugin;
+        installed.costRegistry = plugins[i++].plugin;
+        installed.uniswapV3 = plugins[i++].plugin;
+    }
+
+    /// @dev Single source of truth for whether/which TokenVoting repo is used,
+    ///      so `_createDao`'s offset matches `_buildPluginSettings`.
+    function _resolveTokenVotingRepo() internal view returns (address) {
+        return vm.envOr("TOKEN_VOTING_REPO", OsxAddresses.tokenVotingRepo(block.chainid));
     }
 
     function _buildPluginSettings(
@@ -142,10 +175,7 @@ contract DeployCyberdyneDao is Script {
         // else the per-chain value in OsxAddresses (address(0) = not yet
         // configured → TokenVoting is skipped, DAO is created with the 3
         // Cyberdyne plugins only).
-        address tokenVotingRepo = vm.envOr(
-            "TOKEN_VOTING_REPO",
-            OsxAddresses.tokenVotingRepo(block.chainid)
-        );
+        address tokenVotingRepo = _resolveTokenVotingRepo();
         // 5 Cyberdyne plugins (payroll, uniswap-v4, aave, cost-registry,
         // uniswap-v3) + optional TokenVoting.
         uint256 pluginCount = (tokenVotingRepo != address(0)) ? 6 : 5;
@@ -267,6 +297,37 @@ contract DeployCyberdyneDao is Script {
         console2.log("AAVE adapter:", address(p.aaveAdapter));
         console2.log("Cost registry repo:", address(p.costRegistryRepo));
         console2.log("Uniswap V3 repo:", address(p.uniswapV3Repo));
+
+        // Installed plugin INSTANCES — what the frontend PUBLIC_DAO_* env wants.
+        console2.log("--- installed plugin instances ---");
+        console2.log("governance (TokenVoting):", installed.governance);
+        console2.log("payroll:", installed.payroll);
+        console2.log("uniswapV4:", installed.uniswapV4);
+        console2.log("aave:", installed.aave);
+        console2.log("costRegistry:", installed.costRegistry);
+        console2.log("uniswapV3:", installed.uniswapV3);
+        // Ready-to-paste frontend env line:
+        // PUBLIC_DAO_MAINNET=dao,payroll,uniswapV4,aave,governance,costRegistry,uniswapV3
+        console2.log("PUBLIC_DAO line (dao,payroll,uniswapV4,aave,governance,costRegistry,uniswapV3):");
+        console2.log(
+            string(
+                abi.encodePacked(
+                    vm.toString(dao),
+                    ",",
+                    vm.toString(installed.payroll),
+                    ",",
+                    vm.toString(installed.uniswapV4),
+                    ",",
+                    vm.toString(installed.aave),
+                    ",",
+                    vm.toString(installed.governance),
+                    ",",
+                    vm.toString(installed.costRegistry),
+                    ",",
+                    vm.toString(installed.uniswapV3)
+                )
+            )
+        );
         _writeDeploymentJson(dao, p);
     }
 
@@ -283,6 +344,13 @@ contract DeployCyberdyneDao is Script {
         vm.serializeUint(root, "chainId", block.chainid);
         vm.serializeUint(root, "timestamp", block.timestamp);
         vm.serializeAddress(root, "dao", dao);
+        // Installed plugin INSTANCES (frontend/subgraph consume these).
+        vm.serializeAddress(root, "governance", installed.governance);
+        vm.serializeAddress(root, "payroll", installed.payroll);
+        vm.serializeAddress(root, "uniswapV4", installed.uniswapV4);
+        vm.serializeAddress(root, "aave", installed.aave);
+        vm.serializeAddress(root, "costRegistry", installed.costRegistry);
+        vm.serializeAddress(root, "uniswapV3", installed.uniswapV3);
         vm.serializeAddress(root, "payrollSetup", address(p.payrollSetup));
         vm.serializeAddress(root, "payrollRepo", address(p.payrollRepo));
         vm.serializeAddress(root, "uniswapSetup", address(p.uniswapSetup));
