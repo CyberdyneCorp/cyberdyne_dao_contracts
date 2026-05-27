@@ -150,6 +150,58 @@ describe("PayrollPlugin", () => {
     });
   });
 
+  describe("setMaxRecipients", () => {
+    it("defaults to 300 with a 1000 ceiling", async () => {
+      expect(await plugin.MAX_RECIPIENTS()).to.equal(300);
+      expect(await plugin.MAX_RECIPIENTS_CEILING()).to.equal(1000);
+    });
+
+    it("raises the cap and emits MaxRecipientsUpdated", async () => {
+      await expect(plugin.connect(voter).setMaxRecipients(500))
+        .to.emit(plugin, "MaxRecipientsUpdated")
+        .withArgs(300, 500);
+      expect(await plugin.MAX_RECIPIENTS()).to.equal(500);
+    });
+
+    it("enforces the new cap on addRecipient (lower, fill, raise, add)", async () => {
+      const a = (i: number) =>
+        ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`);
+      // Lower to 2 (no slots yet), fill it, then the 3rd add trips the cap.
+      await plugin.connect(voter).setMaxRecipients(2);
+      await plugin.connect(voter).addRecipient(a(0), token.address, 100);
+      await plugin.connect(voter).addRecipient(a(1), token.address, 100);
+      await expect(plugin.connect(voter).addRecipient(a(2), token.address, 100))
+        .to.be.revertedWithCustomError(plugin, "RecipientLimitExceeded")
+        .withArgs(2);
+      // Raise to 3 and the previously-blocked add now succeeds.
+      await plugin.connect(voter).setMaxRecipients(3);
+      await expect(plugin.connect(voter).addRecipient(a(2), token.address, 100)).to.emit(
+        plugin,
+        "RecipientAdded"
+      );
+    });
+
+    it("reverts above the ceiling", async () => {
+      await expect(plugin.connect(voter).setMaxRecipients(1001))
+        .to.be.revertedWithCustomError(plugin, "MaxRecipientsOutOfRange")
+        .withArgs(1001, 0, 1000);
+    });
+
+    it("reverts below the current slot count", async () => {
+      const a = (i: number) =>
+        ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`);
+      await plugin.connect(voter).addRecipient(a(0), token.address, 100);
+      await plugin.connect(voter).addRecipient(a(1), token.address, 100);
+      await expect(plugin.connect(voter).setMaxRecipients(1))
+        .to.be.revertedWithCustomError(plugin, "MaxRecipientsOutOfRange")
+        .withArgs(1, 2, 1000);
+    });
+
+    it("reverts when caller lacks MANAGE_PAYROLL", async () => {
+      await expect(plugin.connect(stranger).setMaxRecipients(400)).to.be.reverted;
+    });
+  });
+
   describe("addRecipient", () => {
     it("adds and emits RecipientAdded", async () => {
       const addr = await alice.getAddress();
@@ -778,6 +830,81 @@ describe("PayrollPlugin", () => {
         }
       });
       expect(found).to.equal(false);
+    });
+  });
+
+  describe("previewForcePayPeriodActions", () => {
+    const P = (y: number, m: number) => y * 12 + m;
+
+    async function setupPaidJan(): Promise<string> {
+      const aAddr = await alice.getAddress();
+      await plugin.connect(voter).addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6));
+      await token.mint(dao.address, ethers.utils.parseUnits("100000", 6));
+      // Regular run for Jan 2027 → lastPayoutPeriod = 2027*12+1.
+      await time.setNextBlockTimestamp(payDayTs(2027, 1));
+      await plugin.executePayroll();
+      return aAddr;
+    }
+
+    it("returns the active-recipient transfer batch, executable top-level by the DAO", async () => {
+      const aAddr = await setupPaidJan();
+      const before = await token.balanceOf(aAddr);
+      // Now it's April; Feb + Mar were skipped. Preview Feb recovery.
+      await time.increaseTo(payDayTs(2027, 4));
+      const actions = await plugin.previewForcePayPeriodActions(P(2027, 2));
+      expect(actions.length).to.equal(1);
+      expect(actions[0].to).to.equal(token.address);
+      expect(actions[0].value).to.equal(0);
+
+      // Governance carries these actions and runs them at the top level via
+      // DAO.execute — no nested execute. Simulate that here.
+      await dao.execute(
+        ethers.utils.id("force-2027-02"),
+        actions.map((a) => ({to: a.to, value: a.value, data: a.data})),
+        0
+      );
+      expect(await token.balanceOf(aAddr)).to.equal(before.add(ethers.utils.parseUnits("500", 6)));
+      // The view never mutates plugin state.
+      expect(await plugin.lastPayoutPeriod()).to.equal(P(2027, 1));
+    });
+
+    it("reverts for the current or a future period", async () => {
+      await setupPaidJan();
+      await time.increaseTo(payDayTs(2027, 4));
+      await expect(plugin.previewForcePayPeriodActions(P(2027, 4)))
+        .to.be.revertedWithCustomError(plugin, "ForcePeriodNotPast")
+        .withArgs(P(2027, 4), P(2027, 4));
+      await expect(plugin.previewForcePayPeriodActions(P(2027, 5)))
+        .to.be.revertedWithCustomError(plugin, "ForcePeriodNotPast")
+        .withArgs(P(2027, 5), P(2027, 4));
+    });
+
+    it("reverts at or before the last regular run (already settled)", async () => {
+      await setupPaidJan();
+      await time.increaseTo(payDayTs(2027, 4));
+      await expect(plugin.previewForcePayPeriodActions(P(2027, 1)))
+        .to.be.revertedWithCustomError(plugin, "ForcePeriodAlreadySettled")
+        .withArgs(P(2027, 1));
+      await expect(plugin.previewForcePayPeriodActions(P(2026, 12)))
+        .to.be.revertedWithCustomError(plugin, "ForcePeriodAlreadySettled")
+        .withArgs(P(2026, 12));
+    });
+
+    it("reverts beyond MAX_FORCE_BACK_MONTHS", async () => {
+      await setupPaidJan();
+      // Jump far ahead so a forcible (>lastPayoutPeriod) period is still >12mo back.
+      await time.increaseTo(payDayTs(2028, 6)); // current = 2028*12+6
+      await expect(plugin.previewForcePayPeriodActions(P(2027, 2))) // 16 months back
+        .to.be.revertedWithCustomError(plugin, "ForcePeriodTooOld")
+        .withArgs(P(2027, 2));
+    });
+
+    it("reverts NoActiveRecipients when none are active", async () => {
+      // Never ran a regular crank (lastPayoutPeriod = 0); no recipients.
+      await time.increaseTo(payDayTs(2027, 4));
+      await expect(
+        plugin.previewForcePayPeriodActions(P(2027, 3))
+      ).to.be.revertedWithCustomError(plugin, "NoActiveRecipients");
     });
   });
 });

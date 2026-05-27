@@ -51,6 +51,13 @@ contract CostRegistryHandler is Test {
         try plugin.removeEntry(id) {} catch {}
     }
 
+    /// @dev Fuzz the settable cap. The setter rejects values below the live
+    ///      slot count, so `entryCountBounded` must hold for any accepted value.
+    function setMaxEntries(uint256 newMax) external {
+        newMax = bound(newMax, 0, plugin.MAX_ENTRIES_CEILING());
+        try plugin.setMaxEntries(newMax) {} catch {}
+    }
+
     function fundDao(uint256 amount) external {
         amount = bound(amount, 0, 1e30);
         token.mint(address(dao), amount);

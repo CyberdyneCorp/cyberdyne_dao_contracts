@@ -26,9 +26,15 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
     bytes32 public constant UPDATE_BOUNTY_PERMISSION_ID = keccak256("UPDATE_BOUNTY_PERMISSION");
 
     /// @inheritdoc IPayrollPlugin
-    /// @dev Total slot cap (active + soft-deleted). Bounds the storage scan a
-    ///      paginated crank performs to find the next active recipient (TRD §11).
-    uint256 public constant override MAX_RECIPIENTS = 300;
+    /// @dev Hard upper bound on the settable `MAX_RECIPIENTS()` cap. Bounds the
+    ///      worst-case storage scan a paginated crank performs even if
+    ///      governance raises the limit (TRD §11). `setMaxRecipients` can never
+    ///      exceed this without a plugin upgrade.
+    uint256 public constant override MAX_RECIPIENTS_CEILING = 1000;
+
+    /// @dev Default `MAX_RECIPIENTS()` at install — preserves the original v1
+    ///      cap of 300 for fresh deployments.
+    uint256 private constant DEFAULT_MAX_RECIPIENTS = 300;
 
     /// @inheritdoc IPayrollPlugin
     /// @dev OSx DAO.execute caps at 256 actions and `allowFailureMap` is a
@@ -63,7 +69,18 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
     uint256 private _bountyPaidThisPeriod;
     uint256 private _bountyAccumPeriod;
 
-    uint256[40] private __gap;
+    /// @dev Governance-settable total slot cap (active + soft-deleted), bounded
+    ///      by `MAX_RECIPIENTS_CEILING`. Exposed via the `MAX_RECIPIENTS()`
+    ///      getter. Initialized to `DEFAULT_MAX_RECIPIENTS`.
+    uint256 private _maxRecipients;
+
+    uint256[39] private __gap;
+
+    /// @inheritdoc IPayrollPlugin
+    /// @dev How many months back `previewForcePayPeriodActions` may reach.
+    ///      Bounds the recovery window so a long-dormant payroll can't be
+    ///      back-paid arbitrarily far.
+    uint256 public constant override MAX_FORCE_BACK_MONTHS = 12;
 
     /// @notice Initialize the plugin. Called once via the UUPS proxy constructor.
     function initialize(IDAO _dao, uint8 _payDayOfMonth) external initializer {
@@ -72,6 +89,7 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
             revert InvalidPayDayOfMonth(_payDayOfMonth);
         }
         payDayOfMonth = _payDayOfMonth;
+        _maxRecipients = DEFAULT_MAX_RECIPIENTS;
     }
 
     // --- Vote-gated management --------------------------------------------
@@ -85,8 +103,8 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
         if (payee == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
         if (indexOfPayee[payee] != 0) revert RecipientAlreadyExists(payee);
-        if (_recipients.length >= MAX_RECIPIENTS) {
-            revert RecipientLimitExceeded(MAX_RECIPIENTS);
+        if (_recipients.length >= _maxRecipients) {
+            revert RecipientLimitExceeded(_maxRecipients);
         }
 
         _recipients.push(Recipient({payee: payee, token: token, amount: amount, active: true}));
@@ -135,6 +153,20 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
     }
 
     /// @inheritdoc IPayrollPlugin
+    /// @dev Raise (or lower) the recipient-slot cap. Bounded by
+    ///      `MAX_RECIPIENTS_CEILING` above and by the current slot count below
+    ///      (you can't shrink the cap past slots that already exist). Gated by
+    ///      `MANAGE_PAYROLL` — same governance class as recipient management.
+    function setMaxRecipients(uint256 newMax) external override auth(MANAGE_PAYROLL_PERMISSION_ID) {
+        if (newMax < _recipients.length || newMax > MAX_RECIPIENTS_CEILING) {
+            revert MaxRecipientsOutOfRange(newMax, _recipients.length, MAX_RECIPIENTS_CEILING);
+        }
+        uint256 previous = _maxRecipients;
+        _maxRecipients = newMax;
+        emit MaxRecipientsUpdated(previous, newMax);
+    }
+
+    /// @inheritdoc IPayrollPlugin
     /// @dev Set the keeper bounty paid out of the DAO treasury to `msg.sender`
     ///      on each successful crank. `perCrank == 0` disables (default).
     ///      `maxPerPeriod` rolls per period so paginated cranks within the
@@ -148,6 +180,58 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
         bountyPerCrank = perCrank;
         bountyMaxPerPeriod = maxPerPeriod;
         emit KeeperBountyConfigured(token, perCrank, maxPerPeriod);
+    }
+
+    /// @inheritdoc IPayrollPlugin
+    /// @dev Governance-safe recovery for a month the permissionless crank
+    ///      skipped. Returns the DAO→payee transfer batch that pays every
+    ///      currently-active recipient once — TokenVoting carries these actions
+    ///      and runs them via `dao.execute` at the TOP level (no nested
+    ///      `dao.execute`, unlike a wrapper that calls `execute` itself), the
+    ///      same pattern the AAVE / Uniswap fund-moving ops use.
+    ///
+    ///      `period` (`year*12+month`) must be STRICTLY between
+    ///      `lastPayoutPeriod` and the current period — unambiguously skipped
+    ///      (the crank jumps from `lastPayoutPeriod` straight to "now") — and no
+    ///      more than `MAX_FORCE_BACK_MONTHS` back. The guards bind at
+    ///      build/simulation time; double-pay prevention is a governance review
+    ///      concern (consistent with the other preview-built fund ops), aided by
+    ///      the frontend's proposal-execution simulation. Single batch — a
+    ///      payroll exceeding one page must be settled by the regular crank.
+    function previewForcePayPeriodActions(
+        uint256 period
+    ) external view override returns (Action[] memory) {
+        (uint256 year, uint256 month, ) = DT.timestampToDate(block.timestamp);
+        uint256 currentPeriod = year * 12 + month;
+
+        if (period >= currentPeriod) revert ForcePeriodNotPast(period, currentPeriod);
+        if (period <= lastPayoutPeriod) revert ForcePeriodAlreadySettled(period);
+        if (currentPeriod - period > MAX_FORCE_BACK_MONTHS) revert ForcePeriodTooOld(period);
+
+        uint256 len = _recipients.length;
+        Action[] memory buffer = new Action[](len);
+        uint256 count;
+        for (uint256 i; i < len; ++i) {
+            Recipient memory r = _recipients[i];
+            if (!r.active) continue;
+            if (count >= MAX_RECIPIENTS_PER_PAGE) {
+                revert PayrollExceedsSinglePage(MAX_RECIPIENTS_PER_PAGE);
+            }
+            buffer[count++] = (r.token == address(0))
+                ? Action({to: r.payee, value: r.amount, data: ""})
+                : Action({
+                    to: r.token,
+                    value: 0,
+                    data: abi.encodeCall(IERC20.transfer, (r.payee, r.amount))
+                });
+        }
+        if (count == 0) revert NoActiveRecipients();
+
+        Action[] memory actions = new Action[](count);
+        for (uint256 k; k < count; ++k) {
+            actions[k] = buffer[k];
+        }
+        return actions;
     }
 
     // --- Permissionless monthly crank -------------------------------------
@@ -321,6 +405,11 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
     /// @inheritdoc IPayrollPlugin
     function recipientCount() external view override returns (uint256) {
         return _recipients.length;
+    }
+
+    /// @inheritdoc IPayrollPlugin
+    function MAX_RECIPIENTS() external view override returns (uint256) {
+        return _maxRecipients;
     }
 
     /// @inheritdoc IPayrollPlugin

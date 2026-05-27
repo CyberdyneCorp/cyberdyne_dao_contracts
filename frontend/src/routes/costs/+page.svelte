@@ -147,6 +147,19 @@
     }
   }
 
+  let maxEntries = "";
+  let setMaxEntriesAction: ProposalAction | null = null;
+  function buildSetMaxEntries(): void {
+    setMaxEntriesAction = null;
+    try {
+      const cfg = chainConfig($wallet.status === "connected" ? $wallet.chainId : 1);
+      if (!cfg?.dao) throw new Error("No DAO configured");
+      setMaxEntriesAction = actions.costSetMaxEntries(cfg, parseInt(maxEntries || "0", 10));
+    } catch (err) {
+      alert(`Build failed: ${(err as Error).message}`);
+    }
+  }
+
   function fmtUsdc(v: ethers.BigNumber): string {
     return ethers.utils.formatUnits(v, 6);
   }
@@ -285,6 +298,14 @@
       <button on:click={buildRemove}>Build</button>
     </div>
     <ProposeAction action={removeAction} />
+
+    <h2>Propose: set max entries</h2>
+    <p class="muted">Raise or lower the entry-slot cap (≤ ceiling, ≥ current count). Vote-gated.</p>
+    <div class="form">
+      <label>New max <input bind:value={maxEntries} placeholder="500" style="min-width:120px" /></label>
+      <button on:click={buildSetMaxEntries}>Build</button>
+    </div>
+    <ProposeAction action={setMaxEntriesAction} />
   {/if}
 {/if}
 

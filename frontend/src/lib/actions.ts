@@ -110,6 +110,30 @@ export function payrollSetPayDay(cfg: ChainConfig, day: number): ProposalAction 
     `Payroll: set pay day → ${day}`);
 }
 
+export function payrollSetMaxRecipients(cfg: ChainConfig, newMax: number): ProposalAction {
+  const dao = requireDao(cfg);
+  return action(dao.payroll, ifaceFor("PayrollPlugin"), "setMaxRecipients", [newMax],
+    `Payroll: set max recipients → ${newMax}`);
+}
+
+/**
+ * Governance-safe recovery of a skipped month. Routes through the plugin's
+ * `previewForcePayPeriodActions` view (which reverts on the period guards) so
+ * the proposal carries the DAO→payee transfers directly — TokenVoting runs
+ * them top-level, avoiding the nested-dao.execute reentrancy a wrapper call
+ * would hit. `period` is packed `year*12+month`.
+ */
+export async function previewPayrollForcePayPeriod(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  period: number
+): Promise<ProposalAction[]> {
+  const dao = requireDao(cfg);
+  const payroll = new ethers.Contract(dao.payroll, getAbi("PayrollPlugin"), provider);
+  const actions = await payroll.previewForcePayPeriodActions(period);
+  return liftPreview(actions, `Payroll: force-pay skipped period ${period}`);
+}
+
 // --- Uniswap V4 -------------------------------------------------------------
 
 export function uniSwap(
@@ -240,6 +264,11 @@ export function costUpdate(
 export function costRemove(cfg: ChainConfig, id: number): ProposalAction {
   return action(requireCost(cfg), ifaceFor("CostRegistryPlugin"), "removeEntry", [id],
     `Cost: remove entry #${id}`);
+}
+
+export function costSetMaxEntries(cfg: ChainConfig, newMax: number): ProposalAction {
+  return action(requireCost(cfg), ifaceFor("CostRegistryPlugin"), "setMaxEntries", [newMax],
+    `Cost: set max entries → ${newMax}`);
 }
 
 // --- Uniswap V3 admin -------------------------------------------------------

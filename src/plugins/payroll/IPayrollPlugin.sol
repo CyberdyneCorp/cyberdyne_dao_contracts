@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity 0.8.17;
 
+import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol";
+
 /// @title IPayrollPlugin
 /// @notice Fixed-list monthly payroll, gated on management (vote) but with a
 ///         permissionless monthly crank. Missed months are skipped — no back-pay.
@@ -20,6 +22,8 @@ interface IPayrollPlugin {
     event RecipientRemoved(address indexed payee);
     event RecipientAmountUpdated(address indexed payee, uint256 oldAmount, uint256 newAmount);
     event PayDayUpdated(uint8 oldDay, uint8 newDay);
+    /// @notice The settable recipient-slot cap (`MAX_RECIPIENTS()`) was changed.
+    event MaxRecipientsUpdated(uint256 oldMax, uint256 newMax);
     /// @notice One batch of payments executed within a period. For a payroll
     ///         that fits a single page this fires once (identical to v1); for a
     ///         paginated payroll it fires once per page.
@@ -58,12 +62,26 @@ interface IPayrollPlugin {
     error ZeroAmount();
     error NoActiveRecipients();
     error RecipientLimitExceeded(uint256 max);
+    /// @notice `setMaxRecipients` was called with a value below the current slot
+    ///         count or above `MAX_RECIPIENTS_CEILING`.
+    error MaxRecipientsOutOfRange(uint256 requested, uint256 minimum, uint256 ceiling);
     /// @notice `executePayroll()` was called but the remaining active set for
     ///         this period exceeds one page. Use `executePayrollPage` instead.
     error PayrollExceedsSinglePage(uint256 maxPerPage);
     /// @notice `executePayrollPage(0)` — a page must process at least one slot.
     error PageSizeZero();
     error NotImplemented();
+    /// @notice `previewForcePayPeriodActions` target is the current or a future
+    ///         period — only past periods can be force-settled (use the crank
+    ///         for the current).
+    error ForcePeriodNotPast(uint256 period, uint256 currentPeriod);
+    /// @notice `previewForcePayPeriodActions` target is ≤ `lastPayoutPeriod` — at
+    ///         or before the last regular run, so it may already have been paid.
+    ///         Not forcible.
+    error ForcePeriodAlreadySettled(uint256 period);
+    /// @notice `previewForcePayPeriodActions` target is more than
+    ///         `MAX_FORCE_BACK_MONTHS` back.
+    error ForcePeriodTooOld(uint256 period);
 
     // --- Vote-gated mutators ---
 
@@ -87,6 +105,25 @@ interface IPayrollPlugin {
     ///                    period). Must be ≥ `perCrank` or the cap blocks any
     ///                    payout — config still accepted as "off".
     function setKeeperBounty(address token, uint256 perCrank, uint256 maxPerPeriod) external;
+
+    /// @notice Raise or lower the recipient-slot cap returned by
+    ///         `MAX_RECIPIENTS()`. Must be ≥ the current slot count and
+    ///         ≤ `MAX_RECIPIENTS_CEILING`. Lets the DAO grow past the default
+    ///         300 without a plugin upgrade. Gated by `MANAGE_PAYROLL`.
+    function setMaxRecipients(uint256 newMax) external;
+
+    /// @notice Governance-safe recovery for a skipped month: returns the
+    ///         DAO→payee transfer batch that pays every active recipient once
+    ///         for `period` (`year*12+month`). A proposal carries these actions
+    ///         and TokenVoting runs them via `dao.execute` at the top level —
+    ///         the same preview pattern the AAVE / Uniswap fund ops use, which
+    ///         avoids the nested-`dao.execute` reentrancy a wrapper call would
+    ///         hit. `period` must be strictly between `lastPayoutPeriod` and the
+    ///         current period and ≤ `MAX_FORCE_BACK_MONTHS` back; the active set
+    ///         must fit one page. Reverts otherwise (surfaced at build/sim time).
+    function previewForcePayPeriodActions(
+        uint256 period
+    ) external view returns (Action[] memory);
 
     // --- Permissionless crank ---
 
@@ -128,10 +165,19 @@ interface IPayrollPlugin {
     /// @notice One-RPC-roundtrip view for the toy frontend (TRD §3a/§3b).
     function allActiveRecipients() external view returns (Recipient[] memory);
 
-    /// @notice The hard cap on `recipientCount()` (active + soft-deleted slots)
-    ///         per TRD §11 security note. Bounds the storage scan a paginated
-    ///         crank performs.
+    /// @notice The current cap on `recipientCount()` (active + soft-deleted
+    ///         slots) per TRD §11 security note. Bounds the storage scan a
+    ///         paginated crank performs. Governance-settable via
+    ///         `setMaxRecipients`, defaulting to 300, never above
+    ///         `MAX_RECIPIENTS_CEILING`.
     function MAX_RECIPIENTS() external view returns (uint256);
+
+    /// @notice The hard upper bound `setMaxRecipients` can never exceed without
+    ///         a plugin upgrade. Exposed for UI introspection.
+    function MAX_RECIPIENTS_CEILING() external view returns (uint256);
+
+    /// @notice How many months back `previewForcePayPeriodActions` may reach.
+    function MAX_FORCE_BACK_MONTHS() external view returns (uint256);
 
     /// @notice Max active recipients paid per crank call. Bounds per-tx gas and
     ///         keeps the run within OSx's 256-action / 256-bit-failure-map limit.

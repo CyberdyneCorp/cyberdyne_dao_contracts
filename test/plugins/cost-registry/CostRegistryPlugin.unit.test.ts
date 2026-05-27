@@ -244,6 +244,52 @@ describe("CostRegistryPlugin", () => {
     });
   });
 
+  describe("setMaxEntries", () => {
+    it("defaults to 300 with a 1000 ceiling", async () => {
+      expect(await plugin.MAX_ENTRIES()).to.equal(300);
+      expect(await plugin.MAX_ENTRIES_CEILING()).to.equal(1000);
+    });
+
+    it("raises the cap and emits MaxEntriesUpdated", async () => {
+      await expect(plugin.connect(voter).setMaxEntries(500))
+        .to.emit(plugin, "MaxEntriesUpdated")
+        .withArgs(300, 500);
+      expect(await plugin.MAX_ENTRIES()).to.equal(500);
+    });
+
+    it("enforces the new cap on registerEntry (lower, fill, raise, add)", async () => {
+      await plugin.connect(voter).setMaxEntries(2);
+      await plugin.connect(voter).registerEntry("a", "", usdc(1), 1, aws);
+      await plugin.connect(voter).registerEntry("b", "", usdc(1), 1, aws);
+      await expect(plugin.connect(voter).registerEntry("c", "", usdc(1), 1, aws))
+        .to.be.revertedWithCustomError(plugin, "EntryLimitExceeded")
+        .withArgs(2);
+      await plugin.connect(voter).setMaxEntries(3);
+      await expect(plugin.connect(voter).registerEntry("c", "", usdc(1), 1, aws)).to.emit(
+        plugin,
+        "EntryRegistered"
+      );
+    });
+
+    it("reverts above the ceiling", async () => {
+      await expect(plugin.connect(voter).setMaxEntries(1001))
+        .to.be.revertedWithCustomError(plugin, "MaxEntriesOutOfRange")
+        .withArgs(1001, 0, 1000);
+    });
+
+    it("reverts below the current slot count", async () => {
+      await plugin.connect(voter).registerEntry("a", "", usdc(1), 1, aws);
+      await plugin.connect(voter).registerEntry("b", "", usdc(1), 1, aws);
+      await expect(plugin.connect(voter).setMaxEntries(1))
+        .to.be.revertedWithCustomError(plugin, "MaxEntriesOutOfRange")
+        .withArgs(1, 2, 1000);
+    });
+
+    it("reverts when caller lacks MANAGE_COSTS", async () => {
+      await expect(plugin.connect(stranger).setMaxEntries(400)).to.be.reverted;
+    });
+  });
+
   describe("removeEntry (soft delete)", () => {
     it("flips active=false, keeps the slot, emits", async () => {
       await plugin.connect(voter).registerEntry("AWS", "", usdc(500), 30, aws);

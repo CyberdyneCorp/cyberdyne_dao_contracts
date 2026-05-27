@@ -67,6 +67,14 @@ contract PayrollHandler is Test {
         try plugin.setPayDayOfMonth(day) {} catch {}
     }
 
+    /// @dev Fuzz the settable cap across (and beyond) its valid range. The
+    ///      setter rejects values below the live slot count, so the
+    ///      `recipientCountBounded` invariant must hold for any accepted value.
+    function setMaxRecipients(uint256 newMax) external syncGhost {
+        newMax = bound(newMax, 0, plugin.MAX_RECIPIENTS_CEILING());
+        try plugin.setMaxRecipients(newMax) {} catch {}
+    }
+
     /// @dev Funds the DAO so the next crank actually moves tokens; without
     ///      this every crank would revert OOF and the no-custody invariant
     ///      would be trivially true. We want real fund flow under fuzz.

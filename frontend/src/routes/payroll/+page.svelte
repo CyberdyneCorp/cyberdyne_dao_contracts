@@ -93,6 +93,36 @@
     }
   }
 
+  let maxRecip = "";
+  let setMaxAction: ProposalAction | null = null;
+  function buildSetMaxRecipients(): void {
+    setMaxAction = null;
+    try {
+      const cfg = chainConfig($wallet.status === "connected" ? $wallet.chainId : 1);
+      if (!cfg?.dao) throw new Error("No DAO configured");
+      setMaxAction = actions.payrollSetMaxRecipients(cfg, parseInt(maxRecip || "0", 10));
+    } catch (err) {
+      alert(`Build failed: ${(err as Error).message}`);
+    }
+  }
+
+  // Force-pay a skipped month: year + month → packed period (year*12+month).
+  let forceYear = "";
+  let forceMonth = "";
+  let forceActions: ProposalAction[] | null = null;
+  async function buildForcePay(): Promise<void> {
+    forceActions = null;
+    try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      const cfg = chainConfig($wallet.chainId);
+      if (!cfg?.dao) throw new Error("No DAO configured");
+      const period = parseInt(forceYear || "0", 10) * 12 + parseInt(forceMonth || "0", 10);
+      forceActions = await actions.previewPayrollForcePayPeriod(cfg, $wallet.provider, period);
+    } catch (err) {
+      alert(`Build failed: ${(err as Error).message}`);
+    }
+  }
+
   function periodLabel(p: bigint | ethers.BigNumber): string {
     const n = Number(p);
     if (n === 0) return "—";
@@ -185,6 +215,26 @@
       <button on:click={buildSetAmount}>Build</button>
     </div>
     <ProposeAction action={setAmountAction} />
+
+    <h2>Propose: set max recipients</h2>
+    <p class="muted">Raise or lower the recipient-slot cap (≤ ceiling, ≥ current count). Vote-gated.</p>
+    <div class="form">
+      <label>New max <input bind:value={maxRecip} placeholder="500" style="min-width:120px" /></label>
+      <button on:click={buildSetMaxRecipients}>Build</button>
+    </div>
+    <ProposeAction action={setMaxAction} />
+
+    <h2>Propose: force-pay a skipped period</h2>
+    <p class="muted">
+      Recovery for a month the crank skipped — pays every active recipient once. Only periods after
+      the last paid month and before now (≤ 12 months back) qualify. Vote-gated.
+    </p>
+    <div class="form">
+      <label>Year <input bind:value={forceYear} placeholder="2027" style="min-width:90px" /></label>
+      <label>Month <input bind:value={forceMonth} placeholder="2" style="min-width:80px" /></label>
+      <button on:click={buildForcePay}>Build</button>
+    </div>
+    <ProposeAction action={forceActions} />
   {/if}
 {/if}
 

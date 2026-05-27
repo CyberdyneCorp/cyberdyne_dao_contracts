@@ -29,8 +29,14 @@ contract CostRegistryPlugin is PluginUUPSUpgradeable, ICostRegistryPlugin {
         keccak256("UPDATE_PAYMENT_TOKEN_PERMISSION");
 
     /// @inheritdoc ICostRegistryPlugin
-    /// @dev Bounds the storage scan a `processDue` page performs.
-    uint256 public constant override MAX_ENTRIES = 300;
+    /// @dev Hard upper bound on the settable `MAX_ENTRIES()` cap. Bounds the
+    ///      worst-case storage scan a `processDue` page performs even if
+    ///      governance raises the limit. `setMaxEntries` can never exceed this
+    ///      without a plugin upgrade.
+    uint256 public constant override MAX_ENTRIES_CEILING = 1000;
+
+    /// @dev Default `MAX_ENTRIES()` at install — preserves the original v1 cap.
+    uint256 private constant DEFAULT_MAX_ENTRIES = 300;
 
     /// @inheritdoc ICostRegistryPlugin
     /// @dev OSx caps `DAO.execute` at 256 actions and `allowFailureMap` is a
@@ -51,7 +57,11 @@ contract CostRegistryPlugin is PluginUUPSUpgradeable, ICostRegistryPlugin {
 
     CostEntry[] private _entries;
 
-    uint256[48] private __gap;
+    /// @dev Governance-settable total slot cap, bounded by `MAX_ENTRIES_CEILING`.
+    ///      Exposed via `MAX_ENTRIES()`. Initialized to `DEFAULT_MAX_ENTRIES`.
+    uint256 private _maxEntries;
+
+    uint256[47] private __gap;
 
     /// @notice Initialize the plugin. Called once via the UUPS proxy constructor.
     /// @param _dao   DAO that authorizes this plugin and holds the funds.
@@ -60,6 +70,7 @@ contract CostRegistryPlugin is PluginUUPSUpgradeable, ICostRegistryPlugin {
         __PluginUUPSUpgradeable_init(_dao);
         if (address(token) == address(0)) revert ZeroAddress();
         _token = token;
+        _maxEntries = DEFAULT_MAX_ENTRIES;
     }
 
     // --- Vote-gated management --------------------------------------------
@@ -73,7 +84,7 @@ contract CostRegistryPlugin is PluginUUPSUpgradeable, ICostRegistryPlugin {
         address payee
     ) external override auth(MANAGE_COSTS_PERMISSION_ID) returns (uint256 id) {
         _validate(name, costUsdc, frequencyDays, payee);
-        if (_entries.length >= MAX_ENTRIES) revert EntryLimitExceeded(MAX_ENTRIES);
+        if (_entries.length >= _maxEntries) revert EntryLimitExceeded(_maxEntries);
 
         _entries.push(
             CostEntry({
@@ -135,6 +146,20 @@ contract CostRegistryPlugin is PluginUUPSUpgradeable, ICostRegistryPlugin {
         address previous = address(_token);
         _token = IERC20(newToken);
         emit PaymentTokenUpdated(previous, newToken);
+    }
+
+    /// @inheritdoc ICostRegistryPlugin
+    /// @dev Raise (or lower) the entry-slot cap. Bounded by `MAX_ENTRIES_CEILING`
+    ///      above and by the current slot count below (can't shrink past slots
+    ///      that already exist). Gated by `MANAGE_COSTS` — same governance class
+    ///      as entry management.
+    function setMaxEntries(uint256 newMax) external override auth(MANAGE_COSTS_PERMISSION_ID) {
+        if (newMax < _entries.length || newMax > MAX_ENTRIES_CEILING) {
+            revert MaxEntriesOutOfRange(newMax, _entries.length, MAX_ENTRIES_CEILING);
+        }
+        uint256 previous = _maxEntries;
+        _maxEntries = newMax;
+        emit MaxEntriesUpdated(previous, newMax);
     }
 
     // --- Permissionless crank ---------------------------------------------
@@ -224,6 +249,11 @@ contract CostRegistryPlugin is PluginUUPSUpgradeable, ICostRegistryPlugin {
     /// @inheritdoc ICostRegistryPlugin
     function entryCount() external view override returns (uint256) {
         return _entries.length;
+    }
+
+    /// @inheritdoc ICostRegistryPlugin
+    function MAX_ENTRIES() external view override returns (uint256) {
+        return _maxEntries;
     }
 
     /// @inheritdoc ICostRegistryPlugin

@@ -23,6 +23,7 @@
     readV4Position,
     type V4PositionRead,
   } from "$lib/v4Positions";
+  import {readV4PoolState, v4QuoteEnabled, type V4PoolState} from "$lib/v4Quote";
 
   const U128_MAX = ethers.BigNumber.from(2).pow(128).sub(1);
   const FULL_LOWER = -887220;
@@ -284,6 +285,19 @@
       });
     } catch (err) {
       alert(`Build failed: ${(err as Error).message}`);
+    }
+  }
+
+  // V4 pre-mint pool quote (feature-flagged on UNISWAP_V4_STATE_VIEW).
+  type V4QuoteState = V4PoolState | {error: string} | "loading" | null;
+  let v4MintQuote: V4QuoteState = null;
+  async function quoteV4Mint(): Promise<void> {
+    v4MintQuote = "loading";
+    try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      v4MintQuote = await readV4PoolState(cfgNow(), $wallet.provider, v4PoolKey());
+    } catch (err) {
+      v4MintQuote = {error: (err as Error).message};
     }
   }
 
@@ -721,8 +735,43 @@
     <label>dec0 <input bind:value={vmDec0} style="min-width:60px" /></label>
     <label>amount1Max <input bind:value={vmAmount1Max} placeholder="1" /></label>
     <label>dec1 <input bind:value={vmDec1} style="min-width:60px" /></label>
+    {#if v4QuoteEnabled(cfgNow())}
+      <button on:click={quoteV4Mint}>Quote pool</button>
+    {/if}
     <button on:click={buildV4Mint}>Build</button>
   </div>
+
+  {#if v4MintQuote !== null}
+    {#if v4MintQuote === "loading"}
+      <p class="muted">Reading pool state…</p>
+    {:else if "error" in v4MintQuote}
+      <p class="error">Quote failed: {v4MintQuote.error}</p>
+    {:else}
+      {@const lo = parseInt(vmTickLower, 10)}
+      {@const hi = parseInt(vmTickUpper, 10)}
+      {@const inRange = v4MintQuote.inRange(lo, hi)}
+      <table>
+        <tbody>
+          <tr><th>pool id</th><td><code>{v4MintQuote.poolId}</code></td></tr>
+          <tr><th>current tick</th><td>{v4MintQuote.tick}</td></tr>
+          <tr><th>raw price (token1 per token0)</th><td>{v4MintQuote.rawPriceToken1PerToken0.toExponential(6)}</td></tr>
+          <tr><th>pool liquidity</th><td>{v4MintQuote.liquidity.toString()}</td></tr>
+          <tr>
+            <th>range</th>
+            <td>
+              {#if inRange}
+                ✓ current tick {v4MintQuote.tick} is inside [{lo}, {hi}] — position will use BOTH tokens
+              {:else if v4MintQuote.tick < lo}
+                ⚠ current tick {v4MintQuote.tick} is BELOW {lo} — position uses ONLY token0 until price rises into range
+              {:else}
+                ⚠ current tick {v4MintQuote.tick} is ABOVE {hi} — position uses ONLY token1 until price falls into range
+              {/if}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    {/if}
+  {/if}
   <ProposeAction action={v4MintAction} />
 
   <h3>Propose: increase liquidity</h3>

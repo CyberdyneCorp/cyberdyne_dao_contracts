@@ -52,6 +52,8 @@ interface ICostRegistryPlugin {
     ///         migration to a token with different decimals must be paired with
     ///         entry updates in the same proposal).
     event PaymentTokenUpdated(address indexed previous, address indexed current);
+    /// @notice The settable entry-slot cap (`MAX_ENTRIES()`) was changed.
+    event MaxEntriesUpdated(uint256 oldMax, uint256 newMax);
 
     // --- Errors ---
 
@@ -63,6 +65,9 @@ interface ICostRegistryPlugin {
     error EntryLimitExceeded(uint256 max);
     error CostTooLarge(uint256 costUsdc);
     error PageSizeZero();
+    /// @notice `setMaxEntries` was called with a value below the current slot
+    ///         count or above `MAX_ENTRIES_CEILING`.
+    error MaxEntriesOutOfRange(uint256 requested, uint256 minimum, uint256 ceiling);
 
     // --- Vote-gated mutators ---
 
@@ -90,6 +95,12 @@ interface ICostRegistryPlugin {
 
     /// @notice Soft-delete an entry (kept for history; never paid again).
     function removeEntry(uint256 id) external;
+
+    /// @notice Raise or lower the entry-slot cap returned by `MAX_ENTRIES()`.
+    ///         Must be ≥ the current slot count and ≤ `MAX_ENTRIES_CEILING`.
+    ///         Lets the DAO grow past the default 300 without a plugin upgrade.
+    ///         Gated by `MANAGE_COSTS`.
+    function setMaxEntries(uint256 newMax) external;
 
     /// @notice Vote-gated swap of the registry's payment token. Existing entries
     ///         remain valid but are re-denominated in `newToken` from the next
@@ -134,8 +145,14 @@ interface ICostRegistryPlugin {
     /// @notice Unix timestamp the entry next becomes payable.
     function nextPaymentAt(uint256 id) external view returns (uint256);
 
-    /// @notice Hard cap on `entryCount()` (active + soft-deleted slots).
+    /// @notice The current cap on `entryCount()` (active + soft-deleted slots).
+    ///         Governance-settable via `setMaxEntries`, defaulting to 300, never
+    ///         above `MAX_ENTRIES_CEILING`.
     function MAX_ENTRIES() external view returns (uint256);
+
+    /// @notice The hard upper bound `setMaxEntries` can never exceed without a
+    ///         plugin upgrade. Exposed for UI introspection.
+    function MAX_ENTRIES_CEILING() external view returns (uint256);
 
     /// @notice Max entries paid per `processDue` call (per-tx / 256-bit-bitmap cap).
     function MAX_PER_PAGE() external view returns (uint256);
