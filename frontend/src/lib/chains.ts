@@ -6,11 +6,17 @@ import {addresses} from "@cyberdyne/dao-contracts";
 import {env} from "$env/dynamic/public";
 import type {ChainConfig, DaoAddresses} from "./types";
 
+// A local anvil/hardhat fork of mainnet reports chainId 31337 but holds real
+// mainnet state. Treat it as mainnet: same address book + the mainnet RPC/DAO
+// env. Lets MetaMask use a plain custom 31337 network (no chainId-1 conflict).
+const LOCAL_FORK = 31337;
+
 const RPC_BY_CHAIN_ID: Record<number, string | undefined> = {
   1: env.PUBLIC_RPC_MAINNET,
   8453: env.PUBLIC_RPC_BASE,
   11155111: env.PUBLIC_RPC_SEPOLIA,
   84532: env.PUBLIC_RPC_BASE_SEPOLIA,
+  [LOCAL_FORK]: env.PUBLIC_RPC_MAINNET,
 };
 
 const DAO_ENV_KEY: Record<number, string> = {
@@ -18,7 +24,13 @@ const DAO_ENV_KEY: Record<number, string> = {
   8453: "PUBLIC_DAO_BASE",
   11155111: "PUBLIC_DAO_SEPOLIA",
   84532: "PUBLIC_DAO_BASE_SEPOLIA",
+  [LOCAL_FORK]: "PUBLIC_DAO_MAINNET",
 };
+
+// Map a connected chainId to the addresses.json key (31337 fork → mainnet "1").
+function addressesKey(chainId: number): number {
+  return chainId === LOCAL_FORK ? 1 : chainId;
+}
 
 function parseDaoEnv(raw: string | undefined): DaoAddresses | undefined {
   if (!raw) return undefined;
@@ -40,7 +52,7 @@ function parseDaoEnv(raw: string | undefined): DaoAddresses | undefined {
 
 export function chainConfig(chainId: number): ChainConfig | undefined {
   const entry = (addresses as Record<string, {name: string; osx: Record<string, string>; external: Record<string, string>}>)[
-    String(chainId)
+    String(addressesKey(chainId))
   ];
   if (!entry) return undefined;
   const daoKey = DAO_ENV_KEY[chainId];

@@ -64,9 +64,18 @@ invariants:
 # on free RPC tiers — anvil caches fetched state, avoiding rate-limit flakiness).
 # Leave empty to fork at latest.
 
-# Forked mainnet on :8545 (chainId 1). Usage: just fork-mainnet [block]
+# Forked mainnet on :8545 (chainId 1) — for `just test-fork mainnetFork`.
+# Usage: just fork-mainnet [block]
 fork-mainnet block='':
     anvil --fork-url "$RPC_MAINNET" --chain-id 1 --port 8545 \
+        {{ if block != '' { '--fork-block-number ' + block } else { '' } }}
+
+# Forked mainnet on :8545 reporting chainId 31337 — for the FRONTEND demo.
+# 31337 avoids MetaMask's chainId-1 conflict, so you can add a plain custom
+# network. OsxAddresses + the frontend treat 31337 as a mainnet fork.
+# Usage: just fork-local [block]
+fork-local block='':
+    anvil --fork-url "$RPC_MAINNET" --chain-id 31337 --port 8545 \
         {{ if block != '' { '--fork-block-number ' + block } else { '' } }}
 
 # Forked Base on :8546 (chainId 8453). Usage: just fork-base [block]

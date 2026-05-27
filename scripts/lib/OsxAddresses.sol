@@ -14,7 +14,15 @@ pragma solidity 0.8.17;
 library OsxAddresses {
     error UnsupportedChain(uint256 chainId);
 
+    /// @dev A local anvil/hardhat fork of mainnet reports chainId 31337 but
+    ///      holds real mainnet state at mainnet addresses. Resolve it to the
+    ///      mainnet (chainId 1) address set so `just fork-local` deploys work.
+    function _canonical(uint256 chainId) private pure returns (uint256) {
+        return chainId == 31337 ? 1 : chainId;
+    }
+
     function daoFactory(uint256 chainId) internal pure returns (address) {
+        chainId = _canonical(chainId);
         if (chainId == 1) return 0x246503df057A9a85E0144b6867a828c99676128B; // mainnet
         if (chainId == 8453) return 0xcc602EA573a42eBeC290f33F49D4A87177ebB8d2; // base
         if (chainId == 11155111) return 0xB815791c233807D39b7430127975244B36C19C8e; // sepolia
@@ -23,6 +31,7 @@ library OsxAddresses {
     }
 
     function pluginRepoFactory(uint256 chainId) internal pure returns (address) {
+        chainId = _canonical(chainId);
         // Mirrors `pluginRepoFactory` entries in npm-artifacts/src/addresses.json.
         if (chainId == 1) return 0xcf59C627b7a4052041C4F16B4c635a960e29554A;
         if (chainId == 8453) return 0xAAAb8c6b83a5C7b1462af4427d97b33197388C38;
@@ -32,6 +41,7 @@ library OsxAddresses {
     }
 
     function usdc(uint256 chainId) internal pure returns (address) {
+        chainId = _canonical(chainId);
         // Payment token for the CostRegistry plugin. Mirrors the USDC entries
         // in npm-artifacts/src/addresses.json / build-addresses.js.
         if (chainId == 1) return 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; // mainnet
@@ -40,6 +50,7 @@ library OsxAddresses {
     }
 
     function aaveV3Pool(uint256 chainId) internal pure returns (address) {
+        chainId = _canonical(chainId);
         // TRD §10. Testnets don't run AAVE — set explicitly when needed.
         if (chainId == 1) return 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2; // mainnet
         if (chainId == 8453) return 0xA238Dd80C259a72e81d7e4664a9801593F98d1c5; // base
@@ -47,6 +58,7 @@ library OsxAddresses {
     }
 
     function universalRouter(uint256 chainId) internal pure returns (address) {
+        chainId = _canonical(chainId);
         // TRD §10 marks this TBD; pinned here from docs.uniswap.org deployments.
         // TODO: verify before mainnet deploy — Universal Router has been
         // redeployed historically and our `setUniversalRouter` is the migration
@@ -63,6 +75,7 @@ library OsxAddresses {
     }
 
     function uniswapV4PoolManager(uint256 chainId) internal pure returns (address) {
+        chainId = _canonical(chainId);
         if (chainId == 1) return 0x000000000004444c5dc75cB358380D2e3dE08A90; // mainnet
         if (chainId == 8453) return 0x498581fF718922c3f8e6A244956aF099B2652b2b; // base
         revert UnsupportedChain(chainId);
