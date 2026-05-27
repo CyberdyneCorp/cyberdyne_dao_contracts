@@ -104,7 +104,10 @@ describe("PayrollPlugin", () => {
     it("sets payDayOfMonth and disables initializer on the impl", async () => {
       expect(await plugin.payDayOfMonth()).to.equal(PAY_DAY);
       expect(await plugin.lastPayoutPeriod()).to.equal(0);
-      expect(await plugin.MAX_RECIPIENTS()).to.equal(100);
+      expect(await plugin.MAX_RECIPIENTS()).to.equal(300);
+      expect(await plugin.MAX_RECIPIENTS_PER_PAGE()).to.equal(100);
+      expect(await plugin.cursorPeriod()).to.equal(0);
+      expect(await plugin.payoutCursor()).to.equal(0);
     });
 
     it("rejects payDayOfMonth = 0 or > 28", async () => {
@@ -197,7 +200,7 @@ describe("PayrollPlugin", () => {
       await expect(plugin.connect(voter).addRecipient(oneMore, token.address, 100))
         .to.be.revertedWithCustomError(plugin, "RecipientLimitExceeded")
         .withArgs(cap);
-    }).timeout(60_000);
+    }).timeout(180_000);
 
     it("reverts when caller lacks MANAGE_PAYROLL", async () => {
       await expect(
@@ -402,6 +405,209 @@ describe("PayrollPlugin", () => {
       // `stranger` has no DAO permissions whatsoever.
       await expect(plugin.connect(stranger).executePayroll()).to.emit(plugin, "PayrollExecuted");
     });
+  });
+
+  describe("executePayrollPage: pagination", () => {
+    // Adds `n` ERC20 recipients with deterministic addresses (0x..01, 0x..02, …).
+    async function addManyRecipients(n: number, amount = 100): Promise<string[]> {
+      const addrs: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const addr = ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`);
+        await plugin.connect(voter).addRecipient(addr, token.address, amount);
+        addrs.push(addr);
+      }
+      return addrs;
+    }
+
+    it("pays across pages and locks the period only on the final page", async () => {
+      const addrs = await addManyRecipients(3, 100);
+      await token.mint(dao.address, 1_000_000);
+
+      await time.setNextBlockTimestamp(payDayTs(2027, 7));
+      const period = 2027 * 12 + 7;
+
+      // Page 1 — pay 2 of 3. Period NOT yet locked.
+      const tx1 = await plugin.executePayrollPage(2);
+      const e1 = await readPayrollExecuted(tx1);
+      expect(e1.period).to.equal(period);
+      expect(e1.recipientCount).to.equal(2);
+      expect(await plugin.lastPayoutPeriod()).to.equal(0);
+      expect(await plugin.cursorPeriod()).to.equal(period);
+      expect(await plugin.payoutCursor()).to.equal(2);
+      expect(await token.balanceOf(addrs[0])).to.equal(100);
+      expect(await token.balanceOf(addrs[1])).to.equal(100);
+      expect(await token.balanceOf(addrs[2])).to.equal(0);
+
+      // Page 2 — pay the last one. Period locks + completion event fires.
+      const tx2 = await plugin.executePayrollPage(2);
+      const e2 = await readPayrollExecuted(tx2);
+      expect(e2.recipientCount).to.equal(1);
+      await expect(tx2).to.emit(plugin, "PayrollPeriodCompleted").withArgs(period);
+      expect(await plugin.lastPayoutPeriod()).to.equal(period);
+      expect(await plugin.payoutCursor()).to.equal(0);
+      expect(await token.balanceOf(addrs[2])).to.equal(100);
+    });
+
+    it("reverts AlreadyPaidThisPeriod once the period is complete", async () => {
+      await addManyRecipients(2, 50);
+      await token.mint(dao.address, 1_000_000);
+
+      await time.setNextBlockTimestamp(payDayTs(2027, 8));
+      await plugin.executePayrollPage(10); // pays both, completes
+      expect(await plugin.lastPayoutPeriod()).to.equal(2027 * 12 + 8);
+
+      await time.setNextBlockTimestamp(payDayTs(2027, 8, 20));
+      await expect(plugin.executePayrollPage(10)).to.be.revertedWithCustomError(
+        plugin,
+        "AlreadyPaidThisPeriod"
+      );
+    });
+
+    it("resets the cursor across periods", async () => {
+      const addrs = await addManyRecipients(3, 100);
+      await token.mint(dao.address, 10_000_000);
+
+      // Period 1 — paginate to completion.
+      await time.setNextBlockTimestamp(payDayTs(2028, 1));
+      await plugin.executePayrollPage(2);
+      await plugin.executePayrollPage(2);
+      expect(await plugin.lastPayoutPeriod()).to.equal(2028 * 12 + 1);
+
+      // Period 2 — cursor starts fresh from the top.
+      await time.setNextBlockTimestamp(payDayTs(2028, 2));
+      const tx = await plugin.executePayrollPage(2);
+      expect((await readPayrollExecuted(tx)).recipientCount).to.equal(2);
+      expect(await plugin.payoutCursor()).to.equal(2);
+      // Each recipient paid twice total (once per period).
+      await plugin.executePayrollPage(2);
+      for (const a of addrs) expect(await token.balanceOf(a)).to.equal(200);
+    });
+
+    it("completes a period whose tail is all soft-deleted", async () => {
+      const addrs = await addManyRecipients(3, 100);
+      await token.mint(dao.address, 1_000_000);
+      // Remove the last two — only recipient 0 is active.
+      await plugin.connect(voter).removeRecipient(addrs[1]);
+      await plugin.connect(voter).removeRecipient(addrs[2]);
+
+      await time.setNextBlockTimestamp(payDayTs(2028, 3));
+      const period = 2028 * 12 + 3;
+
+      // Page size 1: page 1 pays recipient 0 and stops at cursor 1 (not end).
+      const tx1 = await plugin.executePayrollPage(1);
+      expect((await readPayrollExecuted(tx1)).recipientCount).to.equal(1);
+      expect(await plugin.lastPayoutPeriod()).to.equal(0);
+      expect(await plugin.payoutCursor()).to.equal(1);
+
+      // Page 2: scans the inactive tail, finds nothing, completes with no batch.
+      const tx2 = await plugin.executePayrollPage(1);
+      await expect(tx2).to.emit(plugin, "PayrollPeriodCompleted").withArgs(period);
+      await expect(tx2).to.not.emit(plugin, "PayrollExecuted");
+      expect(await plugin.lastPayoutPeriod()).to.equal(period);
+      expect(await token.balanceOf(addrs[0])).to.equal(100);
+    });
+
+    it("skips recipients removed mid-period before they are paid", async () => {
+      const addrs = await addManyRecipients(3, 100);
+      await token.mint(dao.address, 1_000_000);
+
+      await time.setNextBlockTimestamp(payDayTs(2028, 4));
+      await plugin.executePayrollPage(1); // pays addrs[0], cursor=1
+
+      // Remove addrs[1] before it is reached.
+      await plugin.connect(voter).removeRecipient(addrs[1]);
+
+      await plugin.executePayrollPage(10); // pays only addrs[2], completes
+      expect(await plugin.lastPayoutPeriod()).to.equal(2028 * 12 + 4);
+      expect(await token.balanceOf(addrs[0])).to.equal(100);
+      expect(await token.balanceOf(addrs[1])).to.equal(0); // removed, never paid
+      expect(await token.balanceOf(addrs[2])).to.equal(100);
+    });
+
+    it("isolates a reverting recipient within a page", async () => {
+      const good = await alice.getAddress();
+      const reverting = await new RevertingRecipient__factory(deployer).deploy();
+      await reverting.deployed();
+      await plugin
+        .connect(voter)
+        .addRecipient(
+          reverting.address,
+          ethers.constants.AddressZero,
+          ethers.utils.parseEther("1")
+        );
+      await plugin
+        .connect(voter)
+        .addRecipient(good, ethers.constants.AddressZero, ethers.utils.parseEther("2"));
+      await fundDaoEth(dao, ethers.utils.parseEther("100"));
+
+      const before = await ethers.provider.getBalance(good);
+      await time.setNextBlockTimestamp(payDayTs(2028, 5));
+      const tx = await plugin.executePayrollPage(10);
+      const evt = await readPayrollExecuted(tx);
+
+      expect(evt.failureMap).to.equal(1); // bit 0 = reverting recipient
+      expect(evt.recipientCount).to.equal(2);
+      expect(await ethers.provider.getBalance(good)).to.equal(
+        before.add(ethers.utils.parseEther("2"))
+      );
+      expect(await plugin.lastPayoutPeriod()).to.equal(2028 * 12 + 5);
+    });
+
+    it("reverts PageSizeZero on executePayrollPage(0)", async () => {
+      await addManyRecipients(1);
+      await time.setNextBlockTimestamp(payDayTs(2028, 6));
+      await expect(plugin.executePayrollPage(0)).to.be.revertedWithCustomError(
+        plugin,
+        "PageSizeZero"
+      );
+    });
+
+    it("respects timing guards (NotYetDueThisMonth / NoActiveRecipients)", async () => {
+      await time.setNextBlockTimestamp(utcTimestamp(2028, 7, 10, 12)); // before pay day
+      await addManyRecipients(1);
+      await expect(plugin.executePayrollPage(5))
+        .to.be.revertedWithCustomError(plugin, "NotYetDueThisMonth")
+        .withArgs(10, PAY_DAY);
+
+      // Remove the only recipient, jump to pay day → empty payroll.
+      const addr = ethers.utils.getAddress(`0x${(1).toString(16).padStart(40, "0")}`);
+      await plugin.connect(voter).removeRecipient(addr);
+      await time.setNextBlockTimestamp(payDayTs(2028, 7));
+      await expect(plugin.executePayrollPage(5)).to.be.revertedWithCustomError(
+        plugin,
+        "NoActiveRecipients"
+      );
+    });
+  });
+
+  describe("executePayroll: single-pass guard", () => {
+    it("reverts PayrollExceedsSinglePage when active set exceeds one page", async () => {
+      // One more than a full page of active recipients.
+      const perPage = (await plugin.MAX_RECIPIENTS_PER_PAGE()).toNumber();
+      for (let i = 0; i < perPage + 1; i++) {
+        await plugin
+          .connect(voter)
+          .addRecipient(
+            ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`),
+            token.address,
+            10
+          );
+      }
+      await token.mint(dao.address, 10_000_000);
+
+      await time.setNextBlockTimestamp(payDayTs(2029, 1));
+      await expect(plugin.executePayroll())
+        .to.be.revertedWithCustomError(plugin, "PayrollExceedsSinglePage")
+        .withArgs(perPage);
+
+      // The paginated crank handles it: page 1 (100) then page 2 (1) completes.
+      const tx1 = await plugin.executePayrollPage(perPage);
+      expect((await readPayrollExecuted(tx1)).recipientCount).to.equal(perPage);
+      expect(await plugin.lastPayoutPeriod()).to.equal(0);
+      const tx2 = await plugin.executePayrollPage(perPage);
+      expect((await readPayrollExecuted(tx2)).recipientCount).to.equal(1);
+      expect(await plugin.lastPayoutPeriod()).to.equal(2029 * 12 + 1);
+    }).timeout(120_000);
   });
 
   describe("executePayroll: per-recipient failure tolerance", () => {

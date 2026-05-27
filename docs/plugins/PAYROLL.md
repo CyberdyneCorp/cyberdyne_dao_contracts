@@ -16,7 +16,9 @@ Per-plugin spec for the Cyberdyne DAO PayrollPlugin (TRD §6.3, ROADMAP P2).
 - Maintains an on-chain list of payroll recipients (payee, token, amount).
 - Pays every active recipient **once per month**, on a fixed day-of-month chosen at install.
 - Recipient management (`addRecipient` / `removeRecipient` / `setAmount` / `setPayDayOfMonth`) is vote-gated through the DAO.
-- The monthly `executePayroll()` crank is **permissionless** — anyone can call it. Idempotent within a month.
+- The monthly crank is **permissionless** — anyone can call it. Idempotent within a month.
+  - `executePayroll()` — pays the whole period in one batch (for payrolls up to one page).
+  - `executePayrollPage(maxCount)` — pays the period across multiple cursor-tracked pages for large payrolls (see §3a).
 
 ## 2. Trust + custody model
 
@@ -32,12 +34,22 @@ Per-plugin spec for the Cyberdyne DAO PayrollPlugin (TRD §6.3, ROADMAP P2).
 - The "due day" check is `block.timestamp`'s calendar day `>= payDayOfMonth`. There is **no upper bound** on how late the crank can run within a month — once the period boundary rolls over to the next month, that month's window closes permanently for prior periods.
 - **No back-pay.** If month N is skipped (nobody called the crank), the next call in month N+1 pays only N+1. This is intentional: a back-pay loop would let anyone stack payouts. Resuming a skipped month requires a separate proposal.
 
+## 3a. Paginated crank (large payrolls)
+
+For payrolls larger than one batch can hold, `executePayrollPage(uint256 maxCount)` pays the current period in chunks; both cranks share one internal `_runPayroll(maxCount, requireSinglePass)`.
+
+- **Caps.** `MAX_RECIPIENTS_PER_PAGE = 100` bounds a single batch (OSx caps `DAO.execute` at 256 actions and `allowFailureMap` is a 256-bit bitmap; 100 leaves gas headroom). `MAX_RECIPIENTS = 300` (total active + soft-deleted slots) bounds the storage scan a page performs to find the next active recipient.
+- **Cursor.** Two storage words track progress: `cursorPeriod` (the period the cursor belongs to) and `payoutCursor` (the next `_recipients` index to resume from). A page resumes from the cursor when `cursorPeriod == currentPeriod`, else starts fresh at index 0 — so a new month always restarts cleanly and the cursor resets to 0 on completion.
+- **Completion.** The period locks (`lastPayoutPeriod` advances) and `PayrollPeriodCompleted(period)` fires only when a page reaches the end of the recipient set. `executePayroll()` is `_runPayroll(MAX_RECIPIENTS_PER_PAGE, requireSinglePass=true)` and reverts `PayrollExceedsSinglePage` if it can't finish the period in that one batch — so it never half-pays a period.
+- **Mid-period edits.** Recipients added after the cursor are picked up by later pages; recipients soft-deleted before the cursor reaches them are skipped. A tail of only-inactive slots completes the period without emitting a payment batch.
+- **No back-pay still holds.** Only the current due period is ever processed; `executePayrollPage` reverts `AlreadyPaidThisPeriod` once the period is complete and `PageSizeZero` on `maxCount == 0`.
+
 ## 4. Per-recipient failure tolerance
 
-- Each call to the crank builds an `Action[]` of length `n` = active-recipient count.
-- `allowFailureMap = (1 << n) - 1` — every bit is set, so any single transfer may fail without aborting the others.
-- The DAO returns a `failureMap` bitmap; bit `i` set means action `i` reverted. The plugin emits `PayrollExecuted(period, n, failureMap)` so the UI/subgraph can mark per-recipient failures.
-- `lastPayoutPeriod` is updated **before** the event, locking the month even if some recipients failed. A failed recipient still has to wait until next month for another attempt (vs. immediate retry).
+- Each call to the crank builds an `Action[]` of length `count` = active recipients **in this batch/page**.
+- `allowFailureMap = (1 << count) - 1` — every bit is set, so any single transfer may fail without aborting the others.
+- The DAO returns a `failureMap` bitmap; bit `i` set means action `i` reverted. The plugin emits `PayrollExecuted(period, count, failureMap)` per batch — the bitmap is **page-local** (bit `i` = the `i`-th recipient of that page, not of the period).
+- The cursor / `lastPayoutPeriod` are updated **before** the external `execute` (effects-before-interactions), so a recipient that reenters cannot re-pay the same page. A failed recipient waits until next month for another attempt (vs. immediate retry).
 
 ## 5. Soft-delete preservation
 
@@ -58,7 +70,8 @@ Per-plugin spec for the Cyberdyne DAO PayrollPlugin (TRD §6.3, ROADMAP P2).
 | `RecipientRemoved(payee)` | `removeRecipient` | `payee` |
 | `RecipientAmountUpdated(payee, old, new)` | `setAmount` | `payee` |
 | `PayDayUpdated(old, new)` | `setPayDayOfMonth` | — |
-| `PayrollExecuted(period, count, failureMap)` | `executePayroll` | `period` |
+| `PayrollExecuted(period, count, failureMap)` | `executePayroll` / `executePayrollPage` (once per batch/page) | `period` |
+| `PayrollPeriodCompleted(period)` | final page of a period (period locks) | `period` |
 
 ## 8. Storage layout (UUPS upgrade safety)
 
@@ -69,10 +82,12 @@ slot 301: _recipients (Recipient[])
 slot 302: indexOfPayee (mapping)
 slot 303: payDayOfMonth (uint8)
 slot 304: lastPayoutPeriod (uint256)
-slot 305..351: __gap[47]
+slot 305: _cursorPeriod (uint256)   — pagination cursor's period
+slot 306: _payoutCursor (uint256)   — next recipient index to resume from
+slot 307..351: __gap[45]
 ```
 
-Upgrades may consume slots from `__gap` (decreasing the gap size) but must **never** reorder or shrink anything in slots 301..304. The `forge inspect` snapshot is committed under `docs/storage-layouts/` per release tag so audit can diff layouts across versions.
+The two cursor words were appended in slots 305/306 (consuming two slots from the former `__gap[47]`, now `__gap[45]`) — append-only, so slots 301..304 are untouched. Upgrades may consume further slots from `__gap` (decreasing the gap size) but must **never** reorder or shrink anything in slots 301..306. The `forge inspect` snapshot is committed under `docs/storage-layouts/` per release tag so audit can diff layouts across versions.
 
 ## 9. Slither audit notes (waivers)
 
@@ -80,10 +95,10 @@ Upgrades may consume slots from `__gap` (decreasing the gap size) but must **nev
 
 | Finding | Location | Disposition |
 |---|---|---|
-| `uninitialized-local` on `j` | executePayroll, allActiveRecipients | False positive. `uint256 j` defaults to 0 in Solidity; this is the idiomatic pattern for a write cursor into a freshly-allocated memory array. |
-| `unused-return` on `IExecutor.execute` first return | executePayroll | Intentional. We only need `failureMap` to emit the event; the per-action `execResults bytes[]` is irrelevant to payroll semantics. |
-| `reentrancy-events` (event after external call) | executePayroll | Accepted in our trust model. The only external call is to our own DAO; `lastPayoutPeriod = currentPeriod` is set BEFORE the emit, so re-entry through any recipient cannot double-pay (the next `executePayroll` would revert `AlreadyPaidThisPeriod`). |
-| `timestamp` (block.timestamp comparison) | executePayroll | Design intent. Monthly payroll is by definition timestamp-driven. Miner timestamp jitter (±15s) cannot reorder calendar months at our granularity. |
+| `uninitialized-local` on `count` / `j` | _runPayroll, allActiveRecipients | False positive. The counters default to 0 in Solidity; this is the idiomatic pattern for a write cursor into a freshly-allocated memory array. |
+| `unused-return` on `IExecutor.execute` first return | _runPayroll | Intentional. We only need `failureMap` to emit the event; the per-action `execResults bytes[]` is irrelevant to payroll semantics. |
+| `reentrancy-events` (event after external call) | _runPayroll | Accepted in our trust model. The only external call is to our own DAO; the cursor / `lastPayoutPeriod` are advanced BEFORE the `execute` (effects-before-interactions), so re-entry through any recipient cannot re-pay a page (a reentrant crank reads the already-advanced cursor / would revert `AlreadyPaidThisPeriod`). |
+| `timestamp` (block.timestamp comparison) | _runPayroll | Design intent. Monthly payroll is by definition timestamp-driven. Miner timestamp jitter (±15s) cannot reorder calendar months at our granularity. |
 | `naming-convention` on `_dao` / `_payDayOfMonth` / `__gap` | various | Intentional. Matches OSx's project-wide convention of leading-underscore for function parameters and double-underscore for inherited gaps (per OpenZeppelin's upgradeable storage_gaps guide). `MAX_RECIPIENTS` is uppercase per Solidity style. |
 | `unused-state` on `__gap` | PayrollPlugin | Intentional. Reserves slots for future upgrades without breaking the storage layout (OZ upgrade-safety pattern). |
 
@@ -91,6 +106,6 @@ CI gate: `slither --fail-high`. None of the above are high-severity; this list u
 
 ## 10. Tests
 
-- Unit: `test/plugins/payroll/PayrollPlugin.unit.test.ts` — 26 cases. ≥90% coverage on `src/plugins/payroll/**` (currently 100% lines, 96% branches).
+- Unit: `test/plugins/payroll/PayrollPlugin.unit.test.ts` — 35 cases (incl. the `executePayrollPage` pagination suite). ≥90% coverage on `src/plugins/payroll/**`.
 - Fork: `test/plugins/payroll/PayrollPlugin.fork.test.ts` — runs on `mainnetFork` and `baseFork` when `RPC_MAINNET` / `RPC_BASE` are set. Gated via `onlyOn(...)`; silently skipped on other networks.
 - Permission matrix: `test/plugins/PluginSetup.unit.test.ts` — asserts `prepareInstallation` returns the TRD §9 set verbatim.

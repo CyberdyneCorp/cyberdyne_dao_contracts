@@ -21,9 +21,15 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
     bytes32 public constant MANAGE_PAYROLL_PERMISSION_ID = keccak256("MANAGE_PAYROLL_PERMISSION");
 
     /// @inheritdoc IPayrollPlugin
-    /// @dev OSx DAO.execute caps at 256 actions; we cap at 100 to leave headroom
-    ///      for gas (TRD §11). Larger payrolls need the paginated crank (v1.1).
-    uint256 public constant override MAX_RECIPIENTS = 100;
+    /// @dev Total slot cap (active + soft-deleted). Bounds the storage scan a
+    ///      paginated crank performs to find the next active recipient (TRD §11).
+    uint256 public constant override MAX_RECIPIENTS = 300;
+
+    /// @inheritdoc IPayrollPlugin
+    /// @dev OSx DAO.execute caps at 256 actions and `allowFailureMap` is a
+    ///      256-bit bitmap; 100 leaves gas headroom. A payroll larger than this
+    ///      is paid across multiple `executePayrollPage` calls.
+    uint256 public constant override MAX_RECIPIENTS_PER_PAGE = 100;
 
     Recipient[] private _recipients;
     /// @dev 1-based index into `_recipients`; 0 = absent. Lets us treat 0 as a
@@ -33,7 +39,15 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
     uint8 public override payDayOfMonth;
     uint256 public override lastPayoutPeriod;
 
-    uint256[47] private __gap;
+    /// @dev Period the pagination cursor belongs to. Distinguishes "resume the
+    ///      in-progress period" from "start a fresh period" (cursor resets when
+    ///      `_cursorPeriod != currentPeriod`).
+    uint256 private _cursorPeriod;
+    /// @dev Next `_recipients` index a paginated crank resumes from for
+    ///      `_cursorPeriod`. 0 = start from the top.
+    uint256 private _payoutCursor;
+
+    uint256[45] private __gap;
 
     /// @notice Initialize the plugin. Called once via the UUPS proxy constructor.
     function initialize(IDAO _dao, uint8 _payDayOfMonth) external initializer {
@@ -107,7 +121,33 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
     // --- Permissionless monthly crank -------------------------------------
 
     /// @inheritdoc IPayrollPlugin
+    /// @dev Single-batch crank: pays every remaining active recipient for the
+    ///      current period in one `DAO.execute`. Reverts
+    ///      `PayrollExceedsSinglePage` when that set won't fit one page — large
+    ///      payrolls must use `executePayrollPage`. For payrolls of
+    ///      `<= MAX_RECIPIENTS_PER_PAGE` this is identical to v1.
     function executePayroll() external override {
+        _runPayroll(MAX_RECIPIENTS_PER_PAGE, true);
+    }
+
+    /// @inheritdoc IPayrollPlugin
+    /// @dev Paginated crank. `maxCount == 0` reverts; values above
+    ///      `MAX_RECIPIENTS_PER_PAGE` are clamped down. Repeated calls walk the
+    ///      `_recipients` array via `_payoutCursor` until the period completes.
+    function executePayrollPage(uint256 maxCount) external override {
+        if (maxCount == 0) revert PageSizeZero();
+        if (maxCount > MAX_RECIPIENTS_PER_PAGE) maxCount = MAX_RECIPIENTS_PER_PAGE;
+        _runPayroll(maxCount, false);
+    }
+
+    /// @dev Shared crank body. Pays up to `maxCount` active recipients starting
+    ///      from the period cursor.
+    ///      - `requireSinglePass`: if true (the `executePayroll` entrypoint) and
+    ///        the page does not reach the end of the recipient set, revert
+    ///        `PayrollExceedsSinglePage` instead of half-paying the period.
+    ///      Effects (cursor / `lastPayoutPeriod`) are written BEFORE the external
+    ///      `execute`, so a recipient that reenters cannot re-pay the same page.
+    function _runPayroll(uint256 maxCount, bool requireSinglePass) private {
         (uint256 year, uint256 month, uint256 day) = DT.timestampToDate(block.timestamp);
         uint256 currentPeriod = year * 12 + month;
 
@@ -118,15 +158,20 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
             revert NotYetDueThisMonth(uint8(day), payDayOfMonth);
         }
 
-        uint256 n = _countActive();
-        if (n == 0) revert NoActiveRecipients();
+        // Resume mid-period, or start fresh if the cursor belongs to an older
+        // period (or has never been set).
+        uint256 start = (_cursorPeriod == currentPeriod) ? _payoutCursor : 0;
+        uint256 len = _recipients.length;
 
-        Action[] memory actions = new Action[](n);
-        uint256 j;
-        for (uint256 i; i < _recipients.length; ++i) {
+        // Collect up to `maxCount` active recipients from `start`. `i` ends at
+        // the slot to resume from next page (or `len` if we reached the end).
+        Action[] memory buffer = new Action[](maxCount);
+        uint256 count;
+        uint256 i = start;
+        for (; i < len && count < maxCount; ++i) {
             Recipient memory r = _recipients[i];
             if (!r.active) continue;
-            actions[j++] = (r.token == address(0))
+            buffer[count++] = (r.token == address(0))
                 ? Action({to: r.payee, value: r.amount, data: ""})
                 : Action({
                     to: r.token,
@@ -134,26 +179,65 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
                     data: abi.encodeCall(IERC20.transfer, (r.payee, r.amount))
                 });
         }
+        bool reachedEnd = (i == len);
 
-        // Set every bit so any single transfer can fail without aborting the run.
-        // `n <= MAX_RECIPIENTS = 100`, so the shift never overflows uint256.
-        uint256 allowFailureMap = (uint256(1) << n) - 1;
+        if (count == 0) {
+            // Nothing to pay from `start`. If we never advanced, the payroll is
+            // empty; otherwise the tail is all soft-deleted and the period is
+            // already fully paid by earlier pages — complete it.
+            if (start == 0) revert NoActiveRecipients();
+            _cursorPeriod = currentPeriod;
+            _payoutCursor = 0;
+            lastPayoutPeriod = currentPeriod;
+            emit PayrollPeriodCompleted(currentPeriod);
+            return;
+        }
+
+        // `executePayroll` must finish the period in this one batch.
+        if (requireSinglePass && !reachedEnd) {
+            revert PayrollExceedsSinglePage(maxCount);
+        }
+
+        Action[] memory actions = new Action[](count);
+        for (uint256 k; k < count; ++k) {
+            actions[k] = buffer[k];
+        }
+
+        // Every bit set so any single transfer can fail without aborting the
+        // batch. `count <= MAX_RECIPIENTS_PER_PAGE = 100`, so the shift is safe.
+        uint256 allowFailureMap = (uint256(1) << count) - 1;
+
+        // EFFECTS before INTERACTIONS: advance the cursor / lock the period now
+        // so a reentrant crank cannot re-pay this page.
+        _cursorPeriod = currentPeriod;
+        if (reachedEnd) {
+            _payoutCursor = 0;
+            lastPayoutPeriod = currentPeriod;
+        } else {
+            _payoutCursor = i;
+        }
 
         (, uint256 failureMap) = IExecutor(address(dao())).execute(
-            keccak256(abi.encodePacked("PAYROLL:", currentPeriod)),
+            keccak256(abi.encodePacked("PAYROLL:", currentPeriod, ":", start)),
             actions,
             allowFailureMap
         );
 
-        // Lock the period BEFORE emitting so reentry through a recipient cannot
-        // re-enter executePayroll for the same period (defense in depth — the DAO
-        // is the executor here, and the crank reads `lastPayoutPeriod` first).
-        lastPayoutPeriod = currentPeriod;
-
-        emit PayrollExecuted(currentPeriod, n, failureMap);
+        emit PayrollExecuted(currentPeriod, count, failureMap);
+        if (reachedEnd) emit PayrollPeriodCompleted(currentPeriod);
     }
 
     // --- Views ------------------------------------------------------------
+
+    /// @inheritdoc IPayrollPlugin
+    function cursorPeriod() external view override returns (uint256) {
+        return _cursorPeriod;
+    }
+
+    /// @inheritdoc IPayrollPlugin
+    function payoutCursor() external view override returns (uint256) {
+        return _payoutCursor;
+    }
 
     /// @inheritdoc IPayrollPlugin
     function recipientCount() external view override returns (uint256) {

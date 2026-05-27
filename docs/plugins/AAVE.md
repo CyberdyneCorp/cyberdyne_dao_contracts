@@ -61,6 +61,96 @@ the new one back; or (b) waits for the v1.1 "withdraw via specific
 adapter" addition (TRD §16 #4). For v1 mainnet — fine: the v3 → v4
 transition is years away and migration cadence is deliberately slow.
 
+## 3a. Concurrent v3 + v4 — multi-adapter registry (v1.1 design)
+
+> **Status: design-only.** AAVE v4 is not live yet, so its Pool ABI and
+> addresses aren't final and the v4 adapter bodies / fork tests can't be
+> written. This section is the plan for letting the DAO hold **v3 and v4
+> positions at the same time**; the routing infrastructure below is
+> implementable and mock-testable today, the live v4 wiring lands when v4
+> ships.
+
+### Why the single-adapter model isn't enough
+
+v1 stores **one** active `adapter`; `setAdapter` swaps it. That supports a
+*migration* (all new ops move to the new version) but not *coexistence* —
+you can't supply to v4 while a v3 position is still open, and you can't
+`withdraw`/`repay` a v3 position once the adapter points at v4 (§3, §11).
+Supporting both versions concurrently means routing each call to a chosen
+adapter rather than a single global pointer.
+
+### Design: an adapter registry + per-call selection
+
+Replace the single `adapter` pointer with a small registry inside the
+plugin (the `IAaveAdapter` interface itself is **unchanged** — it stays the
+stateless calldata-builder, so `AaveV3Adapter` / `AaveV4Adapter` need no
+edits):
+
+```
+mapping(uint256 => IAaveAdapter) public adapterOf;   // adapterId → adapter
+uint256[] public adapterIds;                          // enumerable set
+uint256 public defaultAdapterId;                      // used by no-id overloads
+```
+
+`adapterId` is a stable, explicit key (e.g. `uint256(keccak256("AAVE_V3"))`,
+`…("AAVE_V4")`) so the subgraph can attribute every position to a protocol
+version permanently.
+
+**Vote-gated admin** (all under `UPDATE_ADAPTER_PERMISSION`):
+
+| Function | Effect |
+|---|---|
+| `registerAdapter(uint256 id, IAaveAdapter a)` | Add an adapter to the set. |
+| `deregisterAdapter(uint256 id)` | Remove it. Blocks *new* ops only; existing positions live on AAVE and stay readable/withdrawable by re-registering. |
+| `setDefaultAdapter(uint256 id)` | Pick the adapter the back-compat overloads use. |
+
+**Lending ops gain an adapter-selecting overload**, with the existing
+signatures kept as thin wrappers over the default — so the current API,
+tests, and frontend keep working unchanged:
+
+```
+function supply(uint256 adapterId, address asset, uint256 amount) external;
+function supply(address asset, uint256 amount) external;   // → defaultAdapterId
+// …same for withdraw / borrow / repay
+```
+
+This directly closes the two §11 limitations: `withdraw(v3Id, …)` winds
+down a v3 position while `supply(v4Id, …)` opens a v4 one — both live at
+once. The old migration-only `setAdapter` becomes sugar for
+`registerAdapter + setDefaultAdapter`.
+
+### What changes (and what doesn't)
+
+- **Unchanged:** `IAaveAdapter`, both concrete adapters, the calldata-builder
+  custody model (DAO still calls the Pool directly; plugin holds nothing),
+  and the asset allowlist (asset addresses are identical across versions, so
+  one allowlist covers all adapters).
+- **New events:** `AdapterRegistered(id, adapter)`,
+  `AdapterDeregistered(id)`, `DefaultAdapterUpdated(oldId, newId)`. The
+  per-op events (`Supplied`/`Withdrawn`/`Borrowed`/`Repaid`) gain an
+  `adapterId` (or indexed adapter address) so the indexer can split balances
+  by version — **a subgraph schema change** to land with the refactor.
+- **Storage / UUPS:** add the registry slots from `__gap` and, in the
+  upgrade reinitializer, register the existing v3 adapter as `defaultAdapterId`
+  so live positions carry over. Re-review the §8 storage-layout diff before
+  shipping.
+
+### Reads
+
+Per-version position state stays on AAVE itself (the authoritative path):
+`aToken.balanceOf(dao)` / variable-debt `balanceOf(dao)` /
+`Pool.getUserAccountData(dao)` per registered pool. The `/lending` frontend
+view iterates `adapterIds` and reads each pool.
+
+### Sequencing + risk
+
+Land the registry refactor in v1.1 (mock-tested with two `MockAavePool`s),
+keep `AaveV4Adapter` a stub, then fill its bodies + fork-test when v4 is
+live. **Risk (TRD §16 #1):** if v4's call shape diverges materially (the
+announced GHO-native liquidity layer), `IAaveAdapter` may need a v2; the
+registry still holds, but adapters of different interface versions would
+need an interface-version tag.
+
 ## 4. Allowance lifecycle
 
 Each `supply` and `repay` builds a 2-action batch:
@@ -179,9 +269,11 @@ list updates if the implementation changes.
 
 ## 11. Known limitations + future work
 
-- **Adapter swap loses the `withdraw` path to legacy positions** — see
-  §3. v1.1 candidate: `withdrawVia(adapter, asset, amount)` with the
-  adapter passed explicitly.
+- **Single active adapter — no concurrent v3 + v4, and adapter swap loses
+  the `withdraw` path to legacy positions** (§3). v1.1 design: the
+  multi-adapter registry in **§3a**, which adds per-call adapter selection
+  (`supply(adapterId, …)` etc.) and lets the DAO operate both protocol
+  versions at once.
 - **No on-chain health-factor guardrail on `borrow`** — see §5. v1.1
   candidate: `BorrowHealthCondition`.
 - **`interestRateMode` is passed through unchecked.** AAVE v3 has

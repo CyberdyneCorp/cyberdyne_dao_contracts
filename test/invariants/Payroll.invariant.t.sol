@@ -40,7 +40,9 @@ contract PayrollHandler is Test {
         amount = bound(amount, 1, 1e24);
         // Synthesize a payee. The +1 dodges the zero address; the +block.number
         // adds entropy across runs.
-        address payee = address(uint160(uint256(keccak256(abi.encode(seed, payees.length, block.number))) | 1));
+        address payee = address(
+            uint160(uint256(keccak256(abi.encode(seed, payees.length, block.number))) | 1)
+        );
         if (payee == address(0)) return;
         try plugin.addRecipient(payee, address(token), amount) {
             payees.push(payee);
@@ -88,6 +90,19 @@ contract PayrollHandler is Test {
         }
     }
 
+    /// @dev Exercise the paginated crank under fuzz alongside the single-pass
+    ///      one — random page sizes walk the cursor across multiple calls.
+    function executePayrollPage(uint256 jump, uint256 maxCount) external syncGhost {
+        jump = bound(jump, 1 hours, 100 days);
+        maxCount = bound(maxCount, 1, plugin.MAX_RECIPIENTS_PER_PAGE());
+        vm.warp(block.timestamp + jump);
+        try plugin.executePayrollPage(maxCount) {
+            ghostSuccessfulCranks++;
+        } catch {
+            ghostFailedCranks++;
+        }
+    }
+
     function payeesCount() external view returns (uint256) {
         return payees.length;
     }
@@ -107,7 +122,10 @@ contract PayrollInvariantTest is StdInvariant, Test {
         token = new TestERC20("Invariant", "INV", 18);
 
         PayrollPlugin impl = new PayrollPlugin();
-        bytes memory initData = abi.encodeCall(PayrollPlugin.initialize, (IDAO(address(dao)), uint8(15)));
+        bytes memory initData = abi.encodeCall(
+            PayrollPlugin.initialize,
+            (IDAO(address(dao)), uint8(15))
+        );
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         plugin = PayrollPlugin(address(proxy));
 
@@ -144,13 +162,24 @@ contract PayrollInvariantTest is StdInvariant, Test {
     ///         The ghost variable mirrors the handler's view; we assert the
     ///         contract state never falls below it.
     function invariant_lastPayoutPeriodMonotonic() public {
-        assertGe(plugin.lastPayoutPeriod(), handler.ghostLastPeriod(), "lastPayoutPeriod regressed");
+        assertGe(
+            plugin.lastPayoutPeriod(),
+            handler.ghostLastPeriod(),
+            "lastPayoutPeriod regressed"
+        );
     }
 
-    /// @notice `recipientCount` never exceeds the cap. The cap (100) is the
-    ///         design ceiling; exceeding it would risk gas-OOF in
-    ///         `executePayroll`.
+    /// @notice `recipientCount` never exceeds the cap. The cap is the design
+    ///         ceiling that bounds the storage scan a paginated crank performs.
     function invariant_recipientCountBounded() public {
         assertLe(plugin.recipientCount(), plugin.MAX_RECIPIENTS(), "recipient cap breached");
+    }
+
+    /// @notice The pagination cursor never points past the recipient set. It is
+    ///         only ever set to a mid-scan index (`< length`) or reset to 0 when
+    ///         a period completes; `_recipients` never shrinks. A cursor beyond
+    ///         the end would skip recipients or read out of bounds.
+    function invariant_payoutCursorWithinBounds() public {
+        assertLe(plugin.payoutCursor(), plugin.recipientCount(), "payout cursor past end");
     }
 }

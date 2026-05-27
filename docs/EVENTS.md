@@ -50,7 +50,10 @@ Signatures freeze at **P1**. Any change after P5 (bootstrap) is breaking for the
 | `RecipientRemoved` | `(address payee)` | `payee` | `PayrollRecipient` (active=false) | Payroll schedule screen |
 | `RecipientAmountUpdated` | `(address payee, uint256 oldAmount, uint256 newAmount)` | `payee` | `PayrollRecipient` (amount updated) + `RecipientAmountChange` history | Payroll schedule screen + per-recipient history drawer |
 | `PayDayUpdated` | `(uint8 oldDay, uint8 newDay)` | — | `PayrollConfig` (mutable singleton) | Payroll schedule screen — next-payout countdown |
-| `PayrollExecuted` | `(uint256 period, uint256 recipientCount, uint256 failureMap)` | `period` | `PayrollPayout` + N×`PayrollPayoutItem` (one per recipient, with `failed` flag derived from `failureMap`) | Payroll schedule screen → per-month execution log |
+| `PayrollExecuted` | `(uint256 period, uint256 recipientCount, uint256 failureMap)` | `period` | `PayrollPayout` (per batch) + N×`PayrollPayoutItem` (one per recipient, `failed` derived from `failureMap`) | Payroll schedule screen → per-month execution log |
+| `PayrollPeriodCompleted` | `(uint256 period)` | `period` | marks the `period`'s payout as complete (final page) | Payroll execution log — "period closed" marker |
+
+> **Pagination note:** a large payroll fires `PayrollExecuted` **once per page** (not once per period); `recipientCount` and `failureMap` are page-local — bit `i` of `failureMap` is the `i`-th recipient *of that page*. Aggregate batches by `period`, and treat `PayrollPeriodCompleted(period)` as the "period fully paid" signal. A payroll that fits one page fires a single `PayrollExecuted` followed by `PayrollPeriodCompleted`, identical to the v1 single-batch shape plus the completion marker.
 
 **Read-side joins:** `PayrollPlugin.allActiveRecipients()` is the canonical single-RPC fetch for the schedule screen (TRD §3a calls this out — view sized for one round-trip per UI screen).
 
@@ -71,6 +74,6 @@ These are emitted by OSx core, not our plugins, but every screen depends on them
 
 ## Open items (lock before P5)
 
-- [ ] **Call-id scheme** for `IExecutor.Executed`: pluggable per plugin. Uniswap uses `keccak256("UNI_V4_SWAP:" || hint)`, Payroll uses `keccak256("PAYROLL:" || period)`. Confirm final canonical hashes with the UI team before P5 freezes them in event traces.
+- [ ] **Call-id scheme** for `IExecutor.Executed`: pluggable per plugin. Uniswap uses `keccak256("UNI_V4_SWAP:" || hint)`, Payroll uses `keccak256("PAYROLL:" || period || ":" || pageStart)` (the page-start index keeps each page's call-id distinct within a period). Confirm final canonical hashes with the UI team before P5 freezes them in event traces.
 - [ ] **Subgraph schema review** with UI team — every entity name + field name in the "Subgraph entity" column above is provisional until reviewed against P7 mocks.
 - [ ] **Health-factor read pattern** — confirm whether we surface health factor only on Borrow events or on every refresh; affects subgraph denormalization vs. UI RPC load.
