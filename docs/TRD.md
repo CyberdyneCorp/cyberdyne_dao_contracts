@@ -15,10 +15,12 @@
 Deploy a single new DAO on Ethereum mainnet, governed by token-weighted voting, that can:
 
 1. Trade ERC20s on **Uniswap V4** via DAO-approved proposals.
-2. Supply, withdraw, borrow, and repay on **AAVE** (v3 today, v4-ready via adapter) via DAO-approved proposals.
-3. Pay a fixed list of payroll recipients **automatically on a fixed day each month**, where only adding/removing recipients (or changing amounts) requires a vote — the monthly execution itself is permissionless.
+2. **Provide and manage liquidity on both Uniswap V3 and V4** (mint / increase / decrease / collect / burn), with position NFTs owned by the DAO.
+3. Supply, withdraw, borrow, and repay on **AAVE** (v3 today, v4-ready via adapter) via DAO-approved proposals.
+4. Pay a fixed list of payroll recipients **automatically on a fixed day each month**, where only adding/removing recipients (or changing amounts) requires a vote — the monthly execution itself is permissionless.
+5. Track the DAO's recurring operating costs (AI tokens, cloud bills, services) on-chain and disburse them in USDC via a permissionless crank.
 
-The design **reuses Aragon OSx as much as possible**. We do not fork OSx, we do not reimplement the DAO, the permission manager, the factory, the plugin lifecycle, or the voting plugin. We only write three new plugins (Uniswap V4, AAVE, Payroll) and deploy them on top of the existing OSx infrastructure.
+The design **reuses Aragon OSx as much as possible**. We do not fork OSx, we do not reimplement the DAO, the permission manager, the factory, the plugin lifecycle, or the voting plugin. We write **five** new plugins (UniswapV4Plugin — swaps + V4 LP, UniswapV3Plugin, AaveLendingPlugin, PayrollPlugin, CostRegistryPlugin) and deploy them on top of the existing OSx infrastructure.
 
 ## 2. Goals & non-goals
 
@@ -26,16 +28,16 @@ The design **reuses Aragon OSx as much as possible**. We do not fork OSx, we do 
 - Maximum reuse of audited OSx contracts.
 - Treasury custody stays in the DAO contract; plugins are pure execution gates.
 - Every privileged action is gated by the same governance path (TokenVoting → DAO.execute → Plugin).
-- Single transaction to bootstrap the entire DAO with all four plugins installed.
+- Single transaction to bootstrap the entire DAO with all five Cyberdyne plugins installed (+ TokenVoting when configured).
 - Each new plugin is independently versioned via its own `PluginRepo` so it can be upgraded or replaced.
 - All tests run under **Hardhat** with **fork-mode** against Ethereum, Base, and other Aragon-supported networks, so we exercise the real deployed OSx + Uniswap + AAVE bytecode rather than mocks.
+- **Fund-moving plugin ops are reachable via TokenVoting proposals** through the `preview…Actions` multi-action pattern — see §9a — so the same on-chain action sequence can be invoked by an admin direct-call or by a passed vote.
 
 **Non-goals**
 - Building a new DAO framework or forking OSx.
 - Building cross-chain support (Ethereum mainnet only for v1).
 - Reimplementing TokenVoting, governance token, multisig, or proposal lifecycle.
 - Yield strategies / vault automation beyond a manual AAVE supply/borrow.
-- Liquidity provision on Uniswap V4 (only swaps in v1; LP can be a later plugin).
 - **Using the Aragon App / Aragon's hosted frontend.** This DAO will be operated through our **own custom UI** (separate codebase, tracked in a sibling repo). The Aragon App is explicitly *not* a deployment target — our plugins do not need to publish Aragon-App-compatible metadata schemas, and we do not depend on Aragon's hosted services for governance UX, proposal authoring, or treasury views. See §3a.
 
 ## 3. Aragon OSx version policy
@@ -187,7 +189,7 @@ Maintained through roadmap P11 (mainnet deployment). After production-UI rollout
 | DAO deployment | `src/framework/dao/DAOFactory.sol` | One-shot DAO + plugin install in a single call. Already deployed on mainnet. |
 | Plugin lifecycle | `src/framework/plugin/setup/PluginSetupProcessor.sol` | Handles prepare/apply for install, update, uninstall. |
 | Plugin distribution | `src/framework/plugin/repo/PluginRepo*.sol` | Semantic-versioned plugin registry. Each new plugin gets its own repo. |
-| Plugin base classes | `src/common/plugin/Plugin.sol`, `PluginUUPSUpgradeable.sol`, `PluginCloneable.sol` | All three plugins inherit from these — no need to reimplement `DaoAuthorizable` or `auth()` modifier. |
+| Plugin base classes | `src/common/plugin/Plugin.sol`, `PluginUUPSUpgradeable.sol`, `PluginCloneable.sol` | All five plugins inherit from these — no need to reimplement `DaoAuthorizable` or `auth()` modifier. |
 | Action / execution model | `src/common/executors/IExecutor.sol` (Action struct) | Our plugins build `Action[]` and call `dao.execute(...)`. |
 | Voting | External repo `aragon/token-voting-plugin` (already on mainnet PluginRepo) | We install the existing TokenVoting plugin v1.x. We do **not** fork it. |
 | Governance token | `GovernanceERC20` in the token-voting-plugin repo | TokenVoting's `prepareInstallation` deploys one for us. |
@@ -495,7 +497,7 @@ plugins[3] = DAOFactory.PluginSettings({
     DAOFactory.createDao(daoSettings, plugins);
 ```
 
-One transaction creates the DAO, mints the governance token, installs all four plugins, wires all permissions, and emits a registry event.
+One transaction creates the DAO, mints the governance token, installs all five plugins, wires all permissions, and emits a registry event.
 
 ## 9. Permission matrix
 
@@ -653,7 +655,7 @@ All tests in Hardhat + TypeScript under `test/` (root) and structured to mirror 
 | UniswapV4Plugin | `mainnetFork`, `baseFork` | Real DAO with real USDC + WETH balances, real Universal Router, real PoolManager. Assert DAO balance delta = expected output within slippage tolerance. |
 | AaveLendingPlugin | `mainnetFork`, `baseFork` | Real AAVE v3 Pool. Supply USDC → assert aUSDC minted to DAO. Borrow → assert debt token issued to DAO. Withdraw → assert aTokens burned. |
 | PayrollPlugin | `mainnetFork`, `localFork` | DAO holds USDC and ETH. `vm` time-travel to payday across 3 simulated months. One recipient is a reverting contract — assert others get paid, `failureMap` set. |
-| End-to-end DAO bootstrap | `mainnetFork`, `baseFork`, `sepoliaFork` | Full `DAOFactory.createDao` call with all four plugins. Assert DAO permissions match §9 permission matrix. |
+| End-to-end DAO bootstrap | `mainnetFork`, `baseFork`, `sepoliaFork` | Full `DAOFactory.createDao` call with all five plugins. Assert DAO permissions match §9 permission matrix. |
 
 **Time travel for payroll tests:**
 ```ts
@@ -724,7 +726,7 @@ test/                              ← Hardhat + TypeScript tests
       PayrollPlugin.unit.test.ts
       PayrollPlugin.fork.test.ts          (time-travel scenarios)
   e2e/
-    CustomDaoBootstrap.fork.test.ts       (full DAOFactory + 4 plugins, multi-chain)
+    CustomDaoBootstrap.fork.test.ts       (full DAOFactory + 5 plugins, multi-chain)
 
 hardhat.config.ts                  ← network + forking config (see §12)
 tsconfig.json
@@ -734,7 +736,7 @@ scripts/                           ← Foundry deploy scripts (unchanged convent
   DeployUniswapV4Plugin.s.sol      (deploys impl + setup + repo)
   DeployAavePlugin.s.sol
   DeployPayrollPlugin.s.sol
-  DeployCustomDao.s.sol            (uses DAOFactory + 4 plugins)
+  DeployCustomDao.s.sol            (uses DAOFactory + 5 plugins)
 ```
 
 The Hardhat test tree is rooted at top-level `test/` rather than `packages/contracts/test/` so it's clearly *our* project's test suite, separate from OSx's legacy Hardhat tests (which stay in `packages/contracts/test/` as a reference).
@@ -749,14 +751,14 @@ The Hardhat test tree is rooted at top-level `test/` rather than `packages/contr
 - Decide initial payroll recipients (or leave empty and add by vote).
 - Burner deployer wallet funded with ~0.5 ETH (well above estimate per `DEPLOYMENT.md`).
 
-**Phase 1 — plugin publication (one tx each, three plugins)**
+**Phase 1 — plugin publication (one tx each, five plugins)**
 1. Deploy `UniswapV4Plugin` implementation.
 2. Deploy `UniswapV4PluginSetup` pointing to that implementation.
 3. Call `PluginRepoFactory.createPluginRepoWithFirstVersion(...)` → emits `UniswapV4PluginRepo` address.
 4. Repeat for `AaveLendingPlugin` and `PayrollPlugin`.
 
 **Phase 2 — DAO bootstrap (one tx)**
-- Run `scripts/DeployCustomDao.s.sol` against the four plugin repos. This calls `DAOFactory.createDao(...)` and creates the DAO with all four plugins installed atomically.
+- Run `scripts/DeployCustomDao.s.sol` against the five plugin repos. This calls `DAOFactory.createDao(...)` and creates the DAO with all five plugins installed atomically.
 
 **Phase 3 — verification**
 - Verify all contracts on Etherscan (automatic via just-foundry).

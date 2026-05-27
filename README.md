@@ -1,19 +1,21 @@
 # Cyberdyne DAO — Contracts
 
-On-chain governance for the Cyberdyne DAO, built on top of the audited [Aragon OSx](https://github.com/aragon/osx) protocol with custom plugins for Uniswap V4 trading, AAVE lending, and automated monthly payroll.
+On-chain governance for the Cyberdyne DAO, built on top of the audited [Aragon OSx](https://github.com/aragon/osx) protocol with custom plugins for Uniswap V4 swaps + LP, Uniswap V3 LP, AAVE lending, automated monthly payroll, and a recurring operating-costs registry.
 
-> **Status:** Documentation / planning phase. Contracts not yet implemented. See [`docs/TRD.md`](docs/TRD.md) for the full Technical Requirements Document.
+> **Status:** Contracts implemented and live-fork verified (5 plugins + governance loop). See [`docs/TRD.md`](docs/TRD.md) for the Technical Requirements Document.
 
 ---
 
 ## TL;DR
 
 - We **do not fork** Aragon OSx. We deploy a single DAO on top of the audited OSx v1.4.0 core (Halborn-audited) and install our own plugins.
-- We build **three plugins**: `UniswapV4Plugin`, `AaveLendingPlugin`, `PayrollPlugin`.
-- Token-weighted voting gates every privileged action (swaps, lending, payroll changes). The DAO itself holds all funds — plugins never custody.
-- Payroll executes **automatically** on a fixed day of the month via a permissionless crank. Adding or removing payroll recipients requires a vote.
+- We build **five plugins**: `UniswapV4Plugin` (swaps + V4 LP), `UniswapV3Plugin` (V3 LP), `AaveLendingPlugin`, `PayrollPlugin`, `CostRegistryPlugin`.
+- Token-weighted voting gates every privileged action (swaps, LP, lending, payroll changes, recurring costs). The DAO itself holds all funds and all LP NFTs — plugins never custody.
+- **Payroll** executes **automatically** on a fixed day of the month via a permissionless crank. Adding or removing payroll recipients requires a vote.
+- **Cost registry** disburses USDC for due entries via a permissionless `processDue` crank.
+- Fund-moving plugin ops are governance-executable through the **`preview…Actions` multi-action pattern** — a TokenVoting proposal carries the exact `Action[]` the wrapper would submit, sidestepping the nested-`dao.execute` reentrancy guard. See [TRD §9a](docs/TRD.md#9a-governance-path-action-builders-previewactions).
 - Tooling: **Foundry** for build/deploy, **Hardhat + TypeScript** for tests with mainnet/Base fork mode.
-- UX layer: **our own custom UI** (separate repo). The Aragon App is explicitly not a deployment target.
+- UX layer: **our own custom UI** (separate repo, with a toy SvelteKit frontend in this repo covering every read + write path). The Aragon App is explicitly not a deployment target.
 
 ---
 
@@ -84,9 +86,13 @@ Building a DAO from scratch means rebuilding (and re-auditing) treasury custody,
 | Plugin install / update / uninstall             | `PluginSetupProcessor` + `PluginRepo`           | —                                     |
 | Versioned plugin distribution                   | `PluginRepoFactory`                             | —                                     |
 | Action execution model                          | `Action{to, value, data}` + `execute(Action[])` | —                                     |
-| Uniswap V4 swap gating                          | —                                               | `UniswapV4Plugin`                     |
+| Uniswap V4 swap gating                          | —                                               | `UniswapV4Plugin` (swap path)         |
+| Uniswap V4 LP lifecycle                         | —                                               | `UniswapV4Plugin` (LP path — mint/increase/decrease/burn via v4-periphery PositionManager) |
+| Uniswap V3 LP lifecycle                         | —                                               | `UniswapV3Plugin` (mint/increase/decrease/collect/burn via NonfungiblePositionManager) |
 | AAVE lending gating                             | —                                               | `AaveLendingPlugin` + version adapter |
 | Monthly payroll automation                      | —                                               | `PayrollPlugin`                       |
+| Recurring operating-cost registry + payout      | —                                               | `CostRegistryPlugin`                  |
+| Governance-safe action batches (avoids nested `dao.execute` reentrancy under TokenVoting) | — | `preview…Actions` view helpers on each fund-moving plugin — see [TRD §9a](docs/TRD.md#9a-governance-path-action-builders-previewactions) |
 
 **Version pinning:** OSx v1.4.0 audited core (`ProtocolVersion == [1, 4, 0]`). Working tree may be tag v1.5.0 because its core is byte-identical to 1.4.0. No forks, no patches, no custom flavors. See [TRD §3](docs/TRD.md#3-aragon-osx-version-policy).
 
@@ -204,7 +210,7 @@ flowchart LR
     style B fill:#fff3cd,stroke:#856404
 ```
 
-Every line of new code in this repo lives in B (yellow). The green side is consumed as-is. Audit scope therefore = ~3 plugins + their setup contracts + the bootstrap script. Nothing more.
+Every line of new code in this repo lives in B (yellow). The green side is consumed as-is. Audit scope therefore = ~5 plugins + their setup contracts + the bootstrap script. Nothing more.
 
 ---
 
@@ -242,7 +248,7 @@ graph LR
 
 ## Bootstrap flow
 
-The entire DAO + 4 plugins comes up in a **single transaction**:
+The entire DAO + 5 plugins comes up in a **single transaction**:
 
 ```mermaid
 sequenceDiagram

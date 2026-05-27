@@ -237,7 +237,7 @@ Implement first because it has the cleanest internal state and exercises the ful
 
 **Duration estimate:** 3–4 days. **Depends on:** P2 + P3 + P4.
 
-The first time all four plugins exist in the same DAO.
+The first time all five plugins exist in the same DAO.
 
 **Deliverables**
 - `scripts/DeployUniswapV4Plugin.s.sol`, `DeployAavePlugin.s.sol`, `DeployPayrollPlugin.s.sol` — each deploys impl + setup + creates its `PluginRepo` via `PluginRepoFactory.createPluginRepoWithFirstVersion`.
@@ -536,7 +536,7 @@ await payroll.connect(keeper).executePayroll();
 
 The project is "done at v1.0" when:
 
-- [ ] All three plugins (Payroll, Uniswap V4, AAVE) deployed and verified on Ethereum mainnet AND Base mainnet.
+- [ ] All five plugins (Payroll, UniswapV4 — swaps+LP, UniswapV3, AAVE, CostRegistry) deployed and verified on Ethereum mainnet AND Base mainnet.
 - [ ] One DAO instance live with non-trivial treasury and active token holders.
 - [ ] Audit report public; remediation PRs merged.
 - [ ] Bug bounty live and unclaimed for ≥ 60 days.
