@@ -282,3 +282,40 @@ export function v3Burn(cfg: ChainConfig, tokenId: ethers.BigNumberish): Proposal
   return action(requireV3(cfg), ifaceFor("UniswapV3Plugin"), "burn", [tokenId],
     `Uniswap V3: burn #${tokenId.toString()}`);
 }
+
+// --- Uniswap V4 LP lifecycle (modifyLiquidities pass-through) --------------
+
+/**
+ * v4 LP op: the proposal builds the v4 action stream (`unlockData`) off-chain
+ * via the Uniswap SDK; the plugin handles Permit2 approvals for input
+ * currencies and enforces a `minOut` slippage check on output currencies.
+ */
+export function v4ModifyLiquidities(
+  cfg: ChainConfig,
+  unlockData: string,
+  deadline: ethers.BigNumberish,
+  inputCurrencies: string[],
+  maxIn: ethers.BigNumber[],
+  outputCurrencies: string[],
+  minOut: ethers.BigNumber[]
+): ProposalAction {
+  if (!cfg.dao) throw new Error(`No DAO configured for chain ${cfg.chainId}`);
+  return action(
+    cfg.dao.uniswap,
+    ifaceFor("UniswapV4Plugin"),
+    "modifyLiquidities",
+    [unlockData, deadline, inputCurrencies, maxIn, outputCurrencies, minOut],
+    `Uniswap V4 LP: modifyLiquidities (${inputCurrencies.length} in, ${outputCurrencies.length} out)`
+  );
+}
+
+export function v4SetPositionManager(cfg: ChainConfig, newPositionManager: string): ProposalAction {
+  if (!cfg.dao) throw new Error(`No DAO configured for chain ${cfg.chainId}`);
+  return action(
+    cfg.dao.uniswap,
+    ifaceFor("UniswapV4Plugin"),
+    "setV4PositionManager",
+    [newPositionManager],
+    `Uniswap V4: set PositionManager → ${newPositionManager}`
+  );
+}

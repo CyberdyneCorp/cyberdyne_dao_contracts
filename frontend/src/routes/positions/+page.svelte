@@ -162,6 +162,56 @@
     }
   }
 
+  // --- V4 LP (modifyLiquidities pass-through) ---
+  // Encode the v4 action stream off-chain (Uniswap SDK) and paste the
+  // resulting `unlockData` bytes here; the plugin handles Permit2 approvals
+  // for input currencies and enforces minOut on outputs.
+  let v4UnlockData = "0x";
+  let v4Deadline = "";
+  let v4InputCurrencies = ""; // comma-sep addrs
+  let v4MaxIn = ""; // comma-sep raw uint256
+  let v4OutputCurrencies = "";
+  let v4MinOut = "";
+  let v4Action: ProposalAction | null = null;
+  function buildV4Modify(): void {
+    v4Action = null;
+    try {
+      const cfg = cfgNow();
+      const inAddrs = v4InputCurrencies
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const outAddrs = v4OutputCurrencies
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const inAmts = v4MaxIn
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .map((s) => ethers.BigNumber.from(s));
+      const outAmts = v4MinOut
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+        .map((s) => ethers.BigNumber.from(s));
+      const deadline = v4Deadline?.trim()
+        ? ethers.BigNumber.from(v4Deadline.trim())
+        : ethers.BigNumber.from(farDeadline());
+      v4Action = actions.v4ModifyLiquidities(
+        cfg,
+        v4UnlockData || "0x",
+        deadline,
+        inAddrs,
+        inAmts,
+        outAddrs,
+        outAmts
+      );
+    } catch (err) {
+      alert(`Build failed: ${(err as Error).message}`);
+    }
+  }
+
   $: cfg = $wallet.status === "connected" ? chainConfig($wallet.chainId) : undefined;
 </script>
 
@@ -253,6 +303,26 @@
       </tbody>
     </table>
   {/if}
+
+  <h2>Uniswap V4 LP (advanced — encode the action stream off-chain)</h2>
+  <p class="muted">
+    Propose any v4 LP operation via the existing UniswapV4Plugin (same plugin that
+    handles V4 swaps). Build <code>unlockData = abi.encode(actions, params)</code> with
+    the Uniswap SDK and paste it below. The plugin sets DAO→Permit2 + Permit2→PositionManager
+    allowances for each input currency, calls <code>PositionManager.modifyLiquidities</code>,
+    then resets each allowance to zero. After the call it asserts the DAO's balance delta
+    on each output currency ≥ <code>minOut</code>.
+  </p>
+  <div class="form">
+    <label>unlockData (0x…) <input bind:value={v4UnlockData} placeholder="0x… (SDK output)" /></label>
+    <label>deadline (unix; blank = +7d) <input bind:value={v4Deadline} placeholder="auto" /></label>
+    <label>input currencies (comma) <input bind:value={v4InputCurrencies} placeholder="0xUSDC,0xWETH" /></label>
+    <label>maxIn (comma, raw) <input bind:value={v4MaxIn} placeholder="1000000000,500000000000000000" /></label>
+    <label>output currencies (comma) <input bind:value={v4OutputCurrencies} placeholder="(empty for mint)" /></label>
+    <label>minOut (comma, raw) <input bind:value={v4MinOut} placeholder="(empty for mint)" /></label>
+    <button on:click={buildV4Modify}>Build</button>
+  </div>
+  <ProposeAction action={v4Action} />
 {/if}
 
 <style>
