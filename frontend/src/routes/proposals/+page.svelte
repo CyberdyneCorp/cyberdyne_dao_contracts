@@ -20,6 +20,7 @@
     castVote,
     executeProposal,
     fetchProposals,
+    simulateProposalExecution,
     VoteOption,
     type ProposalView,
     type VoteOptionValue,
@@ -135,6 +136,8 @@
     loading = true;
     try {
       proposals = await fetchProposals(cfg, $wallet.provider, $wallet.address);
+      // Stale sim results may be misleading after state changes; reset.
+      simResults = {};
     } catch (err) {
       listErr = (err as Error).message;
     } finally {
@@ -153,6 +156,25 @@
       listErr = `Vote failed: ${(err as Error).message}`;
     } finally {
       rowBusy = {...rowBusy, [id]: false};
+    }
+  }
+
+  // Per-proposal cached simulation result. Filled on demand by the "Simulate"
+  // button so we don't blast the RPC for every list refresh. Resets when the
+  // list is reloaded.
+  type SimResult = "loading" | {ok: true} | {ok: false; reason: string};
+  let simResults: Record<string, SimResult> = {};
+
+  async function simulateRow(p: ProposalView): Promise<void> {
+    simResults = {...simResults, [p.id]: "loading"};
+    try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      const cfg = chainConfig($wallet.chainId);
+      if (!cfg?.dao) throw new Error("No DAO configured");
+      const r = await simulateProposalExecution(cfg, $wallet.provider, p.actions);
+      simResults = {...simResults, [p.id]: r};
+    } catch (err) {
+      simResults = {...simResults, [p.id]: {ok: false, reason: (err as Error).message}};
     }
   }
 
@@ -267,11 +289,14 @@
         <thead>
           <tr>
             <th>ID</th><th>Summary</th><th>Window</th><th>Tally (Y/N/A)</th>
-            <th>State</th><th>Your vote</th><th>Actions</th>
+            <th>State</th><th>Your vote</th>
+            <th title="Simulate the proposal's actions via dao.callStatic.execute(...) from the TokenVoting plugin">Sim</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           {#each proposals as p (p.id)}
+            {@const sim = simResults[p.id]}
             <tr>
               <td>{p.id}</td>
               <td title={p.summary}>{p.summary.slice(0, 48)}{p.summary.length > 48 ? "…" : ""}<br /><span class="muted">{p.actions.length} action(s)</span></td>
@@ -284,6 +309,19 @@
                 {:else}<span>open</span>{/if}
               </td>
               <td>{voteLabel(p.myVote)}</td>
+              <td>
+                {#if sim === undefined}
+                  <button class="small" disabled={p.executed} on:click={() => simulateRow(p)}>
+                    Simulate
+                  </button>
+                {:else if sim === "loading"}
+                  <span class="muted">…</span>
+                {:else if sim.ok}
+                  <span class="ok" title="dao.execute(actions) would succeed against current state">✓ ok</span>
+                {:else}
+                  <span class="error" title={sim.reason}>✗ {sim.reason.slice(0, 32)}{sim.reason.length > 32 ? "…" : ""}</span>
+                {/if}
+              </td>
               <td class="row-actions">
                 {#if !p.executed}
                   <button disabled={rowBusy[p.id]} on:click={() => doVote(p.id, VoteOption.Yes)}>Yes</button>
@@ -343,5 +381,9 @@
   .warn {
     color: #b67;
     font-weight: 600;
+  }
+  button.small {
+    padding: 0.1rem 0.4rem;
+    font-size: 0.8rem;
   }
 </style>

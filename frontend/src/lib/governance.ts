@@ -124,6 +124,66 @@ export async function executeProposal(
   return tx.hash;
 }
 
+/**
+ * Simulate executing a proposal's action batch BEFORE the vote ends, so any
+ * post-vote revert (bad slippage, expired deadline, insufficient balance,
+ * MintRecipientMustBeDao, etc.) surfaces to voters in time.
+ *
+ * Approach: `eth_call` `dao.execute(callId, actions, 0)` with `from =
+ * TokenVoting plugin address`. TokenVoting has `EXECUTE_PERMISSION` on the
+ * DAO (granted at install), so the permission gate passes; the actions then
+ * run normally against current chain state. Returns `{ok: true}` if the
+ * batch would succeed, or `{ok: false, reason: <decoded revert string>}`.
+ *
+ * Notes:
+ *  - This is a SIMULATION against current state. The actual execute happens
+ *    after the vote end; state can drift in between.
+ *  - allowFailureMap = 0 matches what `proposeActions` uses; a per-action
+ *    failure reverts the whole batch.
+ *  - Uses a placeholder callId — DAO.execute doesn't validate it, just emits
+ *    it in the Executed event (which the simulation discards).
+ */
+const DAO_EXECUTE_ABI = [
+  "function execute(bytes32 _callId, (address to,uint256 value,bytes data)[] _actions, uint256 _allowFailureMap) returns (bytes[] execResults, uint256 failureMap)",
+];
+
+export async function simulateProposalExecution(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  actions: {to: string; value: string; data: string}[]
+): Promise<{ok: true} | {ok: false; reason: string}> {
+  if (!cfg.dao) return {ok: false, reason: "No DAO configured"};
+  if (!cfg.dao.governance) {
+    return {ok: false, reason: "No TokenVoting plugin — can't simulate without an EXECUTE-permitted msg.sender"};
+  }
+  const dao = new ethers.Contract(cfg.dao.dao, DAO_EXECUTE_ABI, provider);
+  const callId = ethers.utils.formatBytes32String("SIMULATE");
+  try {
+    await dao.callStatic.execute(
+      callId,
+      actions.map((a) => ({
+        to: a.to,
+        value: ethers.BigNumber.from(a.value),
+        data: a.data,
+      })),
+      0,
+      {from: cfg.dao.governance}
+    );
+    return {ok: true};
+  } catch (err) {
+    const e = err as {reason?: string; data?: string; error?: {message?: string}; message?: string};
+    // ethers v5 surfaces revert reasons in several places depending on the
+    // node. Try them in order of specificity.
+    const reason =
+      e.reason ||
+      e.error?.message ||
+      (e.data ? `revert data ${e.data.slice(0, 18)}…` : null) ||
+      e.message ||
+      "unknown revert";
+    return {ok: false, reason};
+  }
+}
+
 function decodeMetadata(raw: string): string {
   try {
     const s = ethers.utils.toUtf8String(raw);
