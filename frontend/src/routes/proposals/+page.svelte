@@ -1,121 +1,289 @@
 <!--
-  Proposals — TokenVoting is deferred to P11 (see DeployCyberdyneDao header
-  comment in P5). When it lands, this page lists proposals + lets the user
-  vote / execute. For now: action-builder helpers for the three plugin
-  admin surfaces, producing JSON ready to paste into a proposal builder.
+  Proposals — the governance hub.
+  • Build an action (admin setters or a raw custom call) and either submit it as
+    a TokenVoting proposal (when a governance plugin is configured) or copy the
+    calldata JSON for an external builder.
+  • List live proposals from ProposalCreated events; vote Yes/No/Abstain and
+    execute when the proposal passes.
+  Operational builders (swap, supply/borrow, add recipient…) live on each
+  plugin's own page; this page covers admin actions + arbitrary contract calls.
 -->
 <script lang="ts">
   import {ethers} from "ethers";
-  import {wallet} from "$lib/wallet";
+  import {wallet, signer} from "$lib/wallet";
   import {chainConfig} from "$lib/chains";
-  import {getAbi} from "@cyberdyne/dao-contracts";
+  import * as actions from "$lib/actions";
+  import type {ProposalAction} from "$lib/actions";
+  import {
+    governanceConfigured,
+    proposeActions,
+    castVote,
+    executeProposal,
+    fetchProposals,
+    VoteOption,
+    type ProposalView,
+    type VoteOptionValue,
+  } from "$lib/governance";
 
-  type ActionKind =
+  type Kind =
+    | "raw"
     | "uniswap-setRouter"
     | "uniswap-setAllowedToken"
     | "aave-setAdapter"
     | "aave-setAllowedAsset"
     | "payroll-removeRecipient"
+    | "payroll-setAmount"
     | "payroll-setPayDayOfMonth";
 
-  let kind: ActionKind = "uniswap-setRouter";
+  let kind: Kind = "uniswap-setRouter";
   let argA = "";
   let argB = "";
-  let result: string | null = null;
+  let argC = ""; // raw: value (wei)
+  let built: ProposalAction | null = null;
+  let buildErr: string | null = null;
+
+  function cfgOrThrow() {
+    if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+    const cfg = chainConfig($wallet.chainId);
+    if (!cfg?.dao) throw new Error(`No DAO configured for chain ${$wallet.chainId}`);
+    return cfg;
+  }
 
   function build(): void {
-    result = null;
+    built = null;
+    buildErr = null;
     try {
-      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
-      const cfg = chainConfig($wallet.chainId);
-      if (!cfg?.dao) throw new Error("No DAO configured");
-
-      let to: string;
-      let abiName: "UniswapV4Plugin" | "AaveLendingPlugin" | "PayrollPlugin";
-      let fn: string;
-      let args: unknown[];
-
+      const cfg = cfgOrThrow();
       switch (kind) {
+        case "raw":
+          built = {
+            to: ethers.utils.getAddress(argA),
+            value: (argC || "0").trim(),
+            data: argB || "0x",
+            summary: `Raw call to ${argA} (value ${argC || "0"} wei)`,
+          };
+          break;
         case "uniswap-setRouter":
-          to = cfg.dao.uniswap;
-          abiName = "UniswapV4Plugin";
-          fn = "setUniversalRouter";
-          args = [argA];
+          built = actions.uniSetRouter(cfg, argA);
           break;
         case "uniswap-setAllowedToken":
-          to = cfg.dao.uniswap;
-          abiName = "UniswapV4Plugin";
-          fn = "setAllowedToken";
-          args = [argA, argB.toLowerCase() === "true"];
+          built = actions.uniSetAllowedToken(cfg, argA, argB.toLowerCase() === "true");
           break;
         case "aave-setAdapter":
-          to = cfg.dao.aave;
-          abiName = "AaveLendingPlugin";
-          fn = "setAdapter";
-          args = [argA];
+          built = actions.aaveSetAdapter(cfg, argA);
           break;
         case "aave-setAllowedAsset":
-          to = cfg.dao.aave;
-          abiName = "AaveLendingPlugin";
-          fn = "setAllowedAsset";
-          args = [argA, argB.toLowerCase() === "true"];
+          built = actions.aaveSetAllowedAsset(cfg, argA, argB.toLowerCase() === "true");
           break;
         case "payroll-removeRecipient":
-          to = cfg.dao.payroll;
-          abiName = "PayrollPlugin";
-          fn = "removeRecipient";
-          args = [argA];
+          built = actions.payrollRemoveRecipient(cfg, argA);
+          break;
+        case "payroll-setAmount":
+          built = actions.payrollSetAmount(cfg, argA, ethers.BigNumber.from(argB || "0"));
           break;
         case "payroll-setPayDayOfMonth":
-          to = cfg.dao.payroll;
-          abiName = "PayrollPlugin";
-          fn = "setPayDayOfMonth";
-          args = [parseInt(argA)];
+          built = actions.payrollSetPayDay(cfg, parseInt(argA, 10));
           break;
       }
-
-      const iface = new ethers.utils.Interface(getAbi(abiName));
-      const data = iface.encodeFunctionData(fn, args);
-      const human = `${abiName}.${fn}(${args.map((a) => JSON.stringify(a)).join(", ")})`;
-      result = JSON.stringify(
-        {to, value: "0", data, humanReadable: human},
-        null,
-        2
-      );
     } catch (err) {
-      result = `// error: ${(err as Error).message}`;
+      buildErr = (err as Error).message;
     }
   }
+
+  let submitMsg: string | null = null;
+  let submitting = false;
+
+  async function submit(): Promise<void> {
+    if (!built || !$signer) return;
+    submitMsg = null;
+    submitting = true;
+    try {
+      const cfg = cfgOrThrow();
+      const {hash, proposalId} = await proposeActions(cfg, $signer, [built], built.summary);
+      submitMsg = `Proposal ${proposalId ?? "?"} created (${hash.slice(0, 10)}…).`;
+      await refresh();
+    } catch (err) {
+      submitMsg = `Failed: ${(err as Error).message}`;
+    } finally {
+      submitting = false;
+    }
+  }
+
+  // --- Proposal list ---
+  let proposals: ProposalView[] = [];
+  let listErr: string | null = null;
+  let loading = false;
+  let rowBusy: Record<string, boolean> = {};
+
+  async function refresh(): Promise<void> {
+    listErr = null;
+    if ($wallet.status !== "connected") return;
+    const cfg = chainConfig($wallet.chainId);
+    if (!cfg?.dao?.governance) return;
+    loading = true;
+    try {
+      proposals = await fetchProposals(cfg, $wallet.provider, $wallet.address);
+    } catch (err) {
+      listErr = (err as Error).message;
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function doVote(id: string, option: VoteOptionValue): Promise<void> {
+    if (!$signer) return;
+    rowBusy = {...rowBusy, [id]: true};
+    try {
+      const cfg = cfgOrThrow();
+      await castVote(cfg, $signer, id, option);
+      await refresh();
+    } catch (err) {
+      listErr = `Vote failed: ${(err as Error).message}`;
+    } finally {
+      rowBusy = {...rowBusy, [id]: false};
+    }
+  }
+
+  async function doExecute(id: string): Promise<void> {
+    if (!$signer) return;
+    rowBusy = {...rowBusy, [id]: true};
+    try {
+      const cfg = cfgOrThrow();
+      await executeProposal(cfg, $signer, id);
+      await refresh();
+    } catch (err) {
+      listErr = `Execute failed: ${(err as Error).message}`;
+    } finally {
+      rowBusy = {...rowBusy, [id]: false};
+    }
+  }
+
+  function voteLabel(v: VoteOptionValue | null): string {
+    if (v === VoteOption.Yes) return "Yes";
+    if (v === VoteOption.No) return "No";
+    if (v === VoteOption.Abstain) return "Abstain";
+    return "—";
+  }
+  function ts(n: number): string {
+    return n === 0 ? "auto" : new Date(n * 1000).toISOString().slice(0, 16).replace("T", " ");
+  }
+
+  // Auto-load the list whenever the connected chain provides a governance addr.
+  $: cfg = $wallet.status === "connected" ? chainConfig($wallet.chainId) : undefined;
+  $: hasGov = cfg ? governanceConfigured(cfg) : false;
+  $: if (hasGov && proposals.length === 0 && !loading && !listErr) refresh();
+
+  const needsArgB = new Set<Kind>([
+    "uniswap-setAllowedToken",
+    "aave-setAllowedAsset",
+    "payroll-setAmount",
+    "raw",
+  ]);
 </script>
 
 <h1>Proposals</h1>
 
-<p class="muted">
-  Full proposal list + vote/execute UI lands when TokenVoting is wired in (P11,
-  see <code>DeployCyberdyneDao.s.sol</code> header). Until then, this page is an
-  action-builder for the three vote-gated admin surfaces — paste the JSON into your
-  TokenVoting proposal builder.
-</p>
+{#if $wallet.status !== "connected"}
+  <p class="muted">Connect a wallet to build proposals and vote.</p>
+{:else if !cfg?.dao}
+  <p class="empty">No DAO configured for chain {$wallet.chainId}.</p>
+{:else}
+  {#if !hasGov}
+    <p class="muted">
+      No TokenVoting plugin configured for this DAO (5th address in
+      <code>PUBLIC_DAO_*</code>). You can still build calldata below and paste it
+      into an external proposal builder.
+    </p>
+  {/if}
 
-<h2>Action builder</h2>
-<div class="form">
-  <label>
-    Action
-    <select bind:value={kind}>
-      <option value="uniswap-setRouter">UniswapV4Plugin.setUniversalRouter(address)</option>
-      <option value="uniswap-setAllowedToken">UniswapV4Plugin.setAllowedToken(address, bool)</option>
-      <option value="aave-setAdapter">AaveLendingPlugin.setAdapter(address)</option>
-      <option value="aave-setAllowedAsset">AaveLendingPlugin.setAllowedAsset(address, bool)</option>
-      <option value="payroll-removeRecipient">PayrollPlugin.removeRecipient(address)</option>
-      <option value="payroll-setPayDayOfMonth">PayrollPlugin.setPayDayOfMonth(uint8 1..28)</option>
-    </select>
-  </label>
-  <label>Arg A <input bind:value={argA} placeholder="address or number" /></label>
-  <label>Arg B <input bind:value={argB} placeholder="true / false (where applicable)" /></label>
-  <button on:click={build}>Encode</button>
-</div>
-{#if result}
-  <pre>{result}</pre>
+  <h2>Build an action</h2>
+  <div class="form">
+    <label>
+      Action
+      <select bind:value={kind}>
+        <option value="raw">Raw call (any contract) — to, data, value</option>
+        <option value="uniswap-setRouter">Uniswap.setUniversalRouter(address)</option>
+        <option value="uniswap-setAllowedToken">Uniswap.setAllowedToken(address, bool)</option>
+        <option value="aave-setAdapter">AAVE.setAdapter(address)</option>
+        <option value="aave-setAllowedAsset">AAVE.setAllowedAsset(address, bool)</option>
+        <option value="payroll-removeRecipient">Payroll.removeRecipient(address)</option>
+        <option value="payroll-setAmount">Payroll.setAmount(payee, newAmount)</option>
+        <option value="payroll-setPayDayOfMonth">Payroll.setPayDayOfMonth(1..28)</option>
+      </select>
+    </label>
+    <label>
+      {kind === "raw" ? "to (address)" : "Arg A"}
+      <input bind:value={argA} placeholder="address / number" />
+    </label>
+    {#if needsArgB.has(kind)}
+      <label>
+        {kind === "raw" ? "data (0x…)" : "Arg B"}
+        <input bind:value={argB} placeholder={kind === "raw" ? "0x…" : "value / true|false"} />
+      </label>
+    {/if}
+    {#if kind === "raw"}
+      <label>value (wei) <input bind:value={argC} placeholder="0" /></label>
+    {/if}
+    <button on:click={build}>Build</button>
+  </div>
+  {#if buildErr}<p class="error">{buildErr}</p>{/if}
+  {#if built}
+    <pre>{JSON.stringify({to: built.to, value: built.value, data: built.data}, null, 2)}</pre>
+    <p class="muted">{built.summary}</p>
+    {#if hasGov}
+      <button on:click={submit} disabled={submitting}>
+        {submitting ? "Submitting…" : "Submit as proposal"}
+      </button>
+    {/if}
+    {#if submitMsg}<p>{submitMsg}</p>{/if}
+  {/if}
+
+  <h2>Open proposals</h2>
+  {#if !hasGov}
+    <p class="empty">Configure a TokenVoting address to list + vote.</p>
+  {:else}
+    <button on:click={refresh} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
+    {#if listErr}<p class="error">{listErr}</p>{/if}
+    {#if proposals.length === 0 && !loading}
+      <p class="empty">No proposals in the lookback window.</p>
+    {:else}
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>Summary</th><th>Window</th><th>Tally (Y/N/A)</th>
+            <th>State</th><th>Your vote</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each proposals as p (p.id)}
+            <tr>
+              <td>{p.id}</td>
+              <td title={p.summary}>{p.summary.slice(0, 48)}{p.summary.length > 48 ? "…" : ""}<br /><span class="muted">{p.actions.length} action(s)</span></td>
+              <td class="muted">{ts(p.startDate)}<br />→ {ts(p.endDate)}</td>
+              <td>{p.tally ? `${p.tally.yes}/${p.tally.no}/${p.tally.abstain}` : "—"}</td>
+              <td>
+                {#if p.executed}<span class="ok">executed</span>
+                {:else if p.canExecute}<span class="warn">passable</span>
+                {:else if p.open === false}<span class="muted">closed</span>
+                {:else}<span>open</span>{/if}
+              </td>
+              <td>{voteLabel(p.myVote)}</td>
+              <td class="row-actions">
+                {#if !p.executed}
+                  <button disabled={rowBusy[p.id]} on:click={() => doVote(p.id, VoteOption.Yes)}>Yes</button>
+                  <button disabled={rowBusy[p.id]} on:click={() => doVote(p.id, VoteOption.No)}>No</button>
+                  <button disabled={rowBusy[p.id]} on:click={() => doVote(p.id, VoteOption.Abstain)}>Abstain</button>
+                  {#if p.canExecute}
+                    <button class="exec" disabled={rowBusy[p.id]} on:click={() => doExecute(p.id)}>Execute</button>
+                  {/if}
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  {/if}
 {/if}
 
 <style>
@@ -123,6 +291,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
+    align-items: flex-end;
     margin: 0.5rem 0 1rem;
   }
   .form label {
@@ -132,12 +301,31 @@
   }
   .form input,
   .form select {
-    min-width: 280px;
+    min-width: 260px;
   }
   pre {
     background: #f5f5f5;
     padding: 0.75rem;
     overflow-x: auto;
     font-size: 0.8rem;
+  }
+  .row-actions {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+  }
+  .exec {
+    background: #0a7;
+    color: #fff;
+  }
+  .error {
+    color: #b00020;
+  }
+  .ok {
+    color: #0a7;
+  }
+  .warn {
+    color: #b67;
+    font-weight: 600;
   }
 </style>

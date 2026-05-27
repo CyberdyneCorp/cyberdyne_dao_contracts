@@ -8,31 +8,42 @@
   import {wallet, signer} from "$lib/wallet";
   import {chainConfig} from "$lib/chains";
   import {payrollContract} from "$lib/contracts";
-  import {getAbi} from "@cyberdyne/dao-contracts";
+  import * as actions from "$lib/actions";
+  import type {ProposalAction} from "$lib/actions";
+  import ProposeAction from "$lib/components/ProposeAction.svelte";
 
   async function load(chainId: number, provider: ethers.providers.Provider) {
     const cfg = chainConfig(chainId);
     if (!cfg?.dao) throw new Error("No DAO configured");
     const payroll = payrollContract(cfg, provider);
-    const [recipients, payDay, lastPeriod] = await Promise.all([
+    const [recipients, payDay, lastPeriod, cursor, cursorPeriod, perPage] = await Promise.all([
       payroll.allActiveRecipients(),
       payroll.payDayOfMonth(),
       payroll.lastPayoutPeriod(),
+      payroll.payoutCursor(),
+      payroll.cursorPeriod(),
+      payroll.MAX_RECIPIENTS_PER_PAGE(),
     ]);
-    return {cfg, recipients, payDay, lastPeriod};
+    return {cfg, recipients, payDay, lastPeriod, cursor, cursorPeriod, perPage};
   }
 
   let crankBusy = false;
   let crankResult: string | null = null;
+  let pageSize = "100";
 
-  async function runCrank(): Promise<void> {
+  // Run the crank. `full` → executePayroll() (one batch); else
+  // executePayrollPage(pageSize) for large/paginated payrolls.
+  async function runCrank(full: boolean): Promise<void> {
     if ($wallet.status !== "connected" || !$signer) return;
     const cfg = chainConfig($wallet.chainId);
     if (!cfg?.dao) return;
     crankBusy = true;
     crankResult = null;
     try {
-      const tx = await payrollContract(cfg, $signer).executePayroll();
+      const payroll = payrollContract(cfg, $signer);
+      const tx = full
+        ? await payroll.executePayroll()
+        : await payroll.executePayrollPage(ethers.BigNumber.from(pageSize || "100"));
       crankResult = `Submitted: ${tx.hash}. Waiting…`;
       const receipt = await tx.wait();
       crankResult = `Confirmed in block ${receipt.blockNumber}.`;
@@ -43,28 +54,42 @@
     }
   }
 
-  // Add-recipient proposal builder.
+  // --- Proposal builders (vote-gated) ---
   let newPayee = "";
   let newToken = ethers.constants.AddressZero; // 0x0 = ETH
   let newAmount = "";
-  let actionCalldata: string | null = null;
+  let addAction: ProposalAction | null = null;
 
-  function buildAddRecipientAction(): void {
-    actionCalldata = null;
+  function buildAddRecipient(): void {
+    addAction = null;
     try {
       const cfg = chainConfig($wallet.status === "connected" ? $wallet.chainId : 1);
       if (!cfg?.dao) throw new Error("No DAO configured");
-      const iface = new ethers.utils.Interface(getAbi("PayrollPlugin"));
-      const decimals = newToken === ethers.constants.AddressZero ? 18 : 6; // ETH=18, USDC=6 default; UI can refine
+      const decimals = newToken === ethers.constants.AddressZero ? 18 : 6; // ETH=18, USDC=6 default
       const amount = ethers.utils.parseUnits(newAmount || "0", decimals);
-      const data = iface.encodeFunctionData("addRecipient", [newPayee, newToken, amount]);
-      actionCalldata = JSON.stringify(
-        {to: cfg.dao.payroll, value: "0", data},
-        null,
-        2
-      );
+      addAction = actions.payrollAddRecipient(cfg, newPayee, newToken, amount);
     } catch (err) {
-      actionCalldata = `// error: ${(err as Error).message}`;
+      crankResult = null;
+      addAction = null;
+      alert(`Build failed: ${(err as Error).message}`);
+    }
+  }
+
+  let setAmtPayee = "";
+  let setAmtValue = "";
+  let setAmtToken = ethers.constants.AddressZero;
+  let setAmountAction: ProposalAction | null = null;
+
+  function buildSetAmount(): void {
+    setAmountAction = null;
+    try {
+      const cfg = chainConfig($wallet.status === "connected" ? $wallet.chainId : 1);
+      if (!cfg?.dao) throw new Error("No DAO configured");
+      const decimals = setAmtToken === ethers.constants.AddressZero ? 18 : 6;
+      const amount = ethers.utils.parseUnits(setAmtValue || "0", decimals);
+      setAmountAction = actions.payrollSetAmount(cfg, setAmtPayee, amount);
+    } catch (err) {
+      alert(`Build failed: ${(err as Error).message}`);
     }
   }
 
@@ -92,8 +117,15 @@
       <h2>Schedule</h2>
       <p>
         Pay day of month: <strong>{data.payDay}</strong> ·
-        Last paid period: <strong>{periodLabel(data.lastPeriod)}</strong>
+        Last paid period: <strong>{periodLabel(data.lastPeriod)}</strong> ·
+        Page size cap: <strong>{data.perPage.toString()}</strong>
       </p>
+      {#if !data.cursor.isZero()}
+        <p class="muted">
+          Pagination in progress for period {periodLabel(data.cursorPeriod)} — resume at recipient
+          index {data.cursor.toString()} via "Run page" below.
+        </p>
+      {/if}
 
       <h2>Active recipients ({data.recipients.length})</h2>
       {#if data.recipients.length === 0}
@@ -116,9 +148,18 @@
       {/if}
 
       <h2>Crank (permissionless)</h2>
-      <button on:click={runCrank} disabled={crankBusy}>
-        {crankBusy ? "Submitting…" : "executePayroll()"}
-      </button>
+      <p class="muted">
+        <code>executePayroll()</code> pays the whole period in one batch (reverts if it
+        exceeds {data.perPage.toString()} recipients). For larger payrolls run pages with
+        <code>executePayrollPage(n)</code> until the period completes.
+      </p>
+      <div class="form">
+        <button on:click={() => runCrank(true)} disabled={crankBusy}>
+          {crankBusy ? "Submitting…" : "executePayroll()"}
+        </button>
+        <label>Page size <input bind:value={pageSize} placeholder="100" style="min-width:80px" /></label>
+        <button on:click={() => runCrank(false)} disabled={crankBusy}>Run page</button>
+      </div>
       {#if crankResult}
         <p>{crankResult}</p>
       {/if}
@@ -126,21 +167,24 @@
       <p class="error">Failed: {err.message}</p>
     {/await}
 
-    <h2>Build "add recipient" action (proposal-only)</h2>
-    <p class="muted">
-      Paste the JSON into your proposal builder. Vote-gated; the DAO must execute it.
-    </p>
+    <h2>Propose: add recipient</h2>
+    <p class="muted">Vote-gated — builds an action the DAO executes after a vote passes.</p>
     <div class="form">
       <label>Payee <input bind:value={newPayee} placeholder="0x..." /></label>
-      <label>
-        Token <input bind:value={newToken} placeholder="0x... (or 0x0 for ETH)" />
-      </label>
+      <label>Token <input bind:value={newToken} placeholder="0x... (or 0x0 for ETH)" /></label>
       <label>Amount (decimal) <input bind:value={newAmount} placeholder="1000" /></label>
-      <button on:click={buildAddRecipientAction}>Encode</button>
+      <button on:click={buildAddRecipient}>Build</button>
     </div>
-    {#if actionCalldata}
-      <pre>{actionCalldata}</pre>
-    {/if}
+    <ProposeAction action={addAction} />
+
+    <h2>Propose: set recipient amount</h2>
+    <div class="form">
+      <label>Payee <input bind:value={setAmtPayee} placeholder="0x..." /></label>
+      <label>Token <input bind:value={setAmtToken} placeholder="0x... (0x0 = ETH)" /></label>
+      <label>New amount (decimal) <input bind:value={setAmtValue} placeholder="1500" /></label>
+      <button on:click={buildSetAmount}>Build</button>
+    </div>
+    <ProposeAction action={setAmountAction} />
   {/if}
 {/if}
 
@@ -158,12 +202,6 @@
   }
   .form input {
     min-width: 240px;
-  }
-  pre {
-    background: #f5f5f5;
-    padding: 0.75rem;
-    overflow-x: auto;
-    font-size: 0.8rem;
   }
   .error {
     color: #b00020;

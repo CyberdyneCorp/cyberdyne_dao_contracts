@@ -8,6 +8,9 @@
   import {wallet} from "$lib/wallet";
   import {chainConfig} from "$lib/chains";
   import {aaveContract, erc20} from "$lib/contracts";
+  import * as actions from "$lib/actions";
+  import type {ProposalAction} from "$lib/actions";
+  import ProposeAction from "$lib/components/ProposeAction.svelte";
 
   // Minimal AAVE v3 Pool surface — only the read methods we need.
   const POOL_ABI = [
@@ -59,6 +62,35 @@
     // AAVE returns healthFactor with 1e18 precision; type(uint256).max → no debt.
     if (hf.gt(ethers.constants.MaxUint256.div(2))) return "∞ (no debt)";
     return (Number(hf.toString()) / 1e18).toFixed(3);
+  }
+
+  // --- Propose: supply / withdraw / borrow / repay ---
+  type Op = "supply" | "withdraw" | "borrow" | "repay";
+  let op: Op = "supply";
+  let lAsset = "";
+  let lAmount = "";
+  let lDecimals = "6"; // USDC default; set 18 for WETH
+  let lRateMode = "2"; // 2 = variable (borrow/repay only)
+  let lendingAction: ProposalAction | null = null;
+
+  function buildLending(): void {
+    lendingAction = null;
+    try {
+      const cfg = chainConfig($wallet.status === "connected" ? $wallet.chainId : 1);
+      if (!cfg?.dao) throw new Error("No DAO configured");
+      const amount = ethers.utils.parseUnits(lAmount || "0", parseInt(lDecimals, 10));
+      const mode = parseInt(lRateMode, 10);
+      lendingAction =
+        op === "supply"
+          ? actions.aaveSupply(cfg, lAsset, amount)
+          : op === "withdraw"
+            ? actions.aaveWithdraw(cfg, lAsset, amount)
+            : op === "borrow"
+              ? actions.aaveBorrow(cfg, lAsset, amount, mode)
+              : actions.aaveRepay(cfg, lAsset, amount, mode);
+    } catch (err) {
+      alert(`Build failed: ${(err as Error).message}`);
+    }
   }
 </script>
 
@@ -116,11 +148,52 @@
     {:catch err}
       <p class="error">Failed: {err.message}</p>
     {/await}
+
+    <h2>Propose: lending operation</h2>
+    <p class="muted">
+      Vote-gated. aTokens / debt are issued to the DAO. <code>rateMode</code> applies to
+      borrow/repay (2 = variable). Amounts are fixed at proposal time.
+    </p>
+    <div class="form">
+      <label>
+        Operation
+        <select bind:value={op}>
+          <option value="supply">supply</option>
+          <option value="withdraw">withdraw</option>
+          <option value="borrow">borrow</option>
+          <option value="repay">repay</option>
+        </select>
+      </label>
+      <label>Asset <input bind:value={lAsset} placeholder="0x... (token)" /></label>
+      <label>Amount <input bind:value={lAmount} placeholder="100" /></label>
+      <label>Decimals <input bind:value={lDecimals} style="min-width:70px" /></label>
+      {#if op === "borrow" || op === "repay"}
+        <label>Rate mode <input bind:value={lRateMode} style="min-width:70px" /></label>
+      {/if}
+      <button on:click={buildLending}>Build</button>
+    </div>
+    <ProposeAction action={lendingAction} />
   {/if}
 {/if}
 
 <style>
   .error {
     color: #b00020;
+  }
+  .form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: flex-end;
+    margin: 0.5rem 0 1rem;
+  }
+  .form label {
+    display: flex;
+    flex-direction: column;
+    font-size: 0.85rem;
+  }
+  .form input,
+  .form select {
+    min-width: 200px;
   }
 </style>

@@ -23,11 +23,18 @@ const DAO_ENV_KEY: Record<number, string> = {
 function parseDaoEnv(raw: string | undefined): DaoAddresses | undefined {
   if (!raw) return undefined;
   const parts = raw.split(",").map((p) => p.trim());
-  if (parts.length !== 4) {
-    console.warn(`PUBLIC_DAO_* env var malformed (expected 4 comma-separated addrs): ${raw}`);
+  // 4 addrs (dao,payroll,uniswap,aave) or 5 with the optional TokenVoting plugin.
+  if (parts.length !== 4 && parts.length !== 5) {
+    console.warn(`PUBLIC_DAO_* env var malformed (expected 4 or 5 comma-separated addrs): ${raw}`);
     return undefined;
   }
-  return {dao: parts[0], payroll: parts[1], uniswap: parts[2], aave: parts[3]};
+  return {
+    dao: parts[0],
+    payroll: parts[1],
+    uniswap: parts[2],
+    aave: parts[3],
+    governance: parts[4] || undefined,
+  };
 }
 
 export function chainConfig(chainId: number): ChainConfig | undefined {
