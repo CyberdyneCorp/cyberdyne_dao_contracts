@@ -118,7 +118,7 @@ describe("PluginSetup (TRD §9 permission-matrix compliance)", () => {
     assertGrant(permissions[2], plugin, FAKE_DAO, UPGRADE_PLUGIN_PERMISSION_ID);
   });
 
-  it("CostRegistryPluginSetup grants the 3 expected permissions on install", async () => {
+  it("CostRegistryPluginSetup grants the 4 expected permissions on install", async () => {
     const [deployer] = await ethers.getSigners();
     const setup = await new CostRegistryPluginSetup__factory(deployer).deploy();
 
@@ -129,11 +129,17 @@ describe("PluginSetup (TRD §9 permission-matrix compliance)", () => {
     const permissions = result.preparedSetupData.permissions as unknown as Permission[];
     const plugin = result.plugin;
 
-    expect(permissions.length).to.equal(3);
+    expect(permissions.length).to.equal(4);
 
     assertGrant(permissions[0], FAKE_DAO, plugin, EXECUTE_PERMISSION_ID);
     assertGrant(permissions[1], plugin, FAKE_DAO, ethers.utils.id("MANAGE_COSTS_PERMISSION"));
     assertGrant(permissions[2], plugin, FAKE_DAO, UPGRADE_PLUGIN_PERMISSION_ID);
+    assertGrant(
+      permissions[3],
+      plugin,
+      FAKE_DAO,
+      ethers.utils.id("UPDATE_PAYMENT_TOKEN_PERMISSION")
+    );
   });
 
   it("UniswapV3PluginSetup grants the 5 expected permissions on install", async () => {

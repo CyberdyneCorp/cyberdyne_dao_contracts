@@ -39,7 +39,7 @@ contract CostRegistryPluginSetup is PluginUpgradeableSetup {
         plugin = implementation().deployUUPSProxy(initCalldata);
 
         PermissionLib.MultiTargetPermission[]
-            memory permissions = new PermissionLib.MultiTargetPermission[](3);
+            memory permissions = new PermissionLib.MultiTargetPermission[](4);
 
         // 1) DAO → plugin: EXECUTE_PERMISSION (lets the crank issue transfers via DAO.execute).
         permissions[0] = PermissionLib.MultiTargetPermission({
@@ -65,6 +65,14 @@ contract CostRegistryPluginSetup is PluginUpgradeableSetup {
             condition: address(0),
             permissionId: keccak256("UPGRADE_PLUGIN_PERMISSION")
         });
+        // 4) plugin → DAO: UPDATE_PAYMENT_TOKEN (vote-gated setPaymentToken).
+        permissions[3] = PermissionLib.MultiTargetPermission({
+            operation: PermissionLib.Operation.Grant,
+            where: plugin,
+            who: _dao,
+            condition: address(0),
+            permissionId: CostRegistryPlugin(plugin).UPDATE_PAYMENT_TOKEN_PERMISSION_ID()
+        });
 
         preparedSetupData.permissions = permissions;
     }
@@ -84,7 +92,7 @@ contract CostRegistryPluginSetup is PluginUpgradeableSetup {
         address _dao,
         SetupPayload calldata _payload
     ) external pure returns (PermissionLib.MultiTargetPermission[] memory permissions) {
-        permissions = new PermissionLib.MultiTargetPermission[](3);
+        permissions = new PermissionLib.MultiTargetPermission[](4);
 
         permissions[0] = PermissionLib.MultiTargetPermission({
             operation: PermissionLib.Operation.Revoke,
@@ -106,6 +114,13 @@ contract CostRegistryPluginSetup is PluginUpgradeableSetup {
             who: _dao,
             condition: address(0),
             permissionId: keccak256("UPGRADE_PLUGIN_PERMISSION")
+        });
+        permissions[3] = PermissionLib.MultiTargetPermission({
+            operation: PermissionLib.Operation.Revoke,
+            where: _payload.plugin,
+            who: _dao,
+            condition: address(0),
+            permissionId: keccak256("UPDATE_PAYMENT_TOKEN_PERMISSION")
         });
     }
 }

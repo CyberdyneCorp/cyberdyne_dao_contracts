@@ -34,6 +34,7 @@ services…) that also disburses them in USDC.
 - The crank is the only `processDue` call site; the DAO is the only caller of the
   vote-gated mutators (`MANAGE_COSTS_PERMISSION`).
 - UUPS upgrades require `UPGRADE_PLUGIN_PERMISSION`, granted only to the DAO.
+- The payment token is **migratable** via the vote-gated `setPaymentToken(address)` (permission ID `UPDATE_PAYMENT_TOKEN_PERMISSION`). Existing entries' `costUsdc` is stored as raw token units, so a migration to a token with different decimals (e.g. USDC 6dp → DAI 18dp) **must be paired with `updateEntry` calls in the same proposal** to avoid silent value drift on the next crank.
 
 > **No `preview…Actions` helpers needed.** Like Payroll, the fund-moving entry (`processDue`) is **permissionless** (keeper-callable), not governance-routed — it never participates in the nested-`dao.execute` reentrancy issue that motivated [TRD §9a](../TRD.md#9a-governance-path-action-builders-previewactions). Entry-management mutators (`registerEntry` / `updateEntry` / `removeEntry`) are single-action plugin calls and ride through TokenVoting as one-action proposals directly.
 

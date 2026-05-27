@@ -46,6 +46,12 @@ interface ICostRegistryPlugin {
     /// @param failureMap Bitmap of per-entry transfer failures within the batch
     ///        (bit `i` = the `i`-th paid entry's transfer reverted). Page-local.
     event CostsProcessed(uint256 fromIndex, uint256 count, uint256 failureMap);
+    /// @notice Emitted when governance migrates the registry's payment token.
+    ///         All existing entries are re-denominated in the new token
+    ///         immediately (their stored `costUsdc` is reused verbatim, so a
+    ///         migration to a token with different decimals must be paired with
+    ///         entry updates in the same proposal).
+    event PaymentTokenUpdated(address indexed previous, address indexed current);
 
     // --- Errors ---
 
@@ -84,6 +90,13 @@ interface ICostRegistryPlugin {
 
     /// @notice Soft-delete an entry (kept for history; never paid again).
     function removeEntry(uint256 id) external;
+
+    /// @notice Vote-gated swap of the registry's payment token. Existing entries
+    ///         remain valid but are re-denominated in `newToken` from the next
+    ///         `processDue`; their stored `costUsdc` is **not** rescaled, so a
+    ///         migration to a token with different decimals MUST pair this call
+    ///         with `updateEntry` calls in the same proposal.
+    function setPaymentToken(address newToken) external;
 
     // --- Permissionless crank ---
 

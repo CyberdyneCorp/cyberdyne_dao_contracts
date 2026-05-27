@@ -22,6 +22,12 @@ import {ICostRegistryPlugin} from "./ICostRegistryPlugin.sol";
 contract CostRegistryPlugin is PluginUUPSUpgradeable, ICostRegistryPlugin {
     bytes32 public constant MANAGE_COSTS_PERMISSION_ID = keccak256("MANAGE_COSTS_PERMISSION");
 
+    /// @notice Gates `setPaymentToken`. Separate from `MANAGE_COSTS_PERMISSION`
+    ///         so a DAO can vote-gate the token-migration path independently of
+    ///         day-to-day entry edits.
+    bytes32 public constant UPDATE_PAYMENT_TOKEN_PERMISSION_ID =
+        keccak256("UPDATE_PAYMENT_TOKEN_PERMISSION");
+
     /// @inheritdoc ICostRegistryPlugin
     /// @dev Bounds the storage scan a `processDue` page performs.
     uint256 public constant override MAX_ENTRIES = 300;
@@ -115,6 +121,20 @@ contract CostRegistryPlugin is PluginUUPSUpgradeable, ICostRegistryPlugin {
         CostEntry storage e = _activeEntry(id);
         e.active = false;
         emit EntryRemoved(id);
+    }
+
+    /// @inheritdoc ICostRegistryPlugin
+    /// @dev Vote-gated. Replaces the registry's single payment token. Existing
+    ///      entries' `costUsdc` values are reused as raw token units — see the
+    ///      docs warning about decimals mismatches when migrating to a token
+    ///      with a different scale.
+    function setPaymentToken(
+        address newToken
+    ) external override auth(UPDATE_PAYMENT_TOKEN_PERMISSION_ID) {
+        if (newToken == address(0)) revert ZeroAddress();
+        address previous = address(_token);
+        _token = IERC20(newToken);
+        emit PaymentTokenUpdated(previous, newToken);
     }
 
     // --- Permissionless crank ---------------------------------------------

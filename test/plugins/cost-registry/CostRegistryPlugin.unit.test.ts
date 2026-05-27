@@ -13,6 +13,7 @@ import {takeSnapshot, time} from "../../helpers/time";
 import type {SnapshotRestorer} from "@nomicfoundation/hardhat-network-helpers";
 
 const MANAGE_COSTS_PERMISSION_ID = ethers.utils.id("MANAGE_COSTS_PERMISSION");
+const UPDATE_PAYMENT_TOKEN_PERMISSION_ID = ethers.utils.id("UPDATE_PAYMENT_TOKEN_PERMISSION");
 const EXECUTE_PERMISSION_ID = ethers.utils.id("EXECUTE_PERMISSION");
 const DAY = 86_400;
 
@@ -200,6 +201,52 @@ describe("CostRegistryPlugin", () => {
       await expect(
         plugin.connect(voter).updateEntry(0, "X", "", 0, 1, aws)
       ).to.be.revertedWithCustomError(plugin, "ZeroAmount");
+    });
+  });
+
+  describe("setPaymentToken", () => {
+    let usdt: TestERC20;
+    beforeEach(async () => {
+      usdt = await new TestERC20__factory(deployer).deploy("Tether USD", "USDT", 6);
+      await usdt.deployed();
+      await dao.grant(
+        plugin.address,
+        await voter.getAddress(),
+        UPDATE_PAYMENT_TOKEN_PERMISSION_ID
+      );
+    });
+
+    it("vote-gated swap emits PaymentTokenUpdated and updates paymentToken()", async () => {
+      const prev = await plugin.paymentToken();
+      expect(prev).to.equal(token.address);
+      await expect(plugin.connect(voter).setPaymentToken(usdt.address))
+        .to.emit(plugin, "PaymentTokenUpdated")
+        .withArgs(prev, usdt.address);
+      expect(await plugin.paymentToken()).to.equal(usdt.address);
+    });
+
+    it("rejects address(0)", async () => {
+      await expect(
+        plugin.connect(voter).setPaymentToken(ethers.constants.AddressZero)
+      ).to.be.revertedWithCustomError(plugin, "ZeroAddress");
+    });
+
+    it("reverts when caller lacks UPDATE_PAYMENT_TOKEN_PERMISSION", async () => {
+      await expect(plugin.connect(stranger).setPaymentToken(usdt.address)).to.be.reverted;
+    });
+
+    it("subsequent processDue uses the new token", async () => {
+      // Register, fast-forward, swap token, fund DAO in NEW token, crank.
+      await plugin.connect(voter).registerEntry("AWS", "", usdc(100), 1, aws);
+      await time.increase(2 * DAY);
+      await plugin.connect(voter).setPaymentToken(usdt.address);
+      // DAO still holds the old token, none of the new — crank reverts the
+      // single transfer via failureMap and pays nothing in old token.
+      await usdt.mint(dao.address, usdc(100));
+      await plugin.processDue(0, 10);
+      expect(await usdt.balanceOf(aws)).to.equal(usdc(100));
+      // Old token DAO balance unchanged.
+      expect(await token.balanceOf(aws)).to.equal(0);
     });
   });
 
