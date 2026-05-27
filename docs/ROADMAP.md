@@ -461,7 +461,7 @@ Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 
 ### CostRegistryPlugin
 
 - [ ] 🟡 **`setPaymentToken(address)` vote-gated migration** — today the payment token is fixed at install. Switching USDC → USDT (or to a multichain stable per chain) currently requires plugin redeploy + entry migration.
-- [ ] 🟡 **Optional `MAX_COST_USDC` cap.** `uint96` allows ~7.9e28; a registry typo behind a passed proposal could pre-stage a treasury drain. Cap on `registerEntry`/`updateEntry` is defense-in-depth.
+- [x] ✅ **`MAX_COST_USDC` cap.** `MAX_COST_USDC = 1_000_000_000_000_000` (= $1B USDC at 6 decimals) — far above any realistic per-payment amount, tight enough that an unintended extra zero trips `CostTooLarge`. Replaces the previous `> uint96.max` ceiling. Public view function on the interface for UI introspection.
 - [ ] 🟡 **Subgraph entities** — `CostEntry`, `CostPayment`, `CostCrankRun` (already named in `docs/EVENTS.md` but never indexed).
 - [ ] 🔵 **`processAllDue(uint256 maxBatchSize)`** — keeper-friendlier crank that walks every due entry up to `MAX_PER_PAGE` without the caller tracking `offset`.
 - [ ] 🔵 **Vote-gated `setMaxEntries(uint256)`** — same shape as the Payroll item.

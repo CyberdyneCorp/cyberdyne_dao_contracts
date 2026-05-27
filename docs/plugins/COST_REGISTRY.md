@@ -105,9 +105,12 @@ slot 303..350: __gap[48]
 
 `CostEntry` packs `payee(20)+costUsdc(uint96,12)` into one slot and
 `frequencyDays(uint32)+lastPaidAt(uint64)+active(bool)` into the next; `name` and
-`description` are dynamic. `costUsdc` is `uint96` (≈7.9e28 max — far beyond any
-realistic USDC amount); `registerEntry`/`updateEntry` revert `CostTooLarge` above
-it. Upgrades may consume slots from `__gap` but must never reorder slots 301/302.
+`description` are dynamic. `costUsdc` is stored as `uint96` (≈7.9e28 max) but
+the **runtime cap is `MAX_COST_USDC = 1_000_000_000_000_000`** (= $1B USDC at 6
+decimals) — a defense-in-depth limit far above any realistic per-payment amount
+but tight enough that an unintended extra zero in `registerEntry` /
+`updateEntry` trips `CostTooLarge(costUsdc)`. Upgrades may consume slots from
+`__gap` but must never reorder slots 301/302.
 
 ## 8. Slither audit notes (waivers)
 

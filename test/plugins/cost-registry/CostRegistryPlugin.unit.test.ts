@@ -136,6 +136,21 @@ describe("CostRegistryPlugin", () => {
       ).to.be.revertedWithCustomError(plugin, "CostTooLarge");
     });
 
+    it("trips MAX_COST_USDC at MAX + 1 (defense-in-depth cap on cost)", async () => {
+      const max = await plugin.MAX_COST_USDC();
+      // MAX itself is allowed — the cap is `costUsdc > MAX_COST_USDC`.
+      await expect(plugin.connect(voter).registerEntry("X", "", max, 1, aws)).to.emit(
+        plugin,
+        "EntryRegistered"
+      );
+      // MAX + 1 reverts CostTooLarge.
+      await expect(
+        plugin.connect(voter).registerEntry("X", "", max.add(1), 1, aws)
+      )
+        .to.be.revertedWithCustomError(plugin, "CostTooLarge")
+        .withArgs(max.add(1));
+    });
+
     it("reverts when caller lacks MANAGE_COSTS", async () => {
       await expect(plugin.connect(stranger).registerEntry("X", "", usdc(1), 1, aws)).to.be.reverted;
     });

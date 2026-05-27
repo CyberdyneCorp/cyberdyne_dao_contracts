@@ -120,4 +120,10 @@ interface ICostRegistryPlugin {
 
     /// @notice Max entries paid per `processDue` call (per-tx / 256-bit-bitmap cap).
     function MAX_PER_PAGE() external view returns (uint256);
+
+    /// @notice Defense-in-depth upper bound on `costUsdc` accepted by
+    ///         `registerEntry` / `updateEntry`. Set far above any realistic
+    ///         per-payment amount so that typos (extra zeros) trip rather than
+    ///         silently passing governance review.
+    function MAX_COST_USDC() external view returns (uint256);
 }

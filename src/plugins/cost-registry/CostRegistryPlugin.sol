@@ -31,6 +31,15 @@ contract CostRegistryPlugin is PluginUUPSUpgradeable, ICostRegistryPlugin {
     ///      256-bit bitmap; 100 leaves gas headroom.
     uint256 public constant override MAX_PER_PAGE = 100;
 
+    /// @inheritdoc ICostRegistryPlugin
+    /// @dev Defense-in-depth cap on `costUsdc`. The storage type `uint96` already
+    ///      bounds writes to ~7.9e28, but that's so far above any realistic
+    ///      monthly cost that a typo (extra zeros pasted from a calculator) could
+    ///      pre-stage a treasury-drain past governance. 1_000_000_000_000_000 is
+    ///      $1B USDC per payment — well above any conceivable real cost and tight
+    ///      enough that an unintended extra digit trips the guard.
+    uint256 public constant override MAX_COST_USDC = 1_000_000_000_000_000;
+
     /// @notice The single ERC20 every entry is paid in (USDC). Set at install.
     IERC20 private _token;
 
@@ -233,7 +242,7 @@ contract CostRegistryPlugin is PluginUUPSUpgradeable, ICostRegistryPlugin {
     ) private pure {
         if (payee == address(0)) revert ZeroAddress();
         if (costUsdc == 0) revert ZeroAmount();
-        if (costUsdc > type(uint96).max) revert CostTooLarge(costUsdc);
+        if (costUsdc > MAX_COST_USDC) revert CostTooLarge(costUsdc);
         if (frequencyDays == 0) revert ZeroFrequency();
         if (bytes(name).length == 0) revert EmptyName();
     }
