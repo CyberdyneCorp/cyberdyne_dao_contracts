@@ -7,15 +7,16 @@ Per-plugin spec for the Cyberdyne DAO UniswapV4Plugin (TRD §6.1, ROADMAP P3).
 | Source | `src/plugins/uniswap-v4/UniswapV4Plugin.sol` |
 | Setup | `src/plugins/uniswap-v4/UniswapV4PluginSetup.sol` |
 | Base | `PluginUUPSUpgradeable` (OSx commons v1.4) |
-| Permission IDs | `TRIGGER_SWAP_PERMISSION`, `UPDATE_ROUTER_PERMISSION`, `MANAGE_ALLOWLIST_PERMISSION` |
-| External integrations | Uniswap Universal Router (V4-capable), Permit2, Uniswap V4 PoolManager |
+| Permission IDs | `TRIGGER_SWAP_PERMISSION`, `UPDATE_ROUTER_PERMISSION`, `MANAGE_ALLOWLIST_PERMISSION`, `MANAGE_POSITIONS_PERMISSION` |
+| External integrations | Uniswap Universal Router (V4-capable), Permit2, Uniswap V4 PoolManager, **v4-periphery PositionManager** |
 
 ## 1. What it does
 
-- Routes DAO-approved swaps through Uniswap's **Universal Router** using **Permit2** for token approvals.
-- Plugin is **a pure execution gate** — it never custodies funds. `tokenIn` is debited from the DAO and `tokenOut` lands in the DAO.
-- Every swap proposal carries opaque `commands` + `inputs` bytes (Universal Router command set) — the plugin doesn't decode them. The proposal builder owns route construction; the plugin owns slippage + allowlist + deadline + the 3-action approve/Permit2/route batch.
-- Allowlist optional: empty at install = no token restriction; non-empty flips `allowlistEnforced = true` and gates `tokenIn` + `tokenOut` against the list per swap.
+- Routes DAO-approved **swaps** through Uniswap's **Universal Router** using **Permit2** for token approvals.
+- Drives the **full V4 LP lifecycle** (mint / increase / decrease / burn / collect) through the **v4-periphery PositionManager** via a single pass-through `modifyLiquidities` entry — see §3a.
+- Plugin is **a pure execution gate** — it never custodies funds. `tokenIn` / input currencies are debited from the DAO; `tokenOut` / output currencies / position NFTs land in the DAO.
+- Every swap proposal carries opaque `commands` + `inputs` bytes (Universal Router command set); every LP proposal carries opaque `unlockData` bytes (v4 action stream). The plugin doesn't decode them — the proposal builder owns route/action construction; the plugin owns slippage + allowlist + deadline + the surrounding approve/Permit2/reset batch.
+- Allowlist optional: empty at install = no token restriction; non-empty flips `allowlistEnforced = true` and gates `tokenIn` + `tokenOut` (swap) and every input/output currency (LP) against the list per op.
 
 ## 2. Trust + custody model
 
@@ -41,7 +42,46 @@ Per-plugin spec for the Cyberdyne DAO UniswapV4Plugin (TRD §6.1, ROADMAP P3).
 
 ### Why `callId` includes a nonce
 
-`callId = keccak256(abi.encodePacked("UNI_V4_SWAP:", swapNonce))` with `swapNonce` incremented on every successful swap (after the `callId` is built). This makes the `IExecutor.Executed` callId **unique per swap**, even within the same block, so the subgraph correlates `SwapExecuted ↔ Executed` 1:1 without ambiguity.
+`callId = keccak256(abi.encodePacked("UNI_V4_SWAP:", swapNonce))` with `swapNonce` incremented on every successful swap (after the `callId` is built). This makes the `IExecutor.Executed` callId **unique per swap**, even within the same block, so the subgraph correlates `SwapExecuted ↔ Executed` 1:1 without ambiguity. LP ops use a parallel scheme `keccak256("UNI_V4_LP:" || lpNonce)` so swap and LP histories don't alias.
+
+## 3a. LP lifecycle — `modifyLiquidities` pass-through
+
+V4 LP (mint / increase / decrease / burn) routes through **a single entry point**:
+
+```
+function modifyLiquidities(
+    bytes calldata unlockData,
+    uint256 deadline,
+    address[] calldata inputCurrencies,
+    uint256[] calldata maxIn,
+    address[] calldata outputCurrencies,
+    uint256[] calldata minOut
+) external auth(MANAGE_POSITIONS_PERMISSION_ID)
+```
+
+The proposal builds the **v4 action stream** off-chain (Uniswap SDK) and forwards `unlockData = abi.encode(bytes actions, bytes[] params)` verbatim. Each byte in `actions` is one entry from the v4-periphery `Actions` enum (`MINT_POSITION=0x02`, `INCREASE_LIQUIDITY=0x00`, `DECREASE_LIQUIDITY=0x01`, `BURN_POSITION=0x03`, `SETTLE_PAIR=0x0d`, `TAKE_PAIR=0x11`), and `params[i]` is the abi-encoded args for action `i`.
+
+**Action batch shaped by the plugin** for any LP op:
+
+```
+for each input currency i:
+  1. DAO → Permit2:               IERC20(currency).approve(permit2, maxIn[i])         // exact
+  2. Permit2 → PositionManager:   IPermit2.approve(currency, PM, maxIn[i], deadline)
+then:
+  3.                              IV4PositionManager.modifyLiquidities(unlockData, deadline)
+finally, for each input currency i:
+  4. DAO → Permit2:               IERC20(currency).approve(permit2, 0)                // reset
+```
+
+The whole batch is sent through `IExecutor.execute(callId, actions, allowFailureMap=0)`. Any sub-action failure reverts the full batch — no half-finished state, no lingering allowance.
+
+**Output slippage guard.** Before the call, the plugin snapshots the DAO's balance of every `outputCurrencies[i]`; after the call, it asserts `received_i = balanceAfter_i - balanceBefore_i ≥ minOut[i]` (reverts `OutputShortfall` otherwise). This is the V4-LP analogue of the swap path's `minAmountOut` check.
+
+**Position NFTs.** The position NFT is minted to whichever `owner` the proposal encodes in `MINT_POSITION` params. The plugin doesn't decode `unlockData`, so it can't *force* that recipient to be the DAO — the proposal author must encode `owner = dao()`. The treasury-level safety still holds (the plugin doesn't custody anything), but **proposal review should check this field**. A future build can decode and assert it on-chain.
+
+**Why pass-through.** V4 LP ops are intentionally compositional: a single `modifyLiquidities` can chain MINT/INCREASE/DECREASE/SETTLE/TAKE actions, with hooks. Forcing the plugin to expose one signature per combination would multiply the surface area without buying more safety — every code path already routes back through `DAO.execute`, so allowlist + slippage are the meaningful guardrails. Same model the swap path already uses for `commands`/`inputs`.
+
+**Set the PositionManager.** v4PositionManager may be `address(0)` at install (LP ops revert `PositionManagerUnset` until set). Call the vote-gated `setV4PositionManager(address)` to wire it — reuses `UPDATE_ROUTER_PERMISSION` (both router and PM are external Uniswap endpoints) so the install grant list stays at 6.
 
 ## 4. Allowance lifecycle (TRD §11 security note)
 
@@ -76,6 +116,8 @@ Two independent guards:
 | `SwapExecuted(tokenIn, amountIn, tokenOut, amountOutActual)` | `swap` | `tokenIn`, `tokenOut` |
 | `AllowedTokenSet(token, allowed)` | `initialize` (per seed), `setAllowedToken` | `token` |
 | `UniversalRouterUpdated(previous, current)` | `setUniversalRouter` | `previous`, `current` |
+| `V4PositionManagerUpdated(previous, current)` | `setV4PositionManager` | `previous`, `current` |
+| `LiquidityModified(opNonce)` | `modifyLiquidities` | `opNonce` |
 
 ## 9. Slither audit notes (waivers)
 
@@ -99,19 +141,22 @@ CI gate: `slither --fail-high`. With the inline suppressions above, the remainin
 Layout snapshot at the current head is at `docs/storage-layouts/UniswapV4Plugin.md` (regenerate via `forge inspect UniswapV4Plugin storage-layout`). Plugin-specific state starts at slot **301** (after the inherited gap chain):
 
 ```
-slot 301: universalRouter   (address)
-slot 302: permit2           (address)
-slot 303: poolManager       (address)
-slot 304: allowedToken      (mapping)
-slot 305: allowlistEnforced (bool)
-slot 306: swapNonce         (uint256)
-slot 307..350: __gap[44]
+slot 301: universalRouter    (address)
+slot 302: permit2            (address)
+slot 303: poolManager        (address)
+slot 304: allowedToken       (mapping)
+slot 305: allowlistEnforced  (bool)
+slot 306: swapNonce          (uint256)
+slot 307: v4PositionManager  (address)   — added with the V4 LP extension
+slot 308: lpNonce            (uint256)   — added with the V4 LP extension
+slot 309..350: __gap[42]
 ```
 
-Upgrades may consume slots from `__gap` (decreasing the gap size) but must **never** reorder or shrink anything in slots 301..306. The `forge inspect` snapshot is committed under `docs/storage-layouts/` per release tag so audit can diff layouts across versions. Note: the gap is `[44]`, not `[45]` as in the P1 stub, because `swapNonce` (slot 306) consumed one slot.
+Upgrades may consume slots from `__gap` (decreasing the gap size) but must **never** reorder or shrink anything in slots 301..308. The `forge inspect` snapshot is committed under `docs/storage-layouts/` per release tag so audit can diff layouts across versions. The gap shrank from `[44]` to `[42]` because `v4PositionManager` and `lpNonce` each consumed one slot (append-only).
 
 ## 11. Tests
 
-- **Unit**: `test/plugins/uniswap-v4/UniswapV4Plugin.unit.test.ts` — 21 cases. 100% line + 100% branch coverage on `src/plugins/uniswap-v4/UniswapV4Plugin.sol` and `UniswapV4PluginSetup.sol`. Uses `MockUniversalRouter` + `MockPermit2` under `src/test/mocks/` to exercise the full action batch + Permit2 → Router settlement path without an RPC.
-- **Fork**: `test/plugins/uniswap-v4/UniswapV4Plugin.fork.test.ts` — runs on `mainnetFork` and `baseFork` when `RPC_MAINNET` / `RPC_BASE` are set. Gated via `onlyOn(...)`; silently skipped on other networks. Uses the V3 `SWAP_EXACT_IN_SINGLE` Universal Router command for the happy path (deepest/most-stable liquidity); the V4-native single-hop encoding is deferred to P5's e2e tests via a flagged `it.skip` and a clear comment in the test preamble.
-- **Permission matrix**: `test/plugins/PluginSetup.unit.test.ts` — asserts `prepareInstallation` returns the TRD §9 set verbatim.
+- **Unit**: `test/plugins/uniswap-v4/UniswapV4Plugin.unit.test.ts` — 30 cases (21 swap + 9 LP). 100% line / 95.24% branch coverage on `src/plugins/uniswap-v4/UniswapV4Plugin.sol`. Uses `MockUniversalRouter` + `MockPermit2` + `MockV4PositionManager` to exercise the full action batch + Permit2 settlement without an RPC. LP suite covers `setV4PositionManager`, `PositionManagerUnset`, deadline/length-mismatch guards, allowlist on both input + output currencies, the post-call `OutputShortfall` slippage guard, and the independent `lpNonce` (separate from `swapNonce`).
+- **Fork**: `test/plugins/uniswap-v4/UniswapV4Plugin.fork.test.ts` — runs on `mainnetFork` and `baseFork` when `RPC_MAINNET` / `RPC_BASE` are set. Gated via `onlyOn(...)`; silently skipped on other networks. Uses the V3 `SWAP_EXACT_IN_SINGLE` Universal Router command for the happy path (deepest/most-stable liquidity); the V4-native single-hop encoding + a live LP-mint fork test are deferred behind a flagged `it.skip` until the v4 PositionManager + v4 PoolManager pool with adequate liquidity at the pinned block is staked out.
+- **Invariant**: `test/invariants/UniswapV4.invariant.t.sol` — 5 invariants (no token / ETH custody on the plugin, zero residual DAO→Permit2 allowance, swapNonce monotonic, etc.).
+- **Permission matrix**: `test/plugins/PluginSetup.unit.test.ts` — asserts `prepareInstallation` returns the **6**-grant set (EXECUTE / TRIGGER_SWAP / UPDATE_ROUTER / MANAGE_ALLOWLIST / UPGRADE_PLUGIN / MANAGE_POSITIONS).

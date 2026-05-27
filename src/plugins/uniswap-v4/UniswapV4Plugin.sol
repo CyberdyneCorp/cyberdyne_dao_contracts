@@ -10,6 +10,7 @@ import {IExecutor, Action} from "@aragon/osx-commons-contracts/src/executors/IEx
 import {IUniswapV4Plugin} from "./IUniswapV4Plugin.sol";
 import {IUniversalRouter} from "./IUniversalRouter.sol";
 import {IPermit2} from "./IPermit2.sol";
+import {IV4PositionManager} from "./IV4PositionManager.sol";
 
 /// @title UniswapV4Plugin
 /// @notice Vote-gated swap plugin for Aragon OSx DAOs. The DAO is the sole
@@ -26,6 +27,11 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
     bytes32 public constant UPDATE_ROUTER_PERMISSION_ID = keccak256("UPDATE_ROUTER_PERMISSION");
     bytes32 public constant MANAGE_ALLOWLIST_PERMISSION_ID =
         keccak256("MANAGE_ALLOWLIST_PERMISSION");
+    /// @notice keccak256("MANAGE_POSITIONS_PERMISSION") — gates v4 LP ops on
+    ///         `modifyLiquidities`. Shared name with `UniswapV3Plugin` so the
+    ///         subgraph can join both surfaces under one role.
+    bytes32 public constant MANAGE_POSITIONS_PERMISSION_ID =
+        keccak256("MANAGE_POSITIONS_PERMISSION");
 
     address public override universalRouter;
     address public override permit2;
@@ -37,21 +43,37 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
     /// @inheritdoc IUniswapV4Plugin
     uint256 public override swapNonce;
 
+    /// @notice v4-periphery PositionManager. Set at install or via
+    ///         `setV4PositionManager`. The v4 LP lifecycle (mint / increase /
+    ///         decrease / burn) routes through `modifyLiquidities` on this
+    ///         contract; tokens are pulled via Permit2.
+    address public override v4PositionManager;
+
+    /// @notice Monotonic counter making each LP-op `IExecutor.execute` callId
+    ///         unique. Separate from `swapNonce` so swap + LP histories don't
+    ///         alias in the subgraph.
+    uint256 public lpNonce;
+
     // Storage gap for future upgrades (see OZ §upgradeable storage_gaps).
-    // Decremented from 45 → 44 to account for the `swapNonce` slot.
-    uint256[44] private __gap;
+    // Decremented from 44 → 42 for `v4PositionManager` + `lpNonce`.
+    uint256[42] private __gap;
 
     /// @notice Initialize the plugin instance. Called once via the proxy constructor.
     /// @param _dao The DAO that owns this plugin instance.
     /// @param _universalRouter Address of the Uniswap Universal Router on this chain.
     /// @param _permit2 Address of the Permit2 contract.
     /// @param _poolManager Address of the Uniswap V4 PoolManager.
-    /// @param _initialAllowlist Initial set of tokens permitted to be swapped. Empty = no restriction.
+    /// @param _v4PositionManager Address of the v4-periphery PositionManager
+    ///        (zero is allowed at install — LP ops just revert until set via
+    ///        `setV4PositionManager`).
+    /// @param _initialAllowlist Initial set of tokens permitted to be swapped /
+    ///        LP'd. Empty = no restriction.
     function initialize(
         IDAO _dao,
         address _universalRouter,
         address _permit2,
         address _poolManager,
+        address _v4PositionManager,
         address[] calldata _initialAllowlist
     ) external initializer {
         __PluginUUPSUpgradeable_init(_dao);
@@ -59,6 +81,7 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
         universalRouter = _universalRouter;
         permit2 = _permit2;
         poolManager = _poolManager;
+        v4PositionManager = _v4PositionManager;
 
         if (_initialAllowlist.length > 0) {
             allowlistEnforced = true;
@@ -184,5 +207,149 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
             allowlistEnforced = true;
         }
         emit AllowedTokenSet(token, allowed);
+    }
+
+    /// @inheritdoc IUniswapV4Plugin
+    /// @dev Reuses `UPDATE_ROUTER_PERMISSION` — both router and PositionManager
+    ///      updates are migrations of an external Uniswap target; folding them
+    ///      under one permission keeps the install grant list compact.
+    function setV4PositionManager(
+        address newPositionManager
+    ) external override auth(UPDATE_ROUTER_PERMISSION_ID) {
+        address previous = v4PositionManager;
+        v4PositionManager = newPositionManager;
+        emit V4PositionManagerUpdated(previous, newPositionManager);
+    }
+
+    /// @inheritdoc IUniswapV4Plugin
+    /// @dev Pass-through to `IV4PositionManager.modifyLiquidities` — the v4
+    ///      action stream (`unlockData`) is built off-chain by the proposal and
+    ///      forwarded verbatim. The plugin shapes the surrounding Action[]:
+    ///        for each input currency:
+    ///          1. DAO→Permit2: approve `maxIn[i]` (exact)
+    ///          2. Permit2→PositionManager: approve `maxIn[i]` until `deadline`
+    ///        then:
+    ///          3. PositionManager.modifyLiquidities(unlockData, deadline)
+    ///        and for each input currency:
+    ///          4. DAO→Permit2: approve 0 (reset, no residual allowance)
+    ///      and after `execute`, asserts each output currency's DAO balance
+    ///      delta ≥ `minOut[i]` (revert OutputShortfall otherwise).
+    function modifyLiquidities(
+        bytes calldata unlockData,
+        uint256 deadline,
+        address[] calldata inputCurrencies,
+        uint256[] calldata maxIn,
+        address[] calldata outputCurrencies,
+        uint256[] calldata minOut
+    ) external override auth(MANAGE_POSITIONS_PERMISSION_ID) {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+        if (inputCurrencies.length != maxIn.length) revert LengthMismatch();
+        if (outputCurrencies.length != minOut.length) revert LengthMismatch();
+        if (v4PositionManager == address(0)) revert PositionManagerUnset();
+        _checkAllowlist(inputCurrencies, outputCurrencies);
+
+        // Snapshot output balances before the call — the slippage check.
+        uint256[] memory before_ = _snapshotBalances(outputCurrencies);
+
+        // Hoist the action-batch build into its own statement so the calldata
+        // args are off the stack before the executor call.
+        Action[] memory actions = _buildLpActions(unlockData, deadline, inputCurrencies, maxIn);
+
+        bytes32 callId = keccak256(abi.encodePacked("UNI_V4_LP:", lpNonce));
+        unchecked {
+            ++lpNonce;
+        }
+        // allowFailureMap = 0: any sub-action failure reverts everything (no
+        // half-finished state, no lingering Permit2 allowance).
+        IExecutor(address(dao())).execute(callId, actions, 0);
+
+        // Post-call slippage guard: every output currency must have grown by
+        // at least `minOut[i]` on the DAO.
+        _enforceOutputs(outputCurrencies, before_, minOut);
+
+        emit LiquidityModified(lpNonce);
+    }
+
+    function _checkAllowlist(
+        address[] calldata inputCurrencies,
+        address[] calldata outputCurrencies
+    ) private view {
+        if (!allowlistEnforced) return;
+        for (uint256 i; i < inputCurrencies.length; ++i) {
+            if (!allowedToken[inputCurrencies[i]]) revert TokenNotAllowed(inputCurrencies[i]);
+        }
+        for (uint256 i; i < outputCurrencies.length; ++i) {
+            if (!allowedToken[outputCurrencies[i]]) revert TokenNotAllowed(outputCurrencies[i]);
+        }
+    }
+
+    function _snapshotBalances(
+        address[] calldata currencies
+    ) private view returns (uint256[] memory snap) {
+        snap = new uint256[](currencies.length);
+        address daoAddr = address(dao());
+        for (uint256 i; i < currencies.length; ++i) {
+            snap[i] = IERC20(currencies[i]).balanceOf(daoAddr);
+        }
+    }
+
+    function _enforceOutputs(
+        address[] calldata currencies,
+        uint256[] memory before_,
+        uint256[] calldata minOut
+    ) private view {
+        address daoAddr = address(dao());
+        for (uint256 i; i < currencies.length; ++i) {
+            uint256 received = IERC20(currencies[i]).balanceOf(daoAddr) - before_[i];
+            if (received < minOut[i]) revert OutputShortfall(currencies[i], received, minOut[i]);
+        }
+    }
+
+    /// @dev Pulled out of `modifyLiquidities` to relieve stack pressure (the
+    ///      compiler hits the 16-local limit otherwise). Builds the
+    ///      `approve → Permit2.approve → PM.modifyLiquidities → approve(0)`
+    ///      batch for an arbitrary number of input currencies.
+    function _buildLpActions(
+        bytes calldata unlockData,
+        uint256 deadline,
+        address[] calldata inputCurrencies,
+        uint256[] calldata maxIn
+    ) private view returns (Action[] memory actions) {
+        address permit2_ = permit2;
+        address pm = v4PositionManager;
+        uint256 n = inputCurrencies.length;
+        // 2 actions per input (approve, Permit2.approve) + 1 modify + n resets.
+        actions = new Action[](3 * n + 1);
+
+        uint256 k;
+        for (uint256 i; i < n; ++i) {
+            actions[k++] = Action({
+                to: inputCurrencies[i],
+                value: 0,
+                data: abi.encodeCall(IERC20.approve, (permit2_, maxIn[i]))
+            });
+            actions[k++] = Action({
+                to: permit2_,
+                value: 0,
+                data: abi.encodeCall(
+                    IPermit2.approve,
+                    (inputCurrencies[i], pm, uint160(maxIn[i]), uint48(deadline))
+                )
+            });
+        }
+
+        actions[k++] = Action({
+            to: pm,
+            value: 0,
+            data: abi.encodeCall(IV4PositionManager.modifyLiquidities, (unlockData, deadline))
+        });
+
+        for (uint256 i; i < n; ++i) {
+            actions[k++] = Action({
+                to: inputCurrencies[i],
+                value: 0,
+                data: abi.encodeCall(IERC20.approve, (permit2_, 0))
+            });
+        }
     }
 }

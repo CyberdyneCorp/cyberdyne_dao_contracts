@@ -243,8 +243,14 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork"], () => {
         {
           pluginSetupRef: {versionTag: {release: 1, build: 1}, pluginSetupRepo: uniswapRepo},
           data: ethers.utils.defaultAbiCoder.encode(
-            ["address", "address", "address", "address[]"],
-            [externals.UNIVERSAL_ROUTER, externals.PERMIT2, externals.UNISWAP_V4_POOL_MANAGER, []]
+            ["address", "address", "address", "address", "address[]"],
+            [
+              externals.UNIVERSAL_ROUTER,
+              externals.PERMIT2,
+              externals.UNISWAP_V4_POOL_MANAGER,
+              ethers.constants.AddressZero, // v4PositionManager — set later via vote if used
+              [],
+            ]
           ),
         },
         {

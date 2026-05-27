@@ -70,6 +70,7 @@ async function deployProxied(
     universalRouter,
     permit2,
     poolManager,
+    ethers.constants.AddressZero, // v4PositionManager — swap fork test doesn't exercise LP
     initialAllowlist,
   ]);
   const Proxy = await ethers.getContractFactory("ERC1967Proxy", signer);

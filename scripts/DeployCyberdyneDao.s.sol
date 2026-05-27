@@ -183,6 +183,7 @@ contract DeployCyberdyneDao is Script {
                 OsxAddresses.universalRouter(block.chainid),
                 OsxAddresses.permit2(block.chainid),
                 OsxAddresses.uniswapV4PoolManager(block.chainid),
+                OsxAddresses.uniswapV4PositionManager(block.chainid),
                 new address[](0)
             )
         });

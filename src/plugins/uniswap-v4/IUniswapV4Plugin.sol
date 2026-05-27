@@ -24,16 +24,35 @@ interface IUniswapV4Plugin {
     /// @notice Emitted when the Universal Router target is migrated.
     event UniversalRouterUpdated(address indexed previous, address indexed current);
 
+    /// @notice Emitted when the v4 PositionManager target is migrated.
+    event V4PositionManagerUpdated(address indexed previous, address indexed current);
+
+    /// @notice Emitted on every successful `modifyLiquidities` call.
+    /// @param opNonce Monotonic counter used to derive the executor callId.
+    event LiquidityModified(uint256 indexed opNonce);
+
     // --- Errors ---
 
-    /// @notice Reverts when a swap targets a non-allowlisted token (only when allowlist is non-empty).
+    /// @notice Reverts when a swap or LP op targets a non-allowlisted token
+    ///         (only when the allowlist is enforced).
     error TokenNotAllowed(address token);
 
     /// @notice Reverts when the post-swap delta is less than `minAmountOut`.
     error SlippageExceeded(uint256 received, uint256 minExpected);
 
+    /// @notice Reverts when the post-LP-op balance delta on an output currency
+    ///         falls short of `minOut` (slippage guard for the DAO).
+    error OutputShortfall(address currency, uint256 received, uint256 minExpected);
+
     /// @notice Reverts when `deadline` has passed.
     error DeadlineExpired();
+
+    /// @notice Reverts when array lengths don't match (input vs. maxIn, output vs. minOut).
+    error LengthMismatch();
+
+    /// @notice Reverts when the v4 PositionManager isn't configured (build-1 plugin
+    ///         installed before the LP feature; call `setV4PositionManager` first).
+    error PositionManagerUnset();
 
     /// @notice Reverts when a placeholder function has not yet been implemented.
     error NotImplemented();
@@ -58,8 +77,40 @@ interface IUniswapV4Plugin {
         uint256 minAmountOut
     ) external;
 
+    /// @notice Run a v4 LP-lifecycle batch on the v4 PositionManager (mint,
+    ///         increase, decrease, burn — any combination encoded in
+    ///         `unlockData`). The DAO executes the call; the position NFT is
+    ///         owned by whichever `owner` the proposal encoded in MINT_POSITION
+    ///         (recommended: `dao()`). The plugin enforces:
+    ///           • allowance lifecycle for every input currency (DAO→Permit2
+    ///             exact-amount, Permit2→PositionManager `maxIn`, both reset to
+    ///             zero after the call so no allowance lingers), and
+    ///           • a post-call balance delta ≥ `minOut` for every output
+    ///             currency (slippage guard for the DAO).
+    ///         The proposal builds the v4 action stream off-chain (Uniswap SDK)
+    ///         and supplies `unlockData = abi.encode(actions, params)` verbatim.
+    /// @param unlockData       Encoded v4 action stream.
+    /// @param deadline         Unix ts after which the op reverts (forwarded to
+    ///                         the PositionManager and the Permit2 allowances).
+    /// @param inputCurrencies  ERC20 tokens the DAO pays (omit native ETH).
+    /// @param maxIn            Exact-amount allowance per input currency.
+    /// @param outputCurrencies Currencies the DAO expects to receive (any).
+    /// @param minOut           Minimum delta on each output currency.
+    function modifyLiquidities(
+        bytes calldata unlockData,
+        uint256 deadline,
+        address[] calldata inputCurrencies,
+        uint256[] calldata maxIn,
+        address[] calldata outputCurrencies,
+        uint256[] calldata minOut
+    ) external;
+
     /// @notice Update the Universal Router target (vote-gated).
     function setUniversalRouter(address newRouter) external;
+
+    /// @notice Update the v4 PositionManager target (vote-gated, reuses
+    ///         `UPDATE_ROUTER_PERMISSION` — both are Uniswap-endpoint updates).
+    function setV4PositionManager(address newPositionManager) external;
 
     /// @notice Toggle an entry in the token allowlist (vote-gated).
     function setAllowedToken(address token, bool allowed) external;
@@ -71,6 +122,8 @@ interface IUniswapV4Plugin {
     function permit2() external view returns (address);
 
     function poolManager() external view returns (address);
+
+    function v4PositionManager() external view returns (address);
 
     function allowedToken(address token) external view returns (bool);
 

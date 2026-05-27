@@ -38,19 +38,20 @@ function assertGrant(p: Permission, where: string, who: string, permissionId: st
 const FAKE_DAO = ethers.Wallet.createRandom().address;
 
 describe("PluginSetup (TRD §9 permission-matrix compliance)", () => {
-  it("UniswapV4PluginSetup grants the 5 expected permissions on install", async () => {
+  it("UniswapV4PluginSetup grants the 6 expected permissions on install", async () => {
     const [deployer] = await ethers.getSigners();
     const setup = await new UniswapV4PluginSetup__factory(deployer).deploy();
 
-    // Plausible install args.
+    // Plausible install args. v4PositionManager may be zero at install.
     const router = ethers.Wallet.createRandom().address;
     const permit2 = ethers.Wallet.createRandom().address;
     const poolManager = ethers.Wallet.createRandom().address;
+    const v4PositionManager = ethers.Wallet.createRandom().address;
     const initialAllowlist: string[] = [];
 
     const data = ethers.utils.defaultAbiCoder.encode(
-      ["address", "address", "address", "address[]"],
-      [router, permit2, poolManager, initialAllowlist]
+      ["address", "address", "address", "address", "address[]"],
+      [router, permit2, poolManager, v4PositionManager, initialAllowlist]
     );
 
     // callStatic — we only inspect the returned permissions, no side effects we care about.
@@ -58,13 +59,14 @@ describe("PluginSetup (TRD §9 permission-matrix compliance)", () => {
     const permissions = result.preparedSetupData.permissions as unknown as Permission[];
     const plugin = result.plugin;
 
-    expect(permissions.length).to.equal(5);
+    expect(permissions.length).to.equal(6);
 
     assertGrant(permissions[0], FAKE_DAO, plugin, EXECUTE_PERMISSION_ID);
     assertGrant(permissions[1], plugin, FAKE_DAO, ethers.utils.id("TRIGGER_SWAP_PERMISSION"));
     assertGrant(permissions[2], plugin, FAKE_DAO, ethers.utils.id("UPDATE_ROUTER_PERMISSION"));
     assertGrant(permissions[3], plugin, FAKE_DAO, ethers.utils.id("MANAGE_ALLOWLIST_PERMISSION"));
     assertGrant(permissions[4], plugin, FAKE_DAO, UPGRADE_PLUGIN_PERMISSION_ID);
+    assertGrant(permissions[5], plugin, FAKE_DAO, ethers.utils.id("MANAGE_POSITIONS_PERMISSION"));
   });
 
   it("AaveLendingPluginSetup grants the 5 expected permissions on install", async () => {

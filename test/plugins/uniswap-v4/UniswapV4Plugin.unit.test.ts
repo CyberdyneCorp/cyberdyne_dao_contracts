@@ -18,6 +18,8 @@ import {
   MockPermit2__factory,
   MockUniversalRouter,
   MockUniversalRouter__factory,
+  MockV4PositionManager,
+  MockV4PositionManager__factory,
   TestERC20,
   TestERC20__factory,
   UniswapV4Plugin,
@@ -29,6 +31,7 @@ import type {SnapshotRestorer} from "@nomicfoundation/hardhat-network-helpers";
 const TRIGGER_SWAP_PERMISSION_ID = ethers.utils.id("TRIGGER_SWAP_PERMISSION");
 const UPDATE_ROUTER_PERMISSION_ID = ethers.utils.id("UPDATE_ROUTER_PERMISSION");
 const MANAGE_ALLOWLIST_PERMISSION_ID = ethers.utils.id("MANAGE_ALLOWLIST_PERMISSION");
+const MANAGE_POSITIONS_PERMISSION_ID = ethers.utils.id("MANAGE_POSITIONS_PERMISSION");
 const EXECUTE_PERMISSION_ID = ethers.utils.id("EXECUTE_PERMISSION");
 
 // Plausible mainnet PoolManager — unit tests don't actually hit it; we just
@@ -50,6 +53,7 @@ async function deployProxied(
     universalRouter,
     permit2,
     poolManager,
+    ethers.constants.AddressZero, // v4PositionManager — set later via setV4PositionManager
     initialAllowlist,
   ]);
   const ProxyFactory = await ethers.getContractFactory("ERC1967Proxy", signer);
@@ -112,6 +116,7 @@ describe("UniswapV4Plugin", () => {
     await dao.grant(plugin.address, await voter.getAddress(), TRIGGER_SWAP_PERMISSION_ID);
     await dao.grant(plugin.address, await voter.getAddress(), UPDATE_ROUTER_PERMISSION_ID);
     await dao.grant(plugin.address, await voter.getAddress(), MANAGE_ALLOWLIST_PERMISSION_ID);
+    await dao.grant(plugin.address, await voter.getAddress(), MANAGE_POSITIONS_PERMISSION_ID);
     // Plugin needs EXECUTE on the DAO to run its action batch.
     await dao.grant(dao.address, plugin.address, EXECUTE_PERMISSION_ID);
 
@@ -134,7 +139,14 @@ describe("UniswapV4Plugin", () => {
 
     it("cannot be initialized twice", async () => {
       await expect(
-        plugin.initialize(dao.address, router.address, permit2.address, FAKE_POOL_MANAGER, [])
+        plugin.initialize(
+          dao.address,
+          router.address,
+          permit2.address,
+          FAKE_POOL_MANAGER,
+          ethers.constants.AddressZero,
+          []
+        )
       ).to.be.revertedWith("Initializable: contract is already initialized");
     });
 
@@ -147,6 +159,7 @@ describe("UniswapV4Plugin", () => {
         router.address,
         permit2.address,
         FAKE_POOL_MANAGER,
+        ethers.constants.AddressZero,
         initialAllowlist,
       ]);
       const ProxyFactory = await ethers.getContractFactory("ERC1967Proxy", deployer);
@@ -508,6 +521,161 @@ describe("UniswapV4Plugin", () => {
         ethers.utils.solidityKeccak256(["string", "uint256"], ["UNI_V4_SWAP:", 1])
       );
       expect(id1).to.not.equal(id2);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // V4 LP lifecycle: modifyLiquidities is a pass-through to the v4-periphery
+  // PositionManager. The mock PM ignores the unlockData and instead is
+  // pre-configured per test with pull legs (mint/increase — Permit2 pulls
+  // tokens from the DAO) and push legs (decrease/burn — PM sends tokens to
+  // the DAO). All tests share the DAO + plugin + Permit2 from the outer
+  // beforeEach; we deploy a fresh MockV4PositionManager per `describe`.
+  // -------------------------------------------------------------------------
+  describe("modifyLiquidities (v4 LP lifecycle)", () => {
+    let pm: MockV4PositionManager;
+    const DUMMY_UNLOCK = "0x1234";
+
+    beforeEach(async () => {
+      pm = await new MockV4PositionManager__factory(deployer).deploy();
+      await pm.deployed();
+      await pm.setPermit2(permit2.address);
+      // Wire the v4 PositionManager via the vote-gated setter.
+      await plugin.connect(voter).setV4PositionManager(pm.address);
+    });
+
+    it("setV4PositionManager emits + updates storage; rejects unauthorized", async () => {
+      expect(await plugin.v4PositionManager()).to.equal(pm.address);
+      const next = ethers.Wallet.createRandom().address;
+      await expect(plugin.connect(voter).setV4PositionManager(next))
+        .to.emit(plugin, "V4PositionManagerUpdated")
+        .withArgs(pm.address, next);
+      await expect(plugin.connect(stranger).setV4PositionManager(next)).to.be.reverted;
+    });
+
+    it("reverts PositionManagerUnset when never configured", async () => {
+      // Fresh plugin instance with the PM intentionally not set.
+      const fresh = await deployProxied(
+        deployer,
+        dao.address,
+        router.address,
+        permit2.address,
+        FAKE_POOL_MANAGER,
+        []
+      );
+      await dao.grant(fresh.address, await voter.getAddress(), MANAGE_POSITIONS_PERMISSION_ID);
+      await dao.grant(dao.address, fresh.address, EXECUTE_PERMISSION_ID);
+      await expect(
+        fresh.connect(voter).modifyLiquidities(DUMMY_UNLOCK, FUTURE_DEADLINE, [], [], [], [])
+      ).to.be.revertedWithCustomError(fresh, "PositionManagerUnset");
+    });
+
+    it("reverts DeadlineExpired in the past + LengthMismatch on misaligned arrays", async () => {
+      await expect(
+        plugin.connect(voter).modifyLiquidities(DUMMY_UNLOCK, 1, [], [], [], [])
+      ).to.be.revertedWithCustomError(plugin, "DeadlineExpired");
+      await expect(
+        plugin
+          .connect(voter)
+          .modifyLiquidities(DUMMY_UNLOCK, FUTURE_DEADLINE, [tokenIn.address], [], [], [])
+      ).to.be.revertedWithCustomError(plugin, "LengthMismatch");
+      await expect(
+        plugin
+          .connect(voter)
+          .modifyLiquidities(DUMMY_UNLOCK, FUTURE_DEADLINE, [], [], [tokenOut.address], [])
+      ).to.be.revertedWithCustomError(plugin, "LengthMismatch");
+    });
+
+    it("reverts when caller lacks MANAGE_POSITIONS", async () => {
+      await expect(
+        plugin.connect(stranger).modifyLiquidities(DUMMY_UNLOCK, FUTURE_DEADLINE, [], [], [], [])
+      ).to.be.reverted;
+    });
+
+    it("enforces the allowlist on both input and output currencies", async () => {
+      // Allow tokenIn but NOT tokenOut, then attempt a mint paying tokenIn
+      // and an op receiving tokenOut → output side reverts.
+      await plugin.connect(voter).setAllowedToken(tokenIn.address, true);
+      await expect(
+        plugin
+          .connect(voter)
+          .modifyLiquidities(
+            DUMMY_UNLOCK,
+            FUTURE_DEADLINE,
+            [tokenIn.address],
+            [100],
+            [tokenOut.address],
+            [1]
+          )
+      )
+        .to.be.revertedWithCustomError(plugin, "TokenNotAllowed")
+        .withArgs(tokenOut.address);
+    });
+
+    it("mint leg: DAO→Permit2 allowance pulled to zero post-call, action emitted", async () => {
+      const amountIn = ethers.utils.parseUnits("1000", 6);
+      await tokenIn.mint(dao.address, amountIn);
+      // Configure PM to pull `amountIn` of tokenIn from the DAO via Permit2.
+      await pm.addPullLeg(tokenIn.address, amountIn, dao.address);
+
+      await expect(
+        plugin
+          .connect(voter)
+          .modifyLiquidities(DUMMY_UNLOCK, FUTURE_DEADLINE, [tokenIn.address], [amountIn], [], [])
+      )
+        .to.emit(plugin, "LiquidityModified")
+        .withArgs(1); // lpNonce after the increment
+
+      // Funds pulled from the DAO into the PM via Permit2; plugin holds nothing.
+      expect(await tokenIn.balanceOf(dao.address)).to.equal(0);
+      expect(await tokenIn.balanceOf(pm.address)).to.equal(amountIn);
+      expect(await tokenIn.balanceOf(plugin.address)).to.equal(0);
+      // No residual DAO→Permit2 allowance after the reset action.
+      expect(await tokenIn.allowance(dao.address, permit2.address)).to.equal(0);
+    });
+
+    it("decrease/collect leg: outputs land in the DAO and pass minOut check", async () => {
+      const amountOut = ethers.utils.parseUnits("500", 6);
+      await tokenOut.mint(pm.address, amountOut);
+      await pm.addPushLeg(tokenOut.address, amountOut, dao.address);
+
+      await plugin
+        .connect(voter)
+        .modifyLiquidities(DUMMY_UNLOCK, FUTURE_DEADLINE, [], [], [tokenOut.address], [amountOut]);
+      expect(await tokenOut.balanceOf(dao.address)).to.equal(amountOut);
+    });
+
+    it("reverts OutputShortfall when post-balance delta is below minOut", async () => {
+      // Push only half of what the proposal demands.
+      const got = ethers.utils.parseUnits("100", 6);
+      const want = ethers.utils.parseUnits("250", 6);
+      await tokenOut.mint(pm.address, got);
+      await pm.addPushLeg(tokenOut.address, got, dao.address);
+
+      await expect(
+        plugin
+          .connect(voter)
+          .modifyLiquidities(DUMMY_UNLOCK, FUTURE_DEADLINE, [], [], [tokenOut.address], [want])
+      )
+        .to.be.revertedWithCustomError(plugin, "OutputShortfall")
+        .withArgs(tokenOut.address, got, want);
+    });
+
+    it("lpNonce increments per successful op, separate from swapNonce", async () => {
+      const swapNonceStart = await plugin.swapNonce();
+      const amountOut = ethers.utils.parseUnits("1", 18);
+      await tokenOut.mint(pm.address, amountOut.mul(2));
+      await pm.addPushLeg(tokenOut.address, amountOut, dao.address);
+
+      await plugin
+        .connect(voter)
+        .modifyLiquidities(DUMMY_UNLOCK, FUTURE_DEADLINE, [], [], [tokenOut.address], [amountOut]);
+      await plugin
+        .connect(voter)
+        .modifyLiquidities(DUMMY_UNLOCK, FUTURE_DEADLINE, [], [], [tokenOut.address], [amountOut]);
+
+      expect(await plugin.lpNonce()).to.equal(2);
+      expect(await plugin.swapNonce()).to.equal(swapNonceStart); // unchanged
     });
   });
 });

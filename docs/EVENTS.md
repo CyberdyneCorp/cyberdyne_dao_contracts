@@ -21,9 +21,13 @@ Signatures freeze at **P1**. Any change after P5 (bootstrap) is breaking for the
 | `SwapExecuted` | `(address tokenIn, uint256 amountIn, address tokenOut, uint256 amountOutActual)` | `tokenIn`, `tokenOut` | `Swap` | DAO overview → Swap history; Proposal detail (post-execute audit) |
 | `AllowedTokenSet` | `(address token, bool allowed)` | `token` | `TokenAllowlistEntry` (mutable) | Admin/inspector: trade allowlist |
 | `UniversalRouterUpdated` | `(address previous, address current)` | `previous`, `current` | `RouterMigration` | Inspector: router-history banner |
+| `V4PositionManagerUpdated` | `(address previous, address current)` | `previous`, `current` | `V4PositionManagerMigration` | Inspector: PM-history banner |
+| `LiquidityModified` | `(uint256 opNonce)` | `opNonce` | `V4LpOp` (created) | Positions screen → V4 LP history |
 
 **OSx-emitted siblings consumed alongside:**
-- `IExecutor.Executed` — emitted by the DAO when the plugin runs the 3-action approve/route/revoke batch. The UI links `Executed.callId` → the originating `SwapExecuted` via the deterministic call-id scheme defined in TRD §6.1.
+- `IExecutor.Executed` — emitted by the DAO when the plugin runs an action batch. The UI links `Executed.callId` → the originating `SwapExecuted` (callId scheme `keccak256("UNI_V4_SWAP:" || swapNonce)`) or `LiquidityModified` (callId scheme `keccak256("UNI_V4_LP:" || lpNonce)`) — separate nonces keep swap and LP histories distinct.
+
+**Read-side joins:** V4 LP `LiquidityModified` carries only `opNonce`; for the position NFTs themselves the UI reads `IV4PositionManager` directly (tokenId, owner, range, liquidity) — same pattern as the V3 surface.
 
 ---
 

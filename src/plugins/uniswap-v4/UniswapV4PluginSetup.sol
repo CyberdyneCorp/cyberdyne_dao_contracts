@@ -23,7 +23,11 @@ contract UniswapV4PluginSetup is PluginUpgradeableSetup {
     constructor() PluginUpgradeableSetup(address(new UniswapV4Plugin())) {}
 
     /// @inheritdoc IPluginSetup
-    /// @param _data ABI-encoded `(address universalRouter, address permit2, address poolManager, address[] initialAllowlist)`.
+    /// @param _data ABI-encoded
+    ///        `(address universalRouter, address permit2, address poolManager,
+    ///          address v4PositionManager, address[] initialAllowlist)`.
+    ///        `v4PositionManager` may be `address(0)` — LP ops then revert
+    ///        `PositionManagerUnset` until set via `setV4PositionManager`.
     function prepareInstallation(
         address _dao,
         bytes calldata _data
@@ -32,18 +36,19 @@ contract UniswapV4PluginSetup is PluginUpgradeableSetup {
             address universalRouter,
             address permit2,
             address poolManager,
+            address v4PositionManager,
             address[] memory initialAllowlist
-        ) = abi.decode(_data, (address, address, address, address[]));
+        ) = abi.decode(_data, (address, address, address, address, address[]));
 
         bytes memory initCalldata = abi.encodeCall(
             UniswapV4Plugin.initialize,
-            (IDAO(_dao), universalRouter, permit2, poolManager, initialAllowlist)
+            (IDAO(_dao), universalRouter, permit2, poolManager, v4PositionManager, initialAllowlist)
         );
 
         plugin = implementation().deployUUPSProxy(initCalldata);
 
         PermissionLib.MultiTargetPermission[]
-            memory permissions = new PermissionLib.MultiTargetPermission[](5);
+            memory permissions = new PermissionLib.MultiTargetPermission[](6);
 
         // 1) DAO grants the plugin EXECUTE_PERMISSION so the plugin can build Action[]
         //    batches (approve / route / revoke) and call dao.execute.
@@ -86,6 +91,14 @@ contract UniswapV4PluginSetup is PluginUpgradeableSetup {
             condition: address(0),
             permissionId: keccak256("UPGRADE_PLUGIN_PERMISSION")
         });
+        // 6) Vote-gated v4 LP-lifecycle (modifyLiquidities).
+        permissions[5] = PermissionLib.MultiTargetPermission({
+            operation: PermissionLib.Operation.Grant,
+            where: plugin,
+            who: _dao,
+            condition: address(0),
+            permissionId: UniswapV4Plugin(plugin).MANAGE_POSITIONS_PERMISSION_ID()
+        });
 
         preparedSetupData.permissions = permissions;
     }
@@ -105,7 +118,7 @@ contract UniswapV4PluginSetup is PluginUpgradeableSetup {
         address _dao,
         SetupPayload calldata _payload
     ) external pure returns (PermissionLib.MultiTargetPermission[] memory permissions) {
-        permissions = new PermissionLib.MultiTargetPermission[](5);
+        permissions = new PermissionLib.MultiTargetPermission[](6);
 
         permissions[0] = PermissionLib.MultiTargetPermission({
             operation: PermissionLib.Operation.Revoke,
@@ -141,6 +154,13 @@ contract UniswapV4PluginSetup is PluginUpgradeableSetup {
             who: _dao,
             condition: address(0),
             permissionId: keccak256("UPGRADE_PLUGIN_PERMISSION")
+        });
+        permissions[5] = PermissionLib.MultiTargetPermission({
+            operation: PermissionLib.Operation.Revoke,
+            where: _payload.plugin,
+            who: _dao,
+            condition: address(0),
+            permissionId: keccak256("MANAGE_POSITIONS_PERMISSION")
         });
     }
 }

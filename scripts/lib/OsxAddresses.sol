@@ -89,6 +89,15 @@ library OsxAddresses {
         revert UnsupportedChain(chainId);
     }
 
+    function uniswapV4PositionManager(uint256 chainId) internal pure returns (address) {
+        // Uniswap v4-periphery PositionManager. Verified on a mainnet fork via
+        // `poolManager()` reading the canonical mainnet v4 PoolManager.
+        chainId = _canonical(chainId);
+        if (chainId == 1) return 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e; // mainnet
+        if (chainId == 8453) return 0x7C5f5A4bBd8fD63184577525326123B519429bDc; // base
+        revert UnsupportedChain(chainId);
+    }
+
     /// @notice TokenVoting plugin `PluginRepo` address per chain.
     /// @dev    Returns `address(0)` ("not configured") for every chain by
     ///         default. The TokenVoting repo is published by the SEPARATE

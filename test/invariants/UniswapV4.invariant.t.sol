@@ -65,15 +65,17 @@ contract UniswapV4Handler is Test {
         );
 
         bytes[] memory inputs = new bytes[](0);
-        try plugin.swap(
-            "",
-            inputs,
-            block.timestamp + 1 hours,
-            address(tokenIn),
-            amountIn,
-            address(tokenOut),
-            minOut
-        ) {
+        try
+            plugin.swap(
+                "",
+                inputs,
+                block.timestamp + 1 hours,
+                address(tokenIn),
+                amountIn,
+                address(tokenOut),
+                minOut
+            )
+        {
             ghostSuccessfulSwaps++;
         } catch {
             ghostFailedSwaps++;
@@ -103,7 +105,8 @@ contract UniswapV4InvariantTest is StdInvariant, Test {
     UniswapV4Handler public handler;
 
     bytes32 internal constant TRIGGER_SWAP_PERMISSION_ID = keccak256("TRIGGER_SWAP_PERMISSION");
-    bytes32 internal constant MANAGE_ALLOWLIST_PERMISSION_ID = keccak256("MANAGE_ALLOWLIST_PERMISSION");
+    bytes32 internal constant MANAGE_ALLOWLIST_PERMISSION_ID =
+        keccak256("MANAGE_ALLOWLIST_PERMISSION");
     bytes32 internal constant EXECUTE_PERMISSION_ID = keccak256("EXECUTE_PERMISSION");
 
     function setUp() public {
@@ -124,6 +127,7 @@ contract UniswapV4InvariantTest is StdInvariant, Test {
                 address(router),
                 address(permit2),
                 address(0xbeef), // poolManager — opaque to the plugin's logic
+                address(0), // v4PositionManager — swap-only invariants don't need it
                 new address[](0)
             )
         );
