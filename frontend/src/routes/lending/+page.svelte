@@ -64,6 +64,30 @@
     return (Number(hf.toString()) / 1e18).toFixed(3);
   }
 
+  /** Banner tier from health factor. ∞ → "none" (no debt to show). */
+  function healthTier(hf: ethers.BigNumber): "none" | "ok" | "warn" | "danger" {
+    if (hf.gt(ethers.constants.MaxUint256.div(2))) return "none";
+    // 1e18 fixed-point thresholds: ≥ 1.5 ok, ≥ 1.0 warn, < 1.0 danger.
+    const ONE = ethers.BigNumber.from("1000000000000000000");
+    const ONE_AND_HALF = ONE.mul(3).div(2);
+    if (hf.gte(ONE_AND_HALF)) return "ok";
+    if (hf.gte(ONE)) return "warn";
+    return "danger";
+  }
+
+  function healthBlurb(tier: "none" | "ok" | "warn" | "danger"): string {
+    switch (tier) {
+      case "none":
+        return "DAO has no outstanding AAVE debt — health factor is undefined.";
+      case "ok":
+        return "Healthy. Health factor ≥ 1.5 means the position has headroom against price moves.";
+      case "warn":
+        return "Caution: health factor < 1.5. A modest adverse price move could push the DAO toward liquidation. Avoid new borrows; consider repaying or supplying more collateral.";
+      case "danger":
+        return "Liquidatable: health factor < 1.0. The position can be liquidated right now. Repay or top up collateral immediately.";
+    }
+  }
+
   // --- Propose: supply / withdraw / borrow / repay ---
   type Op = "supply" | "withdraw" | "borrow" | "repay";
   let op: Op = "supply";
@@ -118,6 +142,19 @@
           <tr><th>Op nonce</th><td>{data.opNonce.toString()}</td></tr>
         </tbody>
       </table>
+
+      {@const tier = healthTier(data.account.healthFactor)}
+      {#if tier !== "none"}
+        <div class="hf-banner hf-{tier}">
+          <strong>Health factor: {fmtHealth(data.account.healthFactor)}</strong>
+          <span>{healthBlurb(tier)}</span>
+        </div>
+      {:else}
+        <div class="hf-banner hf-none">
+          <strong>No debt.</strong>
+          <span>{healthBlurb(tier)}</span>
+        </div>
+      {/if}
 
       <h2>Account summary</h2>
       <table>
@@ -199,5 +236,41 @@
   .form input,
   .form select {
     min-width: 200px;
+  }
+  .hf-banner {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    margin: 0.5rem 0 1rem;
+    border: 1px solid;
+  }
+  .hf-banner strong {
+    font-size: 1rem;
+  }
+  .hf-banner span {
+    font-size: 0.85rem;
+    opacity: 0.9;
+  }
+  .hf-ok {
+    background: #e6f4ea;
+    border-color: #34a853;
+    color: #1e5e2c;
+  }
+  .hf-warn {
+    background: #fff3cd;
+    border-color: #f0a500;
+    color: #8a4a00;
+  }
+  .hf-danger {
+    background: #fde2e2;
+    border-color: #b00020;
+    color: #7a0014;
+  }
+  .hf-none {
+    background: #f1f3f4;
+    border-color: #c0c0c0;
+    color: #555;
   }
 </style>
