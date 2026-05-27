@@ -106,6 +106,12 @@ interface ICostRegistryPlugin {
     ///         due. Missed periods are skipped (no back-pay / no stacking).
     function processDue(uint256 offset, uint256 limit) external;
 
+    /// @notice Convenience crank: pay the first `MAX_PER_PAGE` due entries from
+    ///         index 0 without the caller tracking an offset. Equivalent to
+    ///         `processDue(0, MAX_PER_PAGE)`. For registries larger than one
+    ///         page, paginate with `processDue` to reach later entries.
+    function processAllDue() external;
+
     // --- Views ---
 
     function paymentToken() external view returns (address);

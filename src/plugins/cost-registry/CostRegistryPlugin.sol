@@ -144,6 +144,20 @@ contract CostRegistryPlugin is PluginUUPSUpgradeable, ICostRegistryPlugin {
     ///      external `execute`, so a payee that reenters cannot trigger a second
     ///      payment for the same entry in the same call.
     function processDue(uint256 offset, uint256 limit) external override {
+        _processDue(offset, limit);
+    }
+
+    /// @inheritdoc ICostRegistryPlugin
+    /// @dev Convenience crank for keepers that don't want to track an offset.
+    ///      Pays the first `MAX_PER_PAGE` due entries from index 0 — i.e.
+    ///      genuinely "all due" for any registry with `entryCount() <=
+    ///      MAX_PER_PAGE`. Larger registries still need paginated `processDue`
+    ///      calls to reach entries past the first page.
+    function processAllDue() external override {
+        _processDue(0, MAX_PER_PAGE);
+    }
+
+    function _processDue(uint256 offset, uint256 limit) private {
         if (limit == 0) revert PageSizeZero();
         if (limit > MAX_PER_PAGE) limit = MAX_PER_PAGE;
 

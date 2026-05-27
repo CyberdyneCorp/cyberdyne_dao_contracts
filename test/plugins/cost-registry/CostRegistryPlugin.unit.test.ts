@@ -347,6 +347,19 @@ describe("CostRegistryPlugin", () => {
       expect(await token.balanceOf(aws)).to.equal(0);
     });
 
+    it("processAllDue() pays the whole (sub-page) registry without an offset", async () => {
+      await plugin.connect(voter).registerEntry("AWS", "", usdc(500), 10, aws);
+      await plugin.connect(voter).registerEntry("OpenAI", "", usdc(300), 10, openai);
+      await fundDao(usdc(10_000));
+      await time.increase(11 * DAY);
+
+      await expect(plugin.connect(stranger).processAllDue())
+        .to.emit(plugin, "CostsProcessed")
+        .withArgs(0, 2, 0); // offset 0, 2 paid, no failures
+      expect(await token.balanceOf(aws)).to.equal(usdc(500));
+      expect(await token.balanceOf(openai)).to.equal(usdc(300));
+    });
+
     it("skips inactive (removed) entries", async () => {
       await plugin.connect(voter).registerEntry("AWS", "", usdc(500), 10, aws);
       await plugin.connect(voter).removeEntry(0);

@@ -60,6 +60,11 @@ services…) that also disburses them in USDC.
   walking `offset`. No global cursor is needed — idempotency is per-entry via
   `lastPaidAt`, so a re-run on the same window only pays whatever has since come
   due (nothing, if just paid).
+- **`processAllDue()` convenience:** equivalent to `processDue(0, MAX_PER_PAGE)`
+  — pays the first page of due entries without the keeper tracking an offset.
+  Genuinely "all due" for any registry with `entryCount() <= MAX_PER_PAGE`;
+  larger registries still need paginated `processDue` for entries past the
+  first page. Both entry points share the private `_processDue(offset, limit)`.
 - **Per-entry failure tolerance:** `allowFailureMap = (1 << count) - 1`, so one
   payee whose transfer reverts (e.g. the DAO ran out of USDC mid-batch) never
   blocks the rest. `CostsProcessed(fromIndex, count, failureMap)` surfaces the
