@@ -472,7 +472,7 @@ Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 
 - [ ] 🟡 **Pre-submit quote previews** for V3 + V4 mint. Show expected `liquidity` + counter-amount + post-mint balances so the form doesn't silently build a tx that will revert.
 - [ ] 🟡 **AAVE health-factor banner** on the lending page — read `Pool.getUserAccountData(dao)` and surface the current value + post-borrow projection.
 - [ ] 🟡 **Proposal-execution simulation.** `eth_call` the proposal's actions against the post-vote state on the proposal-detail page before vote-end so reverts (bad slippage, expired deadline, insufficient balance) surface early.
-- [ ] 🟡 **Wrong-network warning** in `ProposeAction.svelte` — today it silently falls back to "copy calldata" when the connected chain has no TokenVoting entry in `chains.ts`.
+- [x] ✅ **Wrong-network warning.** `ProposeAction.svelte` now distinguishes three failure modes: (1) wallet disconnected → "Connect a wallet" prompt; (2) connected to a chain not in `chains.ts` → explicit wrong-network warning listing supported chainIds; (3) connected to a known chain but no `PUBLIC_DAO_*` env → existing copy-calldata fallback with named chain context.
 - [ ] 🟡 **V3 fee/PnL view.** Positions browser already shows liquidity + ticks; add uncollected fees (`positions(tokenId).tokensOwed0/1`) and rough USD value per row (one extra RPC per row).
 - [ ] 🔵 **IPFS proposal-metadata pinning.** Slide 12 claims it; the frontend submits `bytes("")` today. Wire a `web3.storage` / Pinata call before `proposeActions` or drop the claim.
 - [ ] 🔵 **V4 LP form validation.** `sortCurrencies()` auto-sorts, but the form still accepts the same address in both currency fields.

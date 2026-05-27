@@ -12,7 +12,7 @@
 -->
 <script lang="ts">
   import {wallet, signer} from "$lib/wallet";
-  import {chainConfig} from "$lib/chains";
+  import {chainConfig, supportedChainIds} from "$lib/chains";
   import {governanceConfigured, proposeActions} from "$lib/governance";
   import type {ProposalAction} from "$lib/actions";
 
@@ -21,8 +21,17 @@
   let msg: string | null = null;
   let busy = false;
 
-  $: cfg = $wallet.status === "connected" ? chainConfig($wallet.chainId) : undefined;
+  $: connected = $wallet.status === "connected";
+  $: connectedChainId =
+    $wallet.status === "connected" ? ($wallet.chainId as number) : undefined;
+  $: cfg = connectedChainId !== undefined ? chainConfig(connectedChainId) : undefined;
   $: hasGov = cfg ? governanceConfigured(cfg) : false;
+  // Distinguish three failure modes so the user gets a useful message:
+  //   1. wallet not connected                    → connect-wallet prompt
+  //   2. connected to a chain absent from chains → wrong-network warning
+  //   3. connected to a known chain but governance addr not set in env → existing copy-calldata fallback
+  $: chainKnown = connected ? cfg !== undefined : true;
+  $: chainListLabel = supportedChainIds().join(", ");
   // Normalize to an array — the rest of the component treats single + multi identically.
   $: actions = action == null ? [] : Array.isArray(action) ? action : [action];
   $: summary =
@@ -79,8 +88,19 @@
       <button on:click={submit} disabled={busy}>
         {busy ? "Submitting…" : `Submit as ${actions.length === 1 ? "proposal" : `${actions.length}-action proposal`}`}
       </button>
+    {:else if !connected}
+      <span class="warn">Connect a wallet to submit a proposal.</span>
+    {:else if !chainKnown}
+      <span class="warn">
+        Wrong network: chainId <strong>{connectedChainId}</strong> is not in <code>chains.ts</code>.
+        Switch to one of: <code>{chainListLabel}</code>.
+      </span>
     {:else}
-      <span class="muted">No governance plugin configured — copy the calldata for an external builder.</span>
+      <span class="muted">
+        Connected to <strong>{cfg?.name ?? "?"}</strong> (chainId {connectedChainId}) but no
+        governance plugin is wired in <code>PUBLIC_DAO_*</code> for this chain — paste the
+        calldata into your DAO's proposal builder, or set the governance addr in your env.
+      </span>
     {/if}
     <button on:click={copy}>Copy calldata</button>
   </div>
@@ -99,5 +119,18 @@
     gap: 0.5rem;
     align-items: center;
     flex-wrap: wrap;
+  }
+  .warn {
+    color: #8a4a00;
+    background: #fff3cd;
+    padding: 0.4rem 0.6rem;
+    border-radius: 3px;
+    border: 1px solid #ffe7a0;
+    font-size: 0.9rem;
+  }
+  .warn code {
+    background: rgba(0, 0, 0, 0.05);
+    padding: 0.05rem 0.25rem;
+    border-radius: 2px;
   }
 </style>
