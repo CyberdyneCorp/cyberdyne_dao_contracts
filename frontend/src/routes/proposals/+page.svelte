@@ -29,6 +29,9 @@
     | "raw"
     | "uniswap-setRouter"
     | "uniswap-setAllowedToken"
+    | "uniswap-setV4PositionManager"
+    | "uniswapV3-setPositionManager"
+    | "uniswapV3-setAllowedToken"
     | "aave-setAdapter"
     | "aave-setAllowedAsset"
     | "payroll-removeRecipient"
@@ -68,6 +71,15 @@
           break;
         case "uniswap-setAllowedToken":
           built = actions.uniSetAllowedToken(cfg, argA, argB.toLowerCase() === "true");
+          break;
+        case "uniswap-setV4PositionManager":
+          built = actions.v4SetPositionManager(cfg, argA);
+          break;
+        case "uniswapV3-setPositionManager":
+          built = actions.v3SetPositionManager(cfg, argA);
+          break;
+        case "uniswapV3-setAllowedToken":
+          built = actions.v3SetAllowedToken(cfg, argA, argB.toLowerCase() === "true");
           break;
         case "aave-setAdapter":
           built = actions.aaveSetAdapter(cfg, argA);
@@ -175,6 +187,7 @@
 
   const needsArgB = new Set<Kind>([
     "uniswap-setAllowedToken",
+    "uniswapV3-setAllowedToken",
     "aave-setAllowedAsset",
     "payroll-setAmount",
     "raw",
@@ -203,7 +216,10 @@
       <select bind:value={kind}>
         <option value="raw">Raw call (any contract) — to, data, value</option>
         <option value="uniswap-setRouter">Uniswap.setUniversalRouter(address)</option>
-        <option value="uniswap-setAllowedToken">Uniswap.setAllowedToken(address, bool)</option>
+        <option value="uniswap-setAllowedToken">UniswapV4.setAllowedToken(address, bool)</option>
+        <option value="uniswap-setV4PositionManager">UniswapV4.setV4PositionManager(address)</option>
+        <option value="uniswapV3-setPositionManager">UniswapV3.setPositionManager(address)</option>
+        <option value="uniswapV3-setAllowedToken">UniswapV3.setAllowedToken(address, bool)</option>
         <option value="aave-setAdapter">AAVE.setAdapter(address)</option>
         <option value="aave-setAllowedAsset">AAVE.setAllowedAsset(address, bool)</option>
         <option value="payroll-removeRecipient">Payroll.removeRecipient(address)</option>

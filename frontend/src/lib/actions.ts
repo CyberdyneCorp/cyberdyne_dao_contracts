@@ -22,6 +22,14 @@
 import {ethers} from "ethers";
 import {getAbi} from "@cyberdyne/dao-contracts";
 import type {ChainConfig} from "./types";
+import {
+  encodeMint as v4EncMint,
+  encodeIncrease as v4EncIncrease,
+  encodeDecrease as v4EncDecrease,
+  encodeCollect as v4EncCollect,
+  encodeBurn as v4EncBurn,
+  type PoolKey as V4PoolKey,
+} from "./v4Encode";
 
 export type ProposalAction = {
   to: string;
@@ -234,6 +242,32 @@ export function costRemove(cfg: ChainConfig, id: number): ProposalAction {
     `Cost: remove entry #${id}`);
 }
 
+// --- Uniswap V3 admin -------------------------------------------------------
+
+export function v3SetPositionManager(cfg: ChainConfig, newManager: string): ProposalAction {
+  return action(
+    requireV3(cfg),
+    ifaceFor("UniswapV3Plugin"),
+    "setPositionManager",
+    [newManager],
+    `Uniswap V3: set PositionManager → ${newManager}`
+  );
+}
+
+export function v3SetAllowedToken(
+  cfg: ChainConfig,
+  token: string,
+  allowed: boolean
+): ProposalAction {
+  return action(
+    requireV3(cfg),
+    ifaceFor("UniswapV3Plugin"),
+    "setAllowedToken",
+    [token, allowed],
+    `Uniswap V3: ${allowed ? "allow" : "disallow"} token ${token}`
+  );
+}
+
 // --- Uniswap V3 LP positions ------------------------------------------------
 
 function requireV3(cfg: ChainConfig): string {
@@ -422,6 +456,168 @@ export function v4ModifyLiquidities(
     [unlockData, deadline, inputCurrencies, maxIn, outputCurrencies, minOut],
     `Uniswap V4 LP: modifyLiquidities (${inputCurrencies.length} in, ${outputCurrencies.length} out)`
   );
+}
+
+// --- V4 LP: typed builders that encode unlockData on the frontend ----------
+//
+// Each typed builder composes the v4 action stream (`unlockData`) from
+// human-friendly args, then routes it through the V4 plugin's
+// `previewModifyLiquiditiesActions` to materialize the multi-action proposal.
+// The DAO is always the position owner / take-pair recipient.
+
+function v4ContractFor(cfg: ChainConfig, provider: ethers.providers.Provider): ethers.Contract {
+  if (!cfg.dao) throw new Error(`No DAO configured for chain ${cfg.chainId}`);
+  return new ethers.Contract(cfg.dao.uniswap, getAbi("UniswapV4Plugin"), provider);
+}
+
+const FAR_DEADLINE = (): number => Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
+
+/** Mint a new V4 LP position (MINT_POSITION + SETTLE_PAIR). */
+export async function previewV4Mint(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  args: {
+    poolKey: V4PoolKey;
+    tickLower: number;
+    tickUpper: number;
+    liquidity: ethers.BigNumberish;
+    amount0Max: ethers.BigNumber;
+    amount1Max: ethers.BigNumber;
+    deadline?: ethers.BigNumberish;
+  }
+): Promise<ProposalAction[]> {
+  if (!cfg.dao) throw new Error(`No DAO configured for chain ${cfg.chainId}`);
+  const owner = cfg.dao.dao;
+  const unlockData = v4EncMint({
+    poolKey: args.poolKey,
+    tickLower: args.tickLower,
+    tickUpper: args.tickUpper,
+    liquidity: args.liquidity,
+    amount0Max: args.amount0Max,
+    amount1Max: args.amount1Max,
+    owner,
+  });
+  const deadline = args.deadline ?? FAR_DEADLINE();
+  const actions = await v4ContractFor(cfg, provider).previewModifyLiquiditiesActions(
+    unlockData,
+    deadline,
+    [args.poolKey.currency0, args.poolKey.currency1],
+    [args.amount0Max, args.amount1Max]
+  );
+  return liftPreview(
+    actions,
+    `V4: mint position in ${args.poolKey.currency0}/${args.poolKey.currency1} fee ${args.poolKey.fee}, range [${args.tickLower},${args.tickUpper}], L=${args.liquidity.toString()}`
+  );
+}
+
+/** Increase liquidity on an existing DAO-owned V4 position. */
+export async function previewV4Increase(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  args: {
+    poolKey: V4PoolKey;
+    tokenId: ethers.BigNumberish;
+    liquidity: ethers.BigNumberish;
+    amount0Max: ethers.BigNumber;
+    amount1Max: ethers.BigNumber;
+    deadline?: ethers.BigNumberish;
+  }
+): Promise<ProposalAction[]> {
+  const unlockData = v4EncIncrease({
+    poolKey: args.poolKey,
+    tokenId: args.tokenId,
+    liquidity: args.liquidity,
+    amount0Max: args.amount0Max,
+    amount1Max: args.amount1Max,
+  });
+  const deadline = args.deadline ?? FAR_DEADLINE();
+  const actions = await v4ContractFor(cfg, provider).previewModifyLiquiditiesActions(
+    unlockData,
+    deadline,
+    [args.poolKey.currency0, args.poolKey.currency1],
+    [args.amount0Max, args.amount1Max]
+  );
+  return liftPreview(actions, `V4: increase liquidity on #${args.tokenId.toString()}`);
+}
+
+/** Decrease liquidity; freed tokens + fees go to the DAO via TAKE_PAIR. */
+export async function previewV4Decrease(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  args: {
+    poolKey: V4PoolKey;
+    tokenId: ethers.BigNumberish;
+    liquidity: ethers.BigNumberish;
+    amount0Min: ethers.BigNumberish;
+    amount1Min: ethers.BigNumberish;
+    deadline?: ethers.BigNumberish;
+  }
+): Promise<ProposalAction[]> {
+  if (!cfg.dao) throw new Error(`No DAO configured for chain ${cfg.chainId}`);
+  const unlockData = v4EncDecrease({
+    poolKey: args.poolKey,
+    tokenId: args.tokenId,
+    liquidity: args.liquidity,
+    amount0Min: args.amount0Min,
+    amount1Min: args.amount1Min,
+    recipient: cfg.dao.dao,
+  });
+  const deadline = args.deadline ?? FAR_DEADLINE();
+  // Decrease has no input currencies; the v4 action stream's TAKE_PAIR sends
+  // tokens TO the DAO, so no Permit2 approvals are needed.
+  const actions = await v4ContractFor(cfg, provider).previewModifyLiquiditiesActions(
+    unlockData,
+    deadline,
+    [],
+    []
+  );
+  return liftPreview(actions, `V4: decrease liquidity on #${args.tokenId.toString()}`);
+}
+
+/** Collect-only (DECREASE_LIQUIDITY(0) + TAKE_PAIR) to sweep fees to the DAO. */
+export async function previewV4Collect(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  args: {poolKey: V4PoolKey; tokenId: ethers.BigNumberish; deadline?: ethers.BigNumberish}
+): Promise<ProposalAction[]> {
+  if (!cfg.dao) throw new Error(`No DAO configured for chain ${cfg.chainId}`);
+  const unlockData = v4EncCollect({
+    poolKey: args.poolKey,
+    tokenId: args.tokenId,
+    recipient: cfg.dao.dao,
+  });
+  const deadline = args.deadline ?? FAR_DEADLINE();
+  const actions = await v4ContractFor(cfg, provider).previewModifyLiquiditiesActions(
+    unlockData,
+    deadline,
+    [],
+    []
+  );
+  return liftPreview(actions, `V4: collect fees from #${args.tokenId.toString()}`);
+}
+
+/** Burn an empty position; sweeps any residual to the DAO. */
+export async function previewV4Burn(
+  cfg: ChainConfig,
+  provider: ethers.providers.Provider,
+  args: {poolKey: V4PoolKey; tokenId: ethers.BigNumberish; deadline?: ethers.BigNumberish}
+): Promise<ProposalAction[]> {
+  if (!cfg.dao) throw new Error(`No DAO configured for chain ${cfg.chainId}`);
+  const unlockData = v4EncBurn({
+    poolKey: args.poolKey,
+    tokenId: args.tokenId,
+    amount0Min: 0,
+    amount1Min: 0,
+    recipient: cfg.dao.dao,
+  });
+  const deadline = args.deadline ?? FAR_DEADLINE();
+  const actions = await v4ContractFor(cfg, provider).previewModifyLiquiditiesActions(
+    unlockData,
+    deadline,
+    [],
+    []
+  );
+  return liftPreview(actions, `V4: burn position #${args.tokenId.toString()}`);
 }
 
 /** Governance-safe builder: returns multi-action ProposalAction[] via

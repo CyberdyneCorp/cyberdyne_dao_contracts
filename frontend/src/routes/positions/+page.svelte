@@ -174,46 +174,123 @@
     }
   }
 
-  // --- V4 LP (modifyLiquidities pass-through) ---
-  // Encode the v4 action stream off-chain (Uniswap SDK) and paste the
-  // resulting `unlockData` bytes here; the plugin handles Permit2 approvals
-  // for input currencies and enforces minOut on outputs.
-  let v4UnlockData = "0x";
-  let v4Deadline = "";
-  let v4InputCurrencies = ""; // comma-sep addrs
-  let v4MaxIn = ""; // comma-sep raw uint256
-  let v4OutputCurrencies = "";
-  let v4MinOut = "";
-  // Governance-safe: previewModifyLiquiditiesActions returns the
-  // approve→Permit2.approve→PM.modifyLiquidities→approve(0) batch. Output-
-  // side min amounts are encoded inside the v4 unlockData stream (TAKE_PAIR
-  // params), not enforced by the plugin on the preview path.
-  let v4Action: ProposalAction[] | null = null;
-  async function buildV4Modify(): Promise<void> {
-    v4Action = null;
+  // --- V4 LP: typed mint / increase / decrease / collect / burn ---
+  // Frontend encodes the v4 action stream from typed inputs and routes it
+  // through UniswapV4Plugin.previewModifyLiquiditiesActions for the
+  // governance-safe multi-action proposal. Owner / TAKE_PAIR recipient is
+  // always forced to the DAO.
+  //
+  // PoolKey shared across all V4 forms (typed once, used by each phase).
+  let v4PoolToken0 = "";
+  let v4PoolToken1 = "";
+  let v4PoolFee = "3000";
+  let v4PoolTickSpacing = "60";
+  let v4PoolHooks = "0x0000000000000000000000000000000000000000";
+
+  function v4PoolKey() {
+    const sorted = v4PoolToken0.toLowerCase() < v4PoolToken1.toLowerCase()
+      ? {c0: v4PoolToken0, c1: v4PoolToken1}
+      : {c0: v4PoolToken1, c1: v4PoolToken0};
+    return {
+      currency0: sorted.c0,
+      currency1: sorted.c1,
+      fee: parseInt(v4PoolFee, 10),
+      tickSpacing: parseInt(v4PoolTickSpacing, 10),
+      hooks: v4PoolHooks || ethers.constants.AddressZero,
+    };
+  }
+
+  // mint
+  let vmTickLower = "-887220";
+  let vmTickUpper = "887220";
+  let vmLiquidity = "";
+  let vmAmount0Max = "";
+  let vmAmount1Max = "";
+  let vmDec0 = "6";
+  let vmDec1 = "18";
+  let v4MintAction: ProposalAction[] | null = null;
+  async function buildV4Mint(): Promise<void> {
+    v4MintAction = null;
     try {
       if ($wallet.status !== "connected") throw new Error("Connect a wallet");
-      const cfg = cfgNow();
-      const inAddrs = v4InputCurrencies
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-      const inAmts = v4MaxIn
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0)
-        .map((s) => ethers.BigNumber.from(s));
-      const deadline = v4Deadline?.trim()
-        ? ethers.BigNumber.from(v4Deadline.trim())
-        : ethers.BigNumber.from(farDeadline());
-      v4Action = await actions.previewV4ModifyLiquidities(
-        cfg,
-        $wallet.provider,
-        v4UnlockData || "0x",
-        deadline,
-        inAddrs,
-        inAmts
-      );
+      v4MintAction = await actions.previewV4Mint(cfgNow(), $wallet.provider, {
+        poolKey: v4PoolKey(),
+        tickLower: parseInt(vmTickLower, 10),
+        tickUpper: parseInt(vmTickUpper, 10),
+        liquidity: ethers.BigNumber.from(vmLiquidity || "0"),
+        amount0Max: ethers.utils.parseUnits(vmAmount0Max || "0", parseInt(vmDec0, 10)),
+        amount1Max: ethers.utils.parseUnits(vmAmount1Max || "0", parseInt(vmDec1, 10)),
+      });
+    } catch (err) {
+      alert(`Build failed: ${(err as Error).message}`);
+    }
+  }
+
+  // increase
+  let viTokenId = "";
+  let viLiquidity = "";
+  let viAmount0Max = "";
+  let viAmount1Max = "";
+  let v4IncAction: ProposalAction[] | null = null;
+  async function buildV4Increase(): Promise<void> {
+    v4IncAction = null;
+    try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      v4IncAction = await actions.previewV4Increase(cfgNow(), $wallet.provider, {
+        poolKey: v4PoolKey(),
+        tokenId: ethers.BigNumber.from(viTokenId || "0"),
+        liquidity: ethers.BigNumber.from(viLiquidity || "0"),
+        amount0Max: ethers.utils.parseUnits(viAmount0Max || "0", parseInt(vmDec0, 10)),
+        amount1Max: ethers.utils.parseUnits(viAmount1Max || "0", parseInt(vmDec1, 10)),
+      });
+    } catch (err) {
+      alert(`Build failed: ${(err as Error).message}`);
+    }
+  }
+
+  // decrease / collect / burn (shared tokenId)
+  let vdTokenId = "";
+  let vdLiquidity = "";
+  let v4DecAction: ProposalAction[] | null = null;
+  async function buildV4Decrease(): Promise<void> {
+    v4DecAction = null;
+    try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      v4DecAction = await actions.previewV4Decrease(cfgNow(), $wallet.provider, {
+        poolKey: v4PoolKey(),
+        tokenId: ethers.BigNumber.from(vdTokenId || "0"),
+        liquidity: ethers.BigNumber.from(vdLiquidity || "0"),
+        amount0Min: 0,
+        amount1Min: 0,
+      });
+    } catch (err) {
+      alert(`Build failed: ${(err as Error).message}`);
+    }
+  }
+
+  let v4CollectAction: ProposalAction[] | null = null;
+  async function buildV4Collect(): Promise<void> {
+    v4CollectAction = null;
+    try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      v4CollectAction = await actions.previewV4Collect(cfgNow(), $wallet.provider, {
+        poolKey: v4PoolKey(),
+        tokenId: ethers.BigNumber.from(vdTokenId || "0"),
+      });
+    } catch (err) {
+      alert(`Build failed: ${(err as Error).message}`);
+    }
+  }
+
+  let v4BurnAction: ProposalAction[] | null = null;
+  async function buildV4Burn(): Promise<void> {
+    v4BurnAction = null;
+    try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      v4BurnAction = await actions.previewV4Burn(cfgNow(), $wallet.provider, {
+        poolKey: v4PoolKey(),
+        tokenId: ethers.BigNumber.from(vdTokenId || "0"),
+      });
     } catch (err) {
       alert(`Build failed: ${(err as Error).message}`);
     }
@@ -311,25 +388,58 @@
     </table>
   {/if}
 
-  <h2>Uniswap V4 LP (advanced — encode the action stream off-chain)</h2>
+  <h2>Uniswap V4 LP</h2>
   <p class="muted">
-    Propose any v4 LP operation via the existing UniswapV4Plugin (same plugin that
-    handles V4 swaps). Build <code>unlockData = abi.encode(actions, params)</code> with
-    the Uniswap SDK and paste it below. The plugin sets DAO→Permit2 + Permit2→PositionManager
-    allowances for each input currency, calls <code>PositionManager.modifyLiquidities</code>,
-    then resets each allowance to zero. After the call it asserts the DAO's balance delta
-    on each output currency ≥ <code>minOut</code>.
+    Vote-gated full lifecycle on the v4-periphery PositionManager. The DAO is
+    the owner (MINT_POSITION) and the recipient (TAKE_PAIR). The frontend
+    encodes the v4 action stream from the typed fields below — no raw hex
+    paste required.
   </p>
+
+  <h3>Pool key</h3>
+  <p class="muted">Tokens are auto-sorted so <code>currency0 &lt; currency1</code>. Use <code>0x0…0</code> for hooks if unhooked.</p>
   <div class="form">
-    <label>unlockData (0x…) <input bind:value={v4UnlockData} placeholder="0x… (SDK output)" /></label>
-    <label>deadline (unix; blank = +7d) <input bind:value={v4Deadline} placeholder="auto" /></label>
-    <label>input currencies (comma) <input bind:value={v4InputCurrencies} placeholder="0xUSDC,0xWETH" /></label>
-    <label>maxIn (comma, raw) <input bind:value={v4MaxIn} placeholder="1000000000,500000000000000000" /></label>
-    <label>output currencies (comma) <input bind:value={v4OutputCurrencies} placeholder="(empty for mint)" /></label>
-    <label>minOut (comma, raw) <input bind:value={v4MinOut} placeholder="(empty for mint)" /></label>
-    <button on:click={buildV4Modify}>Build</button>
+    <label>token A <input bind:value={v4PoolToken0} placeholder="0x… (USDC)" /></label>
+    <label>token B <input bind:value={v4PoolToken1} placeholder="0x… (WETH)" /></label>
+    <label>fee <input bind:value={v4PoolFee} style="min-width:80px" /></label>
+    <label>tickSpacing <input bind:value={v4PoolTickSpacing} style="min-width:80px" /></label>
+    <label>hooks <input bind:value={v4PoolHooks} placeholder="0x0…0" /></label>
   </div>
-  <ProposeAction action={v4Action} />
+
+  <h3>Propose: mint position</h3>
+  <div class="form">
+    <label>tickLower <input bind:value={vmTickLower} style="min-width:90px" /></label>
+    <label>tickUpper <input bind:value={vmTickUpper} style="min-width:90px" /></label>
+    <label>liquidity (L) <input bind:value={vmLiquidity} placeholder="10000000000000" /></label>
+    <label>amount0Max <input bind:value={vmAmount0Max} placeholder="2000" /></label>
+    <label>dec0 <input bind:value={vmDec0} style="min-width:60px" /></label>
+    <label>amount1Max <input bind:value={vmAmount1Max} placeholder="1" /></label>
+    <label>dec1 <input bind:value={vmDec1} style="min-width:60px" /></label>
+    <button on:click={buildV4Mint}>Build</button>
+  </div>
+  <ProposeAction action={v4MintAction} />
+
+  <h3>Propose: increase liquidity</h3>
+  <div class="form">
+    <label>tokenId <input bind:value={viTokenId} style="min-width:120px" /></label>
+    <label>liquidity (Δ) <input bind:value={viLiquidity} placeholder="1000000000000" /></label>
+    <label>amount0Max <input bind:value={viAmount0Max} placeholder="200" /></label>
+    <label>amount1Max <input bind:value={viAmount1Max} placeholder="0.1" /></label>
+    <button on:click={buildV4Increase}>Build</button>
+  </div>
+  <ProposeAction action={v4IncAction} />
+
+  <h3>Propose: decrease / collect / burn (by tokenId)</h3>
+  <div class="form">
+    <label>tokenId <input bind:value={vdTokenId} style="min-width:120px" /></label>
+    <label>liquidity to remove <input bind:value={vdLiquidity} placeholder="1000000000000" /></label>
+    <button on:click={buildV4Decrease}>Build decrease</button>
+    <button on:click={buildV4Collect}>Build collect-fees</button>
+    <button on:click={buildV4Burn}>Build burn</button>
+  </div>
+  <ProposeAction action={v4DecAction} />
+  <ProposeAction action={v4CollectAction} />
+  <ProposeAction action={v4BurnAction} />
 {/if}
 
 <style>
