@@ -19,6 +19,7 @@ Per-plugin spec for the Cyberdyne DAO PayrollPlugin (TRD §6.3, ROADMAP P2).
 - The monthly crank is **permissionless** — anyone can call it. Idempotent within a month.
   - `executePayroll()` — pays the whole period in one batch (for payrolls up to one page).
   - `executePayrollPage(maxCount)` — pays the period across multiple cursor-tracked pages for large payrolls (see §3a).
+- **Native ETH payees are supported** — pass `token = address(0)` to `addRecipient`. The crank builds a value-bearing `Action` (`to: payee, value: amount, data: ""`) which the DAO executes as a native transfer. Mixed ETH + ERC20 batches in the same period are routine; the unit test `pays mixed ETH + ERC20 recipients in one crank` covers the path.
 
 ## 2. Trust + custody model
 

@@ -454,7 +454,7 @@ Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 
 ### PayrollPlugin
 
 - [ ] 🟡 **Keeper bounty.** Pay `msg.sender` a small (vote-set, capped) ETH or USDC bounty inside `executePayroll` so Gelato / Chainlink Automation / random keepers have economic incentive on high-gas days. Tracks TRD §16 #3.
-- [ ] 🟡 **Decide ETH-payee path.** `PayrollPlugin.sol:174` has an `r.token == address(0)` branch but DAO-side transfers go through `IERC20.transfer` — native ETH payees aren't actually paid today. Either delete the dead branch or wire ETH transfers through `executeAction` with `value: r.amount`.
+- [x] ✅ **ETH-payee path: investigated, no work needed.** The `r.token == address(0)` branch is correctly wired: the crank builds a value-bearing `Action({to: payee, value: amount, data: ""})` that the DAO executes as a native ETH transfer. Covered by the existing unit test `pays mixed ETH + ERC20 recipients in one crank` (`test/plugins/payroll/PayrollPlugin.unit.test.ts`). Doc updated to call this out explicitly.
 - [ ] 🔵 **Vote-gated `setMaxRecipients(uint256)`** — bounded by a hard constant, so the DAO can grow past 300 without a plugin upgrade.
 - [ ] 🔵 **`forcePayPeriod(uint256 period)`** — vote-gated recovery for a skipped month, capped to N months back.
 
