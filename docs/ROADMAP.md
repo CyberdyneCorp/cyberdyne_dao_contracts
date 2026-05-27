@@ -9,8 +9,8 @@ These gates apply to **every** phase that produces Solidity. CI fails the PR if 
 | Bar | How it's enforced |
 |---|---|
 | **Unit-test coverage ≥ 90 %** on lines AND branches for all files under `src/plugins/**` | `solidity-coverage` run in CI; thresholds set in `.solcover.js`. PR check `coverage/plugins ≥ 90%` blocks merge below threshold. |
-| **Integration tests are Hardhat fork tests** against real deployed networks (Ethereum mainnet, Base mainnet at minimum; Sepolia + Base Sepolia for staging) | `hardhat-network-helpers` + `forking: { url, blockNumber }` in `hardhat.config.ts`. Every plugin has `*.fork.test.ts` files that exercise it against real OSx, real Uniswap V4 Universal Router, real AAVE v3 Pool. |
-| **Local dev = persistent fork of live network** | `npx hardhat node --fork $RPC_MAINNET` runs a long-lived local node that mirrors mainnet state and supports `hardhat_impersonateAccount`, `hardhat_setBalance`, `evm_increaseTime`. Developers run tests against `--network localFork` for sub-second feedback while iterating. |
+| **Integration tests are Hardhat fork tests** against real deployed networks (Ethereum mainnet, Base mainnet at minimum; Sepolia + Base Sepolia for staging) | Hardhat connects to a local **anvil** fork via a named `*Fork` network in `hardhat.config.ts`. Every plugin has `*.fork.test.ts` files that exercise it against real OSx, real Uniswap V4 Universal Router, real AAVE v3 Pool. |
+| **Local dev = persistent fork of live network** | `just fork-mainnet` runs a long-lived anvil node that mirrors mainnet state and supports `anvil_impersonateAccount`, `anvil_setBalance`, `evm_increaseTime`. Developers run `just test-fork mainnetFork` for feedback against real state while iterating. |
 | **CI fork matrix runs in parallel on mainnet + Base** | GitHub Actions job matrix dispatches one runner per fork target. PR must pass on all targets. Other Aragon-supported chains can be opted in via `RPC_<NAME>` secrets without code changes. |
 | **Block pinning in CI** | `PIN_MAINNET` / `PIN_BASE` env vars set in CI to fix forks to a stable block per branch — protects against external-protocol drift (Uniswap pool state, AAVE rates). Local dev runs unpinned for freshness. |
 | **No `vm.skip`, no commented-out tests, no `it.only`** | Pre-commit + CI lint step (`eslint-plugin-mocha`) rejects these patterns. |
@@ -106,7 +106,7 @@ Set up the empty repo so the dual Foundry + Hardhat pipeline works end-to-end ag
 **Deliverables**
 - `foundry.toml` — `solc 0.8.17`, `optimizer-runs = 2000`, `extra_output = ["storageLayout"]`, `fs_permissions` for `./deployments`.
 - `remappings.txt` — `@aragon/...`, `@openzeppelin/...`, `@uniswap/...`, `@aave/...`, `forge-std/`.
-- `hardhat.config.ts` — same compiler settings; `networks: { mainnetFork, baseFork, sepoliaFork, baseSepoliaFork, polygonFork, arbitrumFork, optimismFork, localFork }`; TypeChain output to `typechain-types/`.
+- `hardhat.config.ts` — same compiler settings; `networks: { mainnetFork, baseFork, sepoliaFork, baseSepoliaFork, localFork }` (each pointing at a local anvil fork) plus live nets; TypeChain output to `typechain-types/`.
 - `lib/` — Foundry submodules: `aragon/osx` pinned at `v1.5.0`, `openzeppelin-contracts(-upgradeable)`, `forge-std`, Uniswap V4 periphery, AAVE v3 origin (for interfaces only).
 - `package.json` — `hardhat`, `@nomicfoundation/hardhat-toolbox`, `@nomicfoundation/hardhat-network-helpers`, `@typechain/hardhat`, `ethers@5`, `chai`, `solidity-coverage`, `solhint`, `prettier-plugin-solidity`.
 - `.env.example` — `RPC_MAINNET`, `RPC_BASE`, `RPC_SEPOLIA`, `RPC_BASE_SEPOLIA`, `DEPLOYER_KEY`, `ETHERSCAN_API_KEY`, `BASESCAN_API_KEY`, `PIN_MAINNET`, `PIN_BASE`.
@@ -120,8 +120,8 @@ Set up the empty repo so the dual Foundry + Hardhat pipeline works end-to-end ag
 **Exit criteria**
 - [ ] `forge build` succeeds.
 - [ ] `npx hardhat compile` succeeds, TypeChain types generated.
-- [ ] `npx hardhat node --fork $RPC_MAINNET` starts and serves at `127.0.0.1:8545`.
-- [ ] `npx hardhat test --network localFork` runs the smoke test against the persistent fork.
+- [ ] `just fork-mainnet` (anvil) starts and serves at `127.0.0.1:8545`.
+- [ ] `just test-fork mainnetFork` runs the fork smoke test against the persistent fork.
 - [ ] CI passes on a "hello world" PR.
 - [ ] Slither runs cleanly (no contracts yet → trivially clean).
 - [ ] Coverage gate proven to **fail** when below 90 % (sanity check the gate).
@@ -465,22 +465,23 @@ module.exports = {
 };
 ```
 
-### Hardhat fork-network mechanics
+### Fork-network mechanics
+
+Each `*Fork` Hardhat network points at a locally-running **anvil** fork (anvil, not `hardhat node`, because a named Hardhat network can't fork in-process and `hardhat node` can't set `--chain-id`). The `just fork-*` recipes launch them.
 
 **Local dev (persistent fork — recommended daily workflow):**
 ```bash
-# Terminal 1 — node syncs to live mainnet, persists state across reloads
-npx hardhat node --fork $RPC_MAINNET --port 8545
+# Terminal 1 — anvil fork of live mainnet, persists state across runs
+just fork-mainnet                       # anvil --fork-url $RPC_MAINNET --chain-id 1 --port 8545
 
-# Terminal 2 — run any test or script against the live state mirror
-npx hardhat test --network localFork
-npx hardhat run scripts/playground.ts --network localFork
+# Terminal 2 — run the *.fork + e2e suites against the live state mirror
+just test-fork mainnetFork
 ```
 
-**CI (one-shot, pinned to a block):**
+**CI (one-shot, pinned to a block):** start the fork pinned, then run the fork suites.
 ```bash
-PIN_MAINNET=21500000 npx hardhat test --network mainnetFork
-PIN_BASE=22000000    npx hardhat test --network baseFork
+just fork-mainnet 21500000              # anvil pins fetched state at the block
+npx hardhat test 'test/plugins/**/*.fork.test.ts' 'test/e2e/*.fork.test.ts' --network mainnetFork
 ```
 
 **Impersonation pattern** — every fork test that needs DAO-side funds uses this helper:

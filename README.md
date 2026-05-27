@@ -233,7 +233,7 @@ graph LR
 
     M -.fork.- E["Ethereum mainnet"]
     B -.fork.- BN["Base mainnet"]
-    L -.fork.- ANY["Any RPC<br/>(npx hardhat node --fork ...)"]
+    L -.fork.- ANY["Any RPC<br/>(anvil --fork-url ... / just fork-mainnet)"]
 ```
 
 `addresses.json` from `npm-artifacts/` is the source of truth for deployed OSx addresses per chainId. Tests read it at setup so they auto-target the right factories per fork.
@@ -333,15 +333,16 @@ curl -L https://foundry.paradigm.xyz | bash && foundryup
 
 # Install npm deps + build the package artifacts the frontend consumes
 npm install --legacy-peer-deps
-npm run build:package      # forge + hardhat compile + ABIs + addresses.json
+just build-package         # forge + hardhat compile + ABIs + addresses.json
 
-# Test
-npx hardhat test                                    # unit + invariant (~6s)
-forge test --match-path 'test/invariants/*.t.sol'   # invariant suite alone
+# Test (every command below has a `just` recipe; see `just --list`)
+just test                  # 84 unit tests (~6s)
+just invariants            # 14 Foundry invariants, 50k sequences (CI profile)
 
-# Fork tests (need an RPC URL)
-export RPC_MAINNET=https://eth-mainnet.alchemyapi.io/v2/<KEY>
-npx hardhat test --network mainnetFork              # fork tests against Ethereum
+# Fork tests: start a fork in one terminal, run the *.fork suites in another.
+# RPC_MAINNET is read from .env.
+just fork-mainnet          # Terminal 1 — anvil fork on :8545
+just test-fork mainnetFork # Terminal 2 — runs the *.fork + e2e suites
 ```
 
 Required env vars (see `.env.example`):
@@ -373,17 +374,18 @@ Skipped below: the long-form recipe. Kept inline only as a TL;DR for skim-reader
 git clone --recurse-submodules https://github.com/CyberdyneCorp/cyberdyne_dao_contracts.git
 cd cyberdyne_dao_contracts && npm install --legacy-peer-deps && npm run build:package
 
-# 2. Local mainnet fork (Terminal 1).
-RPC_MAINNET=https://eth-mainnet.alchemyapi.io/v2/<KEY> npx hardhat node --fork $RPC_MAINNET --chain-id 1
+# 2. Local mainnet fork (Terminal 1). RPC_MAINNET is read from .env.
+#    Uses anvil (not `hardhat node`, which can't set --chain-id). Append a
+#    block number to pin: `just fork-mainnet 21500000`.
+just fork-mainnet
 
-# 3. Deploy the DAO (Terminal 2).
-DEPLOYER=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-forge script scripts/DeployCyberdyneDao.s.sol --rpc-url http://127.0.0.1:8545 --broadcast --slow --private-key $DEPLOYER
+# 3. Deploy the DAO (Terminal 2). Broadcasts with anvil's well-known account #0.
+just deploy-local
 
 # 4. Toy frontend (Terminal 3).
-cd frontend && npm install --legacy-peer-deps && cp .env.example .env.local
+just frontend-install && cp frontend/.env.example frontend/.env.local
 # edit .env.local: PUBLIC_RPC_MAINNET=http://127.0.0.1:8545, PUBLIC_DAO_MAINNET=<dao>,<payroll>,<uniswap>,<aave>
-npm run dev
+just frontend-dev
 
 # 5. In MetaMask: add custom net at 127.0.0.1:8545 / chainId 1, import deployer key, Connect injected on the UI.
 ```
@@ -482,7 +484,7 @@ flowchart LR
 
 - **≥ 90 % unit-test coverage** on lines AND branches for all files under `src/plugins/**`, enforced by `solidity-coverage`.
 - **Integration tests are Hardhat fork tests** against real deployed networks. Every plugin has `*.fork.test.ts` running on `mainnetFork` and `baseFork` minimum.
-- **Local dev = persistent fork of live network** via `npx hardhat node --fork $RPC_MAINNET` — gives sub-second feedback against mainnet state with `hardhat_impersonateAccount` for spoofing whales / DAO.
+- **Local dev = persistent fork of live network** via `just fork-mainnet` (`anvil --fork-url $RPC_MAINNET --chain-id 1`) — gives sub-second feedback against mainnet state with `anvil_impersonateAccount` / `hardhat_impersonateAccount` for spoofing whales / DAO.
 - **CI matrix runs fork tests in parallel** on Ethereum + Base; other Aragon-supported chains opt-in via `RPC_<NAME>` secrets.
 - **Block pinning in CI** (`PIN_MAINNET`, `PIN_BASE`) for deterministic runs; local dev runs unpinned for freshness.
 - **`solc 0.8.17` + `optimizer-runs = 2000`** identical to Aragon OSx v1.4.0 audited bytecode.

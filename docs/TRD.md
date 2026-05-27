@@ -560,7 +560,7 @@ Permissions explicitly *not* granted:
 | Smart contracts (Solidity 0.8.17) | Foundry (`forge build`) | Matches existing OSx build (`foundry.toml`, `remappings.txt`). Faster compile + storage layout output. |
 | Tests | **Hardhat + TypeScript (ethers v5)** | Required by project mandate. Native fork support, `hardhat_reset`, `hardhat_impersonateAccount`, time travel via `evm_increaseTime`/`evm_mine`. Existing OSx legacy Hardhat suite under `packages/contracts/test/` is the template. |
 | Deployment scripts | Foundry (`forge script` via `just-foundry`) | Keeps deploy pathway aligned with OSx convention in `DEPLOYMENT.md`. Produces broadcast logs + verify. |
-| Fork engine | Hardhat Network forking (`hardhat node --fork <rpc>`) | One config point that flips between Ethereum / Base / other supported networks. |
+| Fork engine | **anvil** (`anvil --fork-url <rpc> --chain-id <id>`), driven via the `just fork-*` recipes; Hardhat connects to it as a named `*Fork` network | A named Hardhat network can't fork in-process, and `hardhat node` can't set `--chain-id` (needed so OSx addresses resolve). anvil does both. One recipe per target chain. |
 | Coverage | `hardhat-coverage` (solidity-coverage) | Generates lcov; CI gate at ≥ 90 % on new plugin code. |
 | Lint/format | `solhint` + `prettier-plugin-solidity` | Same configs as upstream OSx. |
 | Type-safe contract bindings | `@typechain/hardhat` | Auto-generated for both our new plugins and the upstream OSx + Uniswap + AAVE ABIs (pulled from `npm-artifacts/` and the protocols' own packages). |
@@ -573,46 +573,36 @@ Both pipelines read from `src/` and the existing `remappings.txt` / `lib/` so th
 
 ### Hardhat networks (fork targets)
 
-`hardhat.config.ts` defines a network per target chain; each entry uses `forking.url` from env so we can dry-run any plugin call against the real deployed state.
+An in-process `forking` block only works on the built-in `hardhat` network — a *named* network can't fork in-process. So `hardhat.config.ts` defines one named `*Fork` network per target chain, each pointing at a locally-running **anvil** fork on a distinct port (`accounts: "remote"` so it uses anvil's funded accounts). The `just fork-*` recipes launch the anvil nodes.
 
 ```ts
 // hardhat.config.ts (shape)
 networks: {
-  hardhat: { chainId: 31337 }, // default in-memory, no fork
-  mainnetFork: {
-    chainId: 1,
-    forking: { url: process.env.RPC_MAINNET!, blockNumber: process.env.PIN_MAINNET ? +process.env.PIN_MAINNET : undefined },
-  },
-  baseFork: {
-    chainId: 8453,
-    forking: { url: process.env.RPC_BASE!, blockNumber: process.env.PIN_BASE ? +process.env.PIN_BASE : undefined },
-  },
-  // Additional Aragon-supported networks (read addresses from npm-artifacts/src/addresses.json):
-  polygonFork:        { chainId: 137,    forking: { url: process.env.RPC_POLYGON! } },
-  arbitrumFork:       { chainId: 42161,  forking: { url: process.env.RPC_ARBITRUM! } },
-  optimismFork:       { chainId: 10,     forking: { url: process.env.RPC_OPTIMISM! } },
-  sepoliaFork:        { chainId: 11155111, forking: { url: process.env.RPC_SEPOLIA! } },
-  baseSepoliaFork:    { chainId: 84532,  forking: { url: process.env.RPC_BASE_SEPOLIA! } },
-  // Local node that auto-syncs to a live chain (Hardhat in-process node):
-  localFork:          { url: "http://127.0.0.1:8545", chainId: 31337 },
+  hardhat: { chainId: 31337 }, // in-process; opt-in fork via HH_FORK_URL
+  // Each *Fork connects to an anvil node started by `just fork-<chain>`:
+  mainnetFork:     { url: "http://127.0.0.1:8545", chainId: 1,        accounts: "remote" },
+  baseFork:        { url: "http://127.0.0.1:8546", chainId: 8453,     accounts: "remote" },
+  sepoliaFork:     { url: "http://127.0.0.1:8547", chainId: 11155111, accounts: "remote" },
+  baseSepoliaFork: { url: "http://127.0.0.1:8548", chainId: 84532,    accounts: "remote" },
 },
 ```
 
 **Local fork mode (recommended for day-to-day iteration):**
 ```bash
-# Terminal 1 — start a persistent local node forked from mainnet at the latest block
-npx hardhat node --fork $RPC_MAINNET
+# Terminal 1 — start a persistent anvil fork of mainnet (RPC_MAINNET from .env)
+just fork-mainnet            # → anvil --fork-url $RPC_MAINNET --chain-id 1 --port 8545
+# Pin a block for deterministic state: just fork-mainnet 21500000
 
-# Terminal 2 — run tests against it
-npx hardhat test --network localFork
+# Terminal 2 — run the *.fork + e2e suites against it
+just test-fork mainnetFork
 ```
 
-This gives an interactive REPL-friendly chain that mirrors mainnet state, supports `hardhat_impersonateAccount` to spoof whales or the DAO itself, and survives across test runs (so we can manually inspect state after a failed run).
+This gives a chain that mirrors mainnet state, supports `anvil_impersonateAccount` to spoof whales or the DAO itself, and survives across test runs (so we can manually inspect state after a failed run).
 
-**One-shot fork mode (for CI):**
+**One-shot fork mode (for CI):** start the matching `just fork-<chain>` node, then
 ```bash
-npx hardhat test --network mainnetFork
-npx hardhat test --network baseFork
+npx hardhat test 'test/plugins/**/*.fork.test.ts' 'test/e2e/*.fork.test.ts' --network mainnetFork
+npx hardhat test 'test/plugins/**/*.fork.test.ts' 'test/e2e/*.fork.test.ts' --network baseFork
 ```
 
 Each test file declares which networks it supports via a small helper:

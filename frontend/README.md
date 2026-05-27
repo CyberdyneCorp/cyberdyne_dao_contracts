@@ -6,16 +6,13 @@ Per TRD §3b: SvelteKit + ethers v5 + WalletConnect v2, ≤~1k LOC, no design po
 
 ## Quick start
 
-```bash
-# In repo root: build the published-artifact bits the frontend imports.
-npm install --legacy-peer-deps
-npm run build:package        # produces addresses.json + frontend-abi/
+Run these from the repo root (each is a `just` recipe):
 
-# In this directory:
-cd frontend/
-npm install                  # links @cyberdyne/dao-contracts via file:..
-cp .env.example .env.local   # fill in PUBLIC_WC_PROJECT_ID + PUBLIC_DAO_<CHAIN>
-npm run dev                  # http://localhost:5173
+```bash
+just build-package                       # produces addresses.json + frontend-abi/
+just frontend-install                    # links @cyberdyne/dao-contracts via file:..
+cp frontend/.env.example frontend/.env.local  # fill PUBLIC_WC_PROJECT_ID + PUBLIC_DAO_<CHAIN>
+just frontend-dev                        # http://localhost:5173
 ```
 
 `@cyberdyne/dao-contracts` is consumed via `file:..` so local changes flow without a publish step. Once the package ships to npm, swap to a semver.

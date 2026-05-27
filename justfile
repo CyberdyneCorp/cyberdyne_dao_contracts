@@ -36,28 +36,50 @@ slither:
 test:
     npx hardhat test
 
-# Run all fork tests against a specific network (default mainnetFork).
+# Run the *.fork + e2e tests against a running forked node (default mainnetFork).
+# Prereq: a forked node must already be running on the matching port —
+# start one with `just fork-mainnet` / `just fork-base` in another terminal.
+# The fork tests self-gate via onlyOn(...), so non-matching suites are skipped.
 test-fork network='mainnetFork':
-    npx hardhat test --network {{network}} --grep 'fork'
+    npx hardhat test 'test/plugins/**/*.fork.test.ts' 'test/e2e/*.fork.test.ts' --network {{network}}
 
 # Run the full coverage suite and gate at >=90%.
 coverage:
     npx hardhat coverage
     node scripts/check-coverage.js
 
-# --- Local fork node ---
+# Run the Foundry invariant suite (50k sequences under the CI profile).
+invariants:
+    FOUNDRY_PROFILE=ci forge test --match-path 'test/invariants/*.t.sol' -vv
 
-# Start a persistent Hardhat node forked from $RPC_MAINNET (port 8545).
-node-mainnet:
-    npx hardhat node --fork "$RPC_MAINNET"
+# --- Local fork nodes (anvil) ---
+#
+# These use anvil (NOT `hardhat node`) because anvil supports --chain-id, which
+# the *Fork networks in hardhat.config.ts require (mainnetFork expects a node
+# reporting chainId 1, etc.). Run one in its own terminal, then `just test-fork`.
+#
+# `block` is optional: pass a block number to PIN the fork (strongly recommended
+# on free RPC tiers — anvil caches fetched state, avoiding rate-limit flakiness).
+# Leave empty to fork at latest.
 
-# Start a persistent Hardhat node forked from $RPC_BASE.
-node-base:
-    npx hardhat node --fork "$RPC_BASE"
+# Forked mainnet on :8545 (chainId 1). Usage: just fork-mainnet [block]
+fork-mainnet block='':
+    anvil --fork-url "$RPC_MAINNET" --chain-id 1 --port 8545 \
+        {{ if block != '' { '--fork-block-number ' + block } else { '' } }}
+
+# Forked Base on :8546 (chainId 8453). Usage: just fork-base [block]
+fork-base block='':
+    anvil --fork-url "$RPC_BASE" --chain-id 8453 --port 8546 \
+        {{ if block != '' { '--fork-block-number ' + block } else { '' } }}
+
+# Forked Sepolia on :8547 (chainId 11155111).
+fork-sepolia block='':
+    anvil --fork-url "$RPC_SEPOLIA" --chain-id 11155111 --port 8547 \
+        {{ if block != '' { '--fork-block-number ' + block } else { '' } }}
 
 # --- Foundry-only ---
 
-# Foundry tests (Solidity-based).
+# Foundry tests (Solidity-based), no fork.
 forge-test:
     forge test -vvv
 
@@ -66,38 +88,70 @@ storage contract:
     forge inspect {{contract}} storage-layout --pretty
 
 # --- Deploy (Foundry scripts) ---
+#
+# Anvil's first default account — 10000 ETH on any local fork, publicly known.
+# NEVER use this key on a real network.
+ANVIL_KEY := "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
-# Dry-run a deploy script.
-deploy-dry script network='mainnetFork':
-    forge script scripts/{{script}}.s.sol --rpc-url "$RPC_{{uppercase(network)}}" -vvv
+# Bootstrap the full DAO onto the LOCAL forked node (:8545). Broadcasts for
+# real against the local fork. Prereq: `just fork-mainnet` running in another
+# terminal. Prints + writes deployments/<chain>-<ts>.json.
+# Optional env: TOKEN_VOTING_REPO, GOV_TOKEN_HOLDER, PAY_DAY, SUBDOMAIN_DAO.
+deploy-local *FLAGS='':
+    forge script scripts/DeployCyberdyneDao.s.sol \
+        --rpc-url http://127.0.0.1:8545 \
+        --broadcast --slow -vvv \
+        --private-key {{ANVIL_KEY}} \
+        {{FLAGS}}
 
-# One-shot ceremony: publish 3 plugin repos + DAOFactory.createDao in one run.
-# Pass --broadcast to send for real. Default is a dry-run.
-# Optional env: TOKEN_VOTING_REPO (splices TokenVoting as plugins[0]),
-# TOKEN_VOTING_DATA (pre-encoded init bytes), TOKEN_VOTING_BUILD,
-# PAY_DAY, MAINTAINER, SUBDOMAIN_DAO.
-deploy-cyberdyne-dao rpc='localFork' *FLAGS='':
+# Deploy to a real network (testnet/mainnet). Needs DEPLOYER_KEY in .env and
+# a verified TOKEN_VOTING_REPO if you want governance. Add --broadcast to send.
+deploy rpc *FLAGS='':
     forge script scripts/DeployCyberdyneDao.s.sol \
         --rpc-url "$RPC_{{uppercase(rpc)}}" \
-        --slow \
-        -vvv \
+        --slow -vvv \
+        --private-key "$DEPLOYER_KEY" \
         {{FLAGS}}
 
-# Publish a single plugin's PluginRepo (useful for shipping a new build later).
-deploy-plugin name rpc='localFork' *FLAGS='':
+# Publish a single plugin's PluginRepo to a real network (new-version flow).
+deploy-plugin name rpc *FLAGS='':
     forge script scripts/Deploy{{name}}Plugin.s.sol \
         --rpc-url "$RPC_{{uppercase(rpc)}}" \
-        --slow \
-        -vvv \
+        --slow -vvv \
+        --private-key "$DEPLOYER_KEY" \
         {{FLAGS}}
+
+# --- Frontend (toy inspector) ---
+
+# Build the npm-package artifacts the frontend consumes (addresses + ABIs).
+build-package:
+    npm run build:package
+
+# Install the toy frontend's deps (first time).
+frontend-install:
+    cd frontend && npm install --legacy-peer-deps
+
+# Start the toy frontend dev server (http://localhost:5173).
+# Prereq: cp frontend/.env.example frontend/.env.local and fill PUBLIC_DAO_*
+# with the addresses from `just deploy-local`.
+frontend-dev:
+    cd frontend && npm run dev
+
+# Type-check the frontend (svelte-check).
+frontend-check:
+    cd frontend && npm run check
+
+# Production build of the frontend (static SPA → frontend/build).
+frontend-build:
+    cd frontend && npm run build
+
+# --- ABI export ---
+
+build-abi:
+    node scripts/export-abis.js
 
 # --- Cleanup ---
 
 clean:
     forge clean
     rm -rf out cache cache_hardhat artifacts typechain-types coverage
-
-# --- ABI export for frontend ---
-
-build-abi:
-    node scripts/export-abis.js

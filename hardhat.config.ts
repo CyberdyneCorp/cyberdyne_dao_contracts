@@ -56,17 +56,19 @@ const config: HardhatUserConfig = {
     // --- Fork networks ---
     // Hardhat's in-process `forking` only works on the built-in `hardhat`
     // network — a NAMED network cannot fork in-process. So each `*Fork`
-    // network connects to a separately-launched forked node:
+    // network connects to a separately-launched anvil node. We use anvil
+    // (not `hardhat node`) because anvil accepts `--chain-id`, which these
+    // networks require:
     //
-    //   npx hardhat node --fork $RPC_MAINNET --chain-id 1     --port 8545  # mainnetFork
-    //   npx hardhat node --fork $RPC_BASE    --chain-id 8453  --port 8546  # baseFork
-    //   npx hardhat node --fork $RPC_SEPOLIA --chain-id 11155111 --port 8547  # sepoliaFork
-    //   npx hardhat node --fork $RPC_BASE_SEPOLIA --chain-id 84532 --port 8548  # baseSepoliaFork
+    //   anvil --fork-url $RPC_MAINNET --chain-id 1        --port 8545  # mainnetFork
+    //   anvil --fork-url $RPC_BASE    --chain-id 8453     --port 8546  # baseFork
+    //   anvil --fork-url $RPC_SEPOLIA --chain-id 11155111 --port 8547  # sepoliaFork
     //
     // `--chain-id` makes the node report the real chain id so addresses
     // resolve. Then run `npx hardhat test --network mainnetFork`. The justfile
-    // `fork-node-*` recipes wrap these. Distinct ports let targets run
-    // concurrently (one per CI runner).
+    // `fork-mainnet` / `fork-base` / `fork-sepolia` recipes wrap these (and
+    // `just test-fork <network>` runs the suites). Distinct ports let targets
+    // run concurrently (one per CI runner).
     localFork: {
       url: "http://127.0.0.1:8545",
       chainId: 31337,

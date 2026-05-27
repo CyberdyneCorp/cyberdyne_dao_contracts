@@ -53,13 +53,13 @@ npm install --legacy-peer-deps
 # aggregation. Outputs:
 #   - frontend-abi/*.json    (one ABI per contract, plain JSON)
 #   - addresses.json         (chainId-keyed: OSx + external + per-chain)
-npm run build:package
+just build-package
 ```
 
 Sanity-check:
 
 ```bash
-npx hardhat test                                   # 84 unit + invariant tests, ~6s
+just test                                          # 84 unit tests, ~6s
 ls frontend-abi/ addresses.json                    # artifacts exist
 ```
 
@@ -70,29 +70,37 @@ ls frontend-abi/ addresses.json                    # artifacts exist
 Open **Terminal 1** and keep it running for the rest of the session.
 
 ```bash
-export RPC_MAINNET=https://eth-mainnet.alchemyapi.io/v2/<YOUR_KEY>
+# RPC_MAINNET is read from .env (set dotenv-load in the justfile).
+just fork-mainnet
 
-npx hardhat node --fork $RPC_MAINNET --chain-id 1
+# Optional: pin to a block for deterministic, rate-limit-friendly state
+# (recommended on free RPC tiers — anvil caches fetched state):
+#   just fork-mainnet 21500000
 ```
 
-What this does:
+This wraps `anvil --fork-url "$RPC_MAINNET" --chain-id 1 --port 8545`. What it does:
 
-- Serves a Hardhat node at `http://127.0.0.1:8545`.
-- State mirrors live Ethereum mainnet at the current head — USDC, WETH, AAVE v3 Pool, Uniswap V4 PoolManager, OSx framework (`DAOFactory`, `PluginRepoFactory`, …) all exist with their real addresses + balances.
-- **`--chain-id 1`** makes the local node report `chainId = 1` so `scripts/lib/OsxAddresses.sol` resolves to mainnet's OSx factory addresses (otherwise it would default to `31337` and revert `UnsupportedChain`).
+- Serves an **anvil** node at `http://127.0.0.1:8545`.
+- State mirrors live Ethereum mainnet — USDC, WETH, AAVE v3 Pool, Uniswap V4 PoolManager, OSx framework (`DAOFactory`, `PluginRepoFactory`, …) all exist with their real addresses + balances.
+- **`--chain-id 1`** makes the local node report `chainId = 1` so `scripts/lib/OsxAddresses.sol` resolves to mainnet's OSx factory addresses (otherwise it defaults to `31337` and reverts `UnsupportedChain`). This is why we use anvil here and not `hardhat node`, which does not accept `--chain-id`.
 
 You should see:
 
 ```
-Started HTTP and WebSocket JSON-RPC server at http://127.0.0.1:8545/
-Accounts
-========
-Account #0: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 (10000 ETH)
-Private Key: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+Available Accounts
+==================
+(0) 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 (10000 ETH)
 ...
+Private Keys
+==================
+(0) 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+...
+Listening on 127.0.0.1:8545
 ```
 
-Save the first account's private key — you'll import it into MetaMask in Step 5.
+Account #0's private key is anvil's well-known default — you'll import it into MetaMask in Step 5. **Never use it on a real network.**
+
+> Base / Sepolia forks work the same way: `just fork-base` (:8546, chainId 8453) and `just fork-sepolia` (:8547, chainId 11155111).
 
 ---
 
@@ -104,16 +112,12 @@ Open **Terminal 2**.
 cd cyberdyne_dao_contracts
 export PATH="$HOME/.foundry/bin:$PATH"
 
-# Anvil/Hardhat's first default account — has 10000 ETH on the local fork.
-# NEVER use this key on a real network; it's publicly known.
-DEPLOYER=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-
-forge script scripts/DeployCyberdyneDao.s.sol \
-    --rpc-url http://127.0.0.1:8545 \
-    --broadcast \
-    --slow \
-    --private-key $DEPLOYER
+# Bootstraps the DAO + 3 plugins onto the local fork (:8545), broadcasting
+# with anvil's well-known account #0. The ANVIL_KEY is baked into the recipe.
+just deploy-local
 ```
+
+`just deploy-local` runs `forge script scripts/DeployCyberdyneDao.s.sol --rpc-url http://127.0.0.1:8545 --broadcast --slow --private-key <anvil #0>`. Pass extra flags through, e.g. `just deploy-local --verify` or set optional env (`TOKEN_VOTING_REPO`, `GOV_TOKEN_HOLDER`, `PAY_DAY`, `SUBDOMAIN_DAO`) before the call.
 
 This runs the one-shot bootstrap from `scripts/DeployCyberdyneDao.s.sol`:
 
@@ -160,9 +164,8 @@ You need four addresses for the frontend env:
 Open **Terminal 3**.
 
 ```bash
-cd cyberdyne_dao_contracts/frontend
-npm install --legacy-peer-deps      # first time only
-cp .env.example .env.local
+just frontend-install               # first time only (npm install --legacy-peer-deps)
+cp frontend/.env.example frontend/.env.local
 ```
 
 Edit `frontend/.env.local`:
@@ -182,7 +185,7 @@ PUBLIC_DAO_MAINNET=0xABCD…,0xEF01…,0x2345…,0x6789…
 Then:
 
 ```bash
-npm run dev
+just frontend-dev
 # → Local:   http://localhost:5173/
 ```
 
@@ -268,7 +271,7 @@ For AAVE supplies / Uniswap swaps, the pattern is the same — seed the DAO with
 ## Tear down
 
 ```bash
-# Terminal 1: Ctrl+C the hardhat node — fork state is in-memory, discarded.
+# Terminal 1: Ctrl+C the anvil fork — fork state is in-memory, discarded.
 # Terminal 3: Ctrl+C the vite dev server.
 
 # So the next run doesn't reuse stale plugin addresses:
@@ -286,7 +289,7 @@ The local fork has no persistent disk state. Restarting in Step 2 starts from a 
 |---|---|---|
 | `forge: command not found` | Foundry not on PATH | `export PATH="$HOME/.foundry/bin:$PATH"` |
 | `Error: cannot estimate gas` on `forge script` | Local node not running on `127.0.0.1:8545` | Confirm Terminal 1 is still running |
-| `UnsupportedChain(31337)` revert from the deploy script | Forgot `--chain-id 1` on `hardhat node` | Restart the node with `--chain-id 1` |
+| `UnsupportedChain(31337)` revert from the deploy script | Fork node not reporting chainId 1 | Start it with `just fork-mainnet` (wraps `anvil --chain-id 1`) — not `hardhat node`, which can't set chain id |
 | Frontend says "Unsupported chain id 31337" | MetaMask connected to default Hardhat chain instead of the spoofed mainnet | Switch MetaMask to your "Local fork" network with chain ID `1` |
 | `No DAO configured for chain 1` | `PUBLIC_DAO_MAINNET` not set in `frontend/.env.local` | Paste the 4 addresses from Step 3 (dao,payroll,uniswap,aave) |
 | `executePayroll()` reverts `NotYetDueThisMonth` | Local-fork block time is before pay day | Use `cast rpc evm_setNextBlockTimestamp` to advance time (Step 6 #4) |
