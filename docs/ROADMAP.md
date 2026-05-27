@@ -453,7 +453,7 @@ Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 
 
 ### PayrollPlugin
 
-- [ ] 🟡 **Keeper bounty.** Pay `msg.sender` a small (vote-set, capped) ETH or USDC bounty inside `executePayroll` so Gelato / Chainlink Automation / random keepers have economic incentive on high-gas days. Tracks TRD §16 #3.
+- [x] ✅ **Keeper bounty.** Vote-gated `setKeeperBounty(token, perCrank, maxPerPeriod)` (new `UPDATE_BOUNTY_PERMISSION`) pays `msg.sender` an ETH-or-ERC20 bounty out of the DAO on each successful crank. Per-period rolling cap is share by paginated calls in the same month. Bounty is part of the same `dao.execute` batch with `allowFailureMap` set, so a bounty failure doesn't block recipients. Default = disabled (`perCrank = 0`). Closes TRD §16 #3. Setup grant-list grows 3 → 4. 6 new unit tests.
 - [x] ✅ **ETH-payee path: investigated, no work needed.** The `r.token == address(0)` branch is correctly wired: the crank builds a value-bearing `Action({to: payee, value: amount, data: ""})` that the DAO executes as a native ETH transfer. Covered by the existing unit test `pays mixed ETH + ERC20 recipients in one crank` (`test/plugins/payroll/PayrollPlugin.unit.test.ts`). Doc updated to call this out explicitly.
 - [ ] 🔵 **Vote-gated `setMaxRecipients(uint256)`** — bounded by a hard constant, so the DAO can grow past 300 without a plugin upgrade.
 - [ ] 🔵 **`forcePayPeriod(uint256 period)`** — vote-gated recovery for a skipped month, capped to N months back.

@@ -34,6 +34,22 @@ interface IPayrollPlugin {
     ///         "period fully paid" marker; sum the `PayrollExecuted` batches
     ///         for the same `period` to get the period total.
     event PayrollPeriodCompleted(uint256 indexed period);
+    /// @notice The keeper bounty configuration was changed by governance.
+    event KeeperBountyConfigured(
+        address indexed token,
+        uint256 perCrank,
+        uint256 maxPerPeriod
+    );
+    /// @notice A successful crank paid a keeper bounty to `msg.sender`. Fires
+    ///         at most once per `executePayroll(Page)` call, only when the
+    ///         period's accumulated bounty is below `maxPerPeriod` and the
+    ///         crank actually paid one or more recipients.
+    event KeeperBountyPaid(
+        address indexed keeper,
+        address indexed token,
+        uint256 amount,
+        uint256 indexed period
+    );
 
     // --- Errors ---
 
@@ -64,6 +80,21 @@ interface IPayrollPlugin {
     /// @notice Set the day-of-month the crank may run. Restricted to 1..28 to avoid
     ///         February / 30/31 calendar edge cases.
     function setPayDayOfMonth(uint8 day) external;
+
+    /// @notice Configure (or disable) the keeper bounty. Pass `perCrank == 0`
+    ///         to disable. `maxPerPeriod` is a per-period rolling cap so a
+    ///         keeper calling many paginated cranks in the same month can't
+    ///         drain the bounty budget arbitrarily.
+    /// @param token       Bounty token. `address(0)` = native ETH.
+    /// @param perCrank    Amount paid to `msg.sender` per successful crank.
+    /// @param maxPerPeriod Maximum total bounty paid in one period (resets per
+    ///                    period). Must be ≥ `perCrank` or the cap blocks any
+    ///                    payout — config still accepted as "off".
+    function setKeeperBounty(
+        address token,
+        uint256 perCrank,
+        uint256 maxPerPeriod
+    ) external;
 
     // --- Permissionless crank ---
 
@@ -113,4 +144,21 @@ interface IPayrollPlugin {
     /// @notice Max active recipients paid per crank call. Bounds per-tx gas and
     ///         keeps the run within OSx's 256-action / 256-bit-failure-map limit.
     function MAX_RECIPIENTS_PER_PAGE() external view returns (uint256);
+
+    /// @notice Token paid as the keeper bounty (0 = native ETH; default).
+    function bountyToken() external view returns (address);
+
+    /// @notice Amount paid to `msg.sender` per successful crank. 0 = bounty
+    ///         disabled (default).
+    function bountyPerCrank() external view returns (uint256);
+
+    /// @notice Per-period rolling cap on the total bounty paid.
+    function bountyMaxPerPeriod() external view returns (uint256);
+
+    /// @notice Total bounty paid so far in `bountyAccumPeriod()`. Resets when
+    ///         a new period is processed.
+    function bountyPaidThisPeriod() external view returns (uint256);
+
+    /// @notice Period (`year*12+month`) that `bountyPaidThisPeriod()` refers to.
+    function bountyAccumPeriod() external view returns (uint256);
 }

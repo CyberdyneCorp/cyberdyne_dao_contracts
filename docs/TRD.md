@@ -516,6 +516,7 @@ Notation: `(permissionId, where, who)`.
 | `UPDATE_ADAPTER_PERMISSION_ID` | AaveLendingPlugin | DAO | AAVE install | v3 → v4 adapter swap is a vote. |
 | `MANAGE_ALLOWLIST_PERMISSION_ID` | AaveLendingPlugin | DAO | AAVE install | Vote-gated. |
 | `MANAGE_PAYROLL_PERMISSION_ID` | PayrollPlugin | DAO | Payroll install | Vote-gated participant + amount changes. |
+| `UPDATE_BOUNTY_PERMISSION_ID` | PayrollPlugin | DAO | Payroll install | Vote-gated keeper-bounty config (token / perCrank / maxPerPeriod). |
 | `EXECUTE_PERMISSION_ID` | DAO | CostRegistryPlugin | CostRegistry install | Plugin issues transfers on the crank. |
 | `MANAGE_COSTS_PERMISSION_ID` | CostRegistryPlugin | DAO | CostRegistry install | Vote-gated register / update / remove. |
 | `UPDATE_PAYMENT_TOKEN_PERMISSION_ID` | CostRegistryPlugin | DAO | CostRegistry install | Vote-gated `setPaymentToken` migration (USDC → other stable). |

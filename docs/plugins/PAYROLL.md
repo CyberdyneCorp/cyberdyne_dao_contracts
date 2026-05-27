@@ -30,6 +30,17 @@ Per-plugin spec for the Cyberdyne DAO PayrollPlugin (TRD §6.3, ROADMAP P2).
 
 > **No `preview…Actions` helpers needed.** Unlike the swap/lending/LP plugins, Payroll's fund-moving entry point (`executePayroll`) is **permissionless** (keeper-callable), not governance-routed — so it never participates in the nested-`dao.execute` reentrancy issue that motivated [TRD §9a](../TRD.md#9a-governance-path-action-builders-previewactions). Schedule mutators (`addRecipient` etc.) are single-action plugin calls and ride through TokenVoting as a one-action proposal directly.
 
+### Keeper bounty
+
+`setKeeperBounty(token, perCrank, maxPerPeriod)` (gated by `UPDATE_BOUNTY_PERMISSION`) pays `msg.sender` a small bounty out of the DAO treasury on each successful crank, so Gelato / Chainlink Automation / random keepers have an economic incentive to call `executePayroll(Page)` on high-gas days.
+
+- `token = address(0)` pays a native ETH bounty; an ERC20 address pays that token instead.
+- `perCrank` is the amount paid per `_runPayroll` invocation (one for `executePayroll`, one per page for `executePayrollPage`).
+- `maxPerPeriod` is a per-period rolling cap so paginated cranks within one month share one budget. The bounty for any single crank is clipped to the remaining cap (or 0 if exhausted).
+- Bounty is set to 0 by default (disabled) — installs unchanged.
+- The bounty is appended to the same `dao.execute` batch as the recipient transfers with `allowFailureMap` set, so if the bounty leg fails (e.g. DAO is out of the bounty token) the recipients are still paid.
+- Emits `KeeperBountyPaid(keeper, token, amount, period)` on each non-zero payout; `KeeperBountyConfigured(token, perCrank, maxPerPeriod)` on each governance reconfig.
+
 ## 3. Calendar math caveats
 
 - `payDayOfMonth` is restricted to **1..28** at init and at every `setPayDayOfMonth`. This sidesteps February-vs-30/31 entirely.
@@ -87,7 +98,12 @@ slot 303: payDayOfMonth (uint8)
 slot 304: lastPayoutPeriod (uint256)
 slot 305: _cursorPeriod (uint256)   — pagination cursor's period
 slot 306: _payoutCursor (uint256)   — next recipient index to resume from
-slot 307..351: __gap[45]
+slot 307: bountyToken (address)     — added with v1.1 keeper-bounty extension
+slot 308: bountyPerCrank (uint256)
+slot 309: bountyMaxPerPeriod (uint256)
+slot 310: _bountyPaidThisPeriod (uint256)
+slot 311: _bountyAccumPeriod (uint256)
+slot 312..351: __gap[40]
 ```
 
 The two cursor words were appended in slots 305/306 (consuming two slots from the former `__gap[47]`, now `__gap[45]`) — append-only, so slots 301..304 are untouched. Upgrades may consume further slots from `__gap` (decreasing the gap size) but must **never** reorder or shrink anything in slots 301..306. The `forge inspect` snapshot is committed under `docs/storage-layouts/` per release tag so audit can diff layouts across versions.

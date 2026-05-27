@@ -36,7 +36,7 @@ contract PayrollPluginSetup is PluginUpgradeableSetup {
         plugin = implementation().deployUUPSProxy(initCalldata);
 
         PermissionLib.MultiTargetPermission[]
-            memory permissions = new PermissionLib.MultiTargetPermission[](3);
+            memory permissions = new PermissionLib.MultiTargetPermission[](4);
 
         // 1) DAO → plugin: EXECUTE_PERMISSION (lets the crank issue transfers via DAO.execute).
         permissions[0] = PermissionLib.MultiTargetPermission({
@@ -62,6 +62,14 @@ contract PayrollPluginSetup is PluginUpgradeableSetup {
             condition: address(0),
             permissionId: keccak256("UPGRADE_PLUGIN_PERMISSION")
         });
+        // 4) plugin → DAO: UPDATE_BOUNTY (vote-gated keeper bounty config).
+        permissions[3] = PermissionLib.MultiTargetPermission({
+            operation: PermissionLib.Operation.Grant,
+            where: plugin,
+            who: _dao,
+            condition: address(0),
+            permissionId: PayrollPlugin(plugin).UPDATE_BOUNTY_PERMISSION_ID()
+        });
 
         preparedSetupData.permissions = permissions;
     }
@@ -81,7 +89,7 @@ contract PayrollPluginSetup is PluginUpgradeableSetup {
         address _dao,
         SetupPayload calldata _payload
     ) external pure returns (PermissionLib.MultiTargetPermission[] memory permissions) {
-        permissions = new PermissionLib.MultiTargetPermission[](3);
+        permissions = new PermissionLib.MultiTargetPermission[](4);
 
         permissions[0] = PermissionLib.MultiTargetPermission({
             operation: PermissionLib.Operation.Revoke,
@@ -103,6 +111,13 @@ contract PayrollPluginSetup is PluginUpgradeableSetup {
             who: _dao,
             condition: address(0),
             permissionId: keccak256("UPGRADE_PLUGIN_PERMISSION")
+        });
+        permissions[3] = PermissionLib.MultiTargetPermission({
+            operation: PermissionLib.Operation.Revoke,
+            where: _payload.plugin,
+            who: _dao,
+            condition: address(0),
+            permissionId: keccak256("UPDATE_BOUNTY_PERMISSION")
         });
     }
 }

@@ -650,4 +650,148 @@ describe("PayrollPlugin", () => {
       expect(await plugin.lastPayoutPeriod()).to.equal(2027 * 12 + 6);
     });
   });
+
+  describe("keeper bounty", () => {
+    const UPDATE_BOUNTY_PERMISSION_ID = ethers.utils.id("UPDATE_BOUNTY_PERMISSION");
+
+    async function grantBountyPermissionAndConfigure(
+      token: string,
+      perCrank: ethers.BigNumberish,
+      maxPerPeriod: ethers.BigNumberish
+    ): Promise<void> {
+      await dao.grant(
+        plugin.address,
+        await voter.getAddress(),
+        UPDATE_BOUNTY_PERMISSION_ID
+      );
+      await plugin.connect(voter).setKeeperBounty(token, perCrank, maxPerPeriod);
+    }
+
+    it("setKeeperBounty: emits + stores + requires UPDATE_BOUNTY_PERMISSION", async () => {
+      // Unauthorized → revert.
+      await expect(
+        plugin.connect(stranger).setKeeperBounty(ethers.constants.AddressZero, 100, 1000)
+      ).to.be.reverted;
+      // Authorized → state + event.
+      await dao.grant(
+        plugin.address,
+        await voter.getAddress(),
+        UPDATE_BOUNTY_PERMISSION_ID
+      );
+      await expect(
+        plugin.connect(voter).setKeeperBounty(ethers.constants.AddressZero, 100, 1000)
+      )
+        .to.emit(plugin, "KeeperBountyConfigured")
+        .withArgs(ethers.constants.AddressZero, 100, 1000);
+      expect(await plugin.bountyToken()).to.equal(ethers.constants.AddressZero);
+      expect(await plugin.bountyPerCrank()).to.equal(100);
+      expect(await plugin.bountyMaxPerPeriod()).to.equal(1000);
+    });
+
+    it("pays an ETH bounty to msg.sender on a successful executePayroll", async () => {
+      const aAddr = await alice.getAddress();
+      await plugin
+        .connect(voter)
+        .addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6));
+      await token.mint(dao.address, ethers.utils.parseUnits("10000", 6));
+      const bounty = ethers.utils.parseEther("0.01");
+      await grantBountyPermissionAndConfigure(
+        ethers.constants.AddressZero,
+        bounty,
+        bounty.mul(10)
+      );
+      // Fund the DAO so it can pay the ETH bounty.
+      await fundDaoEth(dao, ethers.utils.parseEther("1"));
+
+      const keeperAddr = await stranger.getAddress();
+      const daoEthBefore = await ethers.provider.getBalance(dao.address);
+
+      await time.setNextBlockTimestamp(payDayTs(2027, 7));
+      await expect(plugin.connect(stranger).executePayroll())
+        .to.emit(plugin, "KeeperBountyPaid")
+        .withArgs(keeperAddr, ethers.constants.AddressZero, bounty, 2027 * 12 + 7);
+
+      // The DAO's ETH balance must drop by exactly `bounty` (no other ETH
+      // recipients on this crank — only the ERC20 transfer to alice).
+      const daoEthAfter = await ethers.provider.getBalance(dao.address);
+      expect(daoEthBefore.sub(daoEthAfter)).to.equal(bounty);
+      expect(await plugin.bountyPaidThisPeriod()).to.equal(bounty);
+    });
+
+    it("pays an ERC20 bounty on a successful crank", async () => {
+      const aAddr = await alice.getAddress();
+      await plugin.connect(voter).addRecipient(aAddr, token.address, 100);
+      await token.mint(dao.address, 1_000_000);
+      const bounty = 7000;
+      await grantBountyPermissionAndConfigure(token.address, bounty, bounty * 10);
+
+      const keeperAddr = await stranger.getAddress();
+      await time.setNextBlockTimestamp(payDayTs(2027, 8));
+      await plugin.connect(stranger).executePayroll();
+
+      expect(await token.balanceOf(keeperAddr)).to.equal(bounty);
+    });
+
+    it("rolling per-period cap clips additional payouts within the same period", async () => {
+      // Need a paginated payroll so two cranks land in the same period.
+      const a = ethers.utils.getAddress(`0x${"01".padStart(40, "0")}`);
+      const b = ethers.utils.getAddress(`0x${"02".padStart(40, "0")}`);
+      await plugin.connect(voter).addRecipient(a, token.address, 100);
+      await plugin.connect(voter).addRecipient(b, token.address, 100);
+      await token.mint(dao.address, 1_000_000);
+      const bounty = 10_000;
+      // Cap = 1.5x — second crank's bounty gets clipped to half.
+      const cap = 15_000;
+      await grantBountyPermissionAndConfigure(token.address, bounty, cap);
+
+      const keeperAddr = await stranger.getAddress();
+      await time.setNextBlockTimestamp(payDayTs(2027, 9));
+      // Page 1 → full bounty.
+      await plugin.connect(stranger).executePayrollPage(1);
+      expect(await token.balanceOf(keeperAddr)).to.equal(bounty);
+      // Page 2 → clipped to remainder (cap - first payout = 5000).
+      await plugin.connect(stranger).executePayrollPage(1);
+      expect(await token.balanceOf(keeperAddr)).to.equal(cap);
+      expect(await plugin.bountyPaidThisPeriod()).to.equal(cap);
+    });
+
+    it("cap resets on a new period", async () => {
+      const a = ethers.utils.getAddress(`0x${"01".padStart(40, "0")}`);
+      await plugin.connect(voter).addRecipient(a, token.address, 100);
+      await token.mint(dao.address, 1_000_000);
+      const bounty = 1000;
+      await grantBountyPermissionAndConfigure(token.address, bounty, bounty);
+
+      const keeperAddr = await stranger.getAddress();
+      await time.setNextBlockTimestamp(payDayTs(2027, 10));
+      await plugin.connect(stranger).executePayroll();
+      expect(await token.balanceOf(keeperAddr)).to.equal(bounty);
+
+      await time.setNextBlockTimestamp(payDayTs(2027, 11));
+      await plugin.connect(stranger).executePayroll();
+      expect(await token.balanceOf(keeperAddr)).to.equal(bounty * 2);
+      expect(await plugin.bountyPaidThisPeriod()).to.equal(bounty);
+      expect(await plugin.bountyAccumPeriod()).to.equal(2027 * 12 + 11);
+    });
+
+    it("disabled bounty (perCrank=0 or cap=0) emits no KeeperBountyPaid", async () => {
+      const aAddr = await alice.getAddress();
+      await plugin.connect(voter).addRecipient(aAddr, token.address, 100);
+      await token.mint(dao.address, 1_000_000);
+      // perCrank=0 → no bounty.
+      await grantBountyPermissionAndConfigure(token.address, 0, 1000);
+
+      await time.setNextBlockTimestamp(payDayTs(2027, 12));
+      const tx = await plugin.connect(stranger).executePayroll();
+      const receipt = await tx.wait();
+      const found = receipt.logs.some((l) => {
+        try {
+          return plugin.interface.parseLog(l).name === "KeeperBountyPaid";
+        } catch {
+          return false;
+        }
+      });
+      expect(found).to.equal(false);
+    });
+  });
 });

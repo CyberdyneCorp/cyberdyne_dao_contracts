@@ -20,6 +20,12 @@ import {BokkyPooBahsDateTimeLibrary as DT} from "./lib/BokkyPooBahsDateTimeLibra
 contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
     bytes32 public constant MANAGE_PAYROLL_PERMISSION_ID = keccak256("MANAGE_PAYROLL_PERMISSION");
 
+    /// @notice Gates `setKeeperBounty`. Separate from `MANAGE_PAYROLL` so the
+    ///         bounty budget can be tuned by a different governance class
+    ///         (e.g. a treasury sub-committee) than recipient management.
+    bytes32 public constant UPDATE_BOUNTY_PERMISSION_ID =
+        keccak256("UPDATE_BOUNTY_PERMISSION");
+
     /// @inheritdoc IPayrollPlugin
     /// @dev Total slot cap (active + soft-deleted). Bounds the storage scan a
     ///      paginated crank performs to find the next active recipient (TRD §11).
@@ -47,7 +53,18 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
     ///      `_cursorPeriod`. 0 = start from the top.
     uint256 private _payoutCursor;
 
-    uint256[45] private __gap;
+    /// @notice Keeper bounty config — set by governance via `setKeeperBounty`.
+    ///         All zero (default) = bounty disabled; the crank stays free for
+    ///         keepers but receives nothing in return.
+    address public override bountyToken;
+    uint256 public override bountyPerCrank;
+    uint256 public override bountyMaxPerPeriod;
+    /// @dev Total bounty paid in `_bountyAccumPeriod`. Reset to 0 when the
+    ///      first crank of a new period runs.
+    uint256 private _bountyPaidThisPeriod;
+    uint256 private _bountyAccumPeriod;
+
+    uint256[40] private __gap;
 
     /// @notice Initialize the plugin. Called once via the UUPS proxy constructor.
     function initialize(IDAO _dao, uint8 _payDayOfMonth) external initializer {
@@ -116,6 +133,22 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
         uint8 previous = payDayOfMonth;
         payDayOfMonth = day;
         emit PayDayUpdated(previous, day);
+    }
+
+    /// @inheritdoc IPayrollPlugin
+    /// @dev Set the keeper bounty paid out of the DAO treasury to `msg.sender`
+    ///      on each successful crank. `perCrank == 0` disables (default).
+    ///      `maxPerPeriod` rolls per period so paginated cranks within the
+    ///      same month share one cap.
+    function setKeeperBounty(
+        address token,
+        uint256 perCrank,
+        uint256 maxPerPeriod
+    ) external override auth(UPDATE_BOUNTY_PERMISSION_ID) {
+        bountyToken = token;
+        bountyPerCrank = perCrank;
+        bountyMaxPerPeriod = maxPerPeriod;
+        emit KeeperBountyConfigured(token, perCrank, maxPerPeriod);
     }
 
     // --- Permissionless monthly crank -------------------------------------
@@ -198,14 +231,32 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
             revert PayrollExceedsSinglePage(maxCount);
         }
 
-        Action[] memory actions = new Action[](count);
+        // Compute the keeper bounty for this crank — may be 0 if disabled, or
+        // clipped by the per-period cap. Decide here so the action batch has
+        // its final size known before we allocate.
+        uint256 bountyAmount = _calcBountyAmount(currentPeriod);
+
+        // Recipient actions + optional trailing bounty action.
+        uint256 actionsLen = bountyAmount > 0 ? count + 1 : count;
+        Action[] memory actions = new Action[](actionsLen);
         for (uint256 k; k < count; ++k) {
             actions[k] = buffer[k];
         }
+        if (bountyAmount > 0) {
+            address bToken = bountyToken;
+            actions[count] = (bToken == address(0))
+                ? Action({to: msg.sender, value: bountyAmount, data: ""})
+                : Action({
+                    to: bToken,
+                    value: 0,
+                    data: abi.encodeCall(IERC20.transfer, (msg.sender, bountyAmount))
+                });
+        }
 
-        // Every bit set so any single transfer can fail without aborting the
-        // batch. `count <= MAX_RECIPIENTS_PER_PAGE = 100`, so the shift is safe.
-        uint256 allowFailureMap = (uint256(1) << count) - 1;
+        // Every bit set so any single action (recipient transfer OR the bounty)
+        // can fail without aborting the batch. `actionsLen <= 101`, so the shift
+        // is safe.
+        uint256 allowFailureMap = (uint256(1) << actionsLen) - 1;
 
         // EFFECTS before INTERACTIONS: advance the cursor / lock the period now
         // so a reentrant crank cannot re-pay this page.
@@ -216,6 +267,17 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
         } else {
             _payoutCursor = i;
         }
+        // Reserve the bounty against the per-period cap BEFORE the external
+        // call. If the bounty leg reverts via the allowFailureMap, the
+        // reservation still stands — a keeper that can't be paid this call
+        // can't retry to drain past the cap by spamming pages.
+        if (bountyAmount > 0) {
+            if (_bountyAccumPeriod != currentPeriod) {
+                _bountyAccumPeriod = currentPeriod;
+                _bountyPaidThisPeriod = 0;
+            }
+            _bountyPaidThisPeriod += bountyAmount;
+        }
 
         (, uint256 failureMap) = IExecutor(address(dao())).execute(
             keccak256(abi.encodePacked("PAYROLL:", currentPeriod, ":", start)),
@@ -224,7 +286,25 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
         );
 
         emit PayrollExecuted(currentPeriod, count, failureMap);
+        if (bountyAmount > 0) {
+            emit KeeperBountyPaid(msg.sender, bountyToken, bountyAmount, currentPeriod);
+        }
         if (reachedEnd) emit PayrollPeriodCompleted(currentPeriod);
+    }
+
+    /// @dev Returns the bounty amount to pay this crank, after applying the
+    ///      per-period rolling cap. Returns 0 when the bounty is disabled or
+    ///      the cap is exhausted.
+    function _calcBountyAmount(uint256 currentPeriod) private view returns (uint256) {
+        uint256 perCrank = bountyPerCrank;
+        if (perCrank == 0) return 0;
+        uint256 cap = bountyMaxPerPeriod;
+        if (cap == 0) return 0;
+        // New period: full cap is available again.
+        uint256 used = (_bountyAccumPeriod == currentPeriod) ? _bountyPaidThisPeriod : 0;
+        if (used >= cap) return 0;
+        uint256 remaining = cap - used;
+        return perCrank <= remaining ? perCrank : remaining;
     }
 
     // --- Views ------------------------------------------------------------
@@ -260,6 +340,16 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
             }
         }
         return out;
+    }
+
+    /// @inheritdoc IPayrollPlugin
+    function bountyPaidThisPeriod() external view override returns (uint256) {
+        return _bountyPaidThisPeriod;
+    }
+
+    /// @inheritdoc IPayrollPlugin
+    function bountyAccumPeriod() external view override returns (uint256) {
+        return _bountyAccumPeriod;
     }
 
     // --- Internals --------------------------------------------------------
