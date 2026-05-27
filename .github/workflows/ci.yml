@@ -100,9 +100,22 @@ jobs:
           - target: mainnetFork
             rpc_secret: RPC_MAINNET
             pin_secret: PIN_MAINNET
+            chain_id: 1
+            port: 8545
+            # Verified mainnet TokenVoting PluginRepo (build 1 — PUSH0-using
+            # impl, runs on the cancun fork started below). Enables the e2e
+            # create→vote→execute governance round-trips.
+            token_voting_repo: "0xb7401cD221ceAFC54093168B814Cc3d42579287f"
+            token_voting_build: "1"
           - target: baseFork
             rpc_secret: RPC_BASE
             pin_secret: PIN_BASE
+            chain_id: 8453
+            port: 8546
+            # No pinned Base TokenVoting repo → governance round-trips self-skip
+            # on Base; the 5-plugin bootstrap + §9 matrix still run.
+            token_voting_repo: ""
+            token_voting_build: ""
     steps:
       - uses: actions/checkout@v4
         with:
@@ -121,11 +134,36 @@ jobs:
           RPC_BASE: ${{ secrets[matrix.rpc_secret] }}
           PIN_MAINNET: ${{ vars[matrix.pin_secret] }}
           PIN_BASE: ${{ vars[matrix.pin_secret] }}
+          TOKEN_VOTING_REPO: ${{ matrix.token_voting_repo }}
+          TOKEN_VOTING_BUILD: ${{ matrix.token_voting_build }}
         run: |
-          if [ -z "$RPC_MAINNET$RPC_BASE" ]; then
+          RPC="${RPC_MAINNET}${RPC_BASE}"
+          if [ -z "$RPC" ]; then
             echo "::warning::No RPC secret configured for ${{ matrix.target }} — skipping"
             exit 0
           fi
+          PIN="${PIN_MAINNET}${PIN_BASE}"
+
+          # Launch the fork node the named `*Fork` hardhat network connects to.
+          # --hardfork cancun is REQUIRED: the verified TokenVoting impl uses
+          # PUSH0, which only activates from the shanghai/cancun upgrade.
+          anvil --fork-url "$RPC" \
+            --chain-id ${{ matrix.chain_id }} \
+            --port ${{ matrix.port }} \
+            --hardfork cancun \
+            ${PIN:+--fork-block-number "$PIN"} &
+          ANVIL_PID=$!
+          trap 'kill $ANVIL_PID 2>/dev/null || true' EXIT
+
+          # Wait for the node to accept RPC before running the suite.
+          for i in $(seq 1 60); do
+            if cast block-number --rpc-url "http://127.0.0.1:${{ matrix.port }}" >/dev/null 2>&1; then
+              echo "anvil ready after ${i} attempt(s)"
+              break
+            fi
+            sleep 2
+          done
+
           npx hardhat test --network ${{ matrix.target }}
 
   coverage:
