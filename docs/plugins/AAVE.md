@@ -151,6 +151,21 @@ announced GHO-native liquidity layer), `IAaveAdapter` may need a v2; the
 registry still holds, but adapters of different interface versions would
 need an interface-version tag.
 
+## 3b. Governance-path: `preview…Actions` helpers
+
+Each fund-moving entry (`supply`, `withdraw`, `borrow`, `repay`) ships a
+`view` sibling that returns the exact `Action[]` the wrapper would forward
+to `IExecutor.execute`. Governance proposals call the preview, then submit
+the returned batch as a TokenVoting proposal so the outer `dao.execute`
+runs the action batch directly — no nested `dao.execute`, no reentrancy
+guard collision. See
+[TRD §9a — Governance-path action builders](../TRD.md#9a-governance-path-action-builders-previewactions)
+for the full pattern + rationale.
+
+Helpers: `previewSupplyActions`, `previewWithdrawActions`,
+`previewBorrowActions`, `previewRepayActions`. Admin ops (`setAdapter`,
+`setAllowedAsset`) are single-call plugin mutators and need no preview.
+
 ## 4. Allowance lifecycle
 
 Each `supply` and `repay` builds a 2-action batch:

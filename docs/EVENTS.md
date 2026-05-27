@@ -60,6 +60,10 @@ Signatures freeze at **P1**. Any change after P5 (bootstrap) is breaking for the
 
 **Read-side joins:** live position state (liquidity, ticks, tokensOwed) is read from `NonfungiblePositionManager.positions(tokenId)`; the DAO owns the NFTs.
 
+**OSx-emitted siblings consumed alongside:** `IExecutor.Executed` is emitted by the DAO when the plugin runs an action batch. Call-id schemes are `keccak256("UNI_V3_MINT:" || lpNonce)`, `UNI_V3_INC:`, `UNI_V3_DEC:`, `UNI_V3_COLLECT:`, `UNI_V3_BURN:` — same per-op nonce family as V4 LP.
+
+**Governance path:** every fund-moving op also ships a `previewXActions(...) view returns (Action[])` helper (see [TRD §9a](TRD.md#9a-governance-path-action-builders-previewactions)) so multi-action proposals can submit the raw batch directly without nested `dao.execute`.
+
 ---
 
 ## PayrollPlugin

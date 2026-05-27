@@ -27,6 +27,8 @@ Per-plugin spec for the Cyberdyne DAO PayrollPlugin (TRD §6.3, ROADMAP P2).
 - The crank is the only `executePayroll` call site; the DAO is the only call site for management functions (gated by `MANAGE_PAYROLL_PERMISSION`).
 - Plugin upgrades require `UPGRADE_PLUGIN_PERMISSION` on the plugin, granted only to the DAO. UUPS via `_authorizeUpgrade` inherited from `PluginUUPSUpgradeable`.
 
+> **No `preview…Actions` helpers needed.** Unlike the swap/lending/LP plugins, Payroll's fund-moving entry point (`executePayroll`) is **permissionless** (keeper-callable), not governance-routed — so it never participates in the nested-`dao.execute` reentrancy issue that motivated [TRD §9a](../TRD.md#9a-governance-path-action-builders-previewactions). Schedule mutators (`addRecipient` etc.) are single-action plugin calls and ride through TokenVoting as a one-action proposal directly.
+
 ## 3. Calendar math caveats
 
 - `payDayOfMonth` is restricted to **1..28** at init and at every `setPayDayOfMonth`. This sidesteps February-vs-30/31 entirely.

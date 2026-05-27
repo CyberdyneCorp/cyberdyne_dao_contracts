@@ -23,8 +23,9 @@ On-chain governance for the Cyberdyne DAO, built on top of the audited [Aragon O
 
 ```mermaid
 graph TB
-    subgraph User["Token holders"]
+    subgraph User["Token holders + keepers"]
         U[Voter / Proposer]
+        K[Keeper / anyone]
     end
 
     subgraph DAO["Cyberdyne DAO — OSx v1.4.0 (audited core)"]
@@ -33,37 +34,48 @@ graph TB
         D --- P
     end
 
-    subgraph Plugins["Plugins"]
+    subgraph Plugins["Plugins (5 new + TokenVoting)"]
         TV["TokenVoting<br/>(reused from Aragon)"]
-        UNI["UniswapV4Plugin<br/>(new)"]
-        AAVE["AaveLendingPlugin<br/>(new)"]
-        PAY["PayrollPlugin<br/>(new)"]
+        UV3["UniswapV3Plugin<br/>(LP lifecycle)"]
+        UV4["UniswapV4Plugin<br/>(swaps + LP)"]
+        AAVE["AaveLendingPlugin"]
+        PAY["PayrollPlugin<br/>(keeper crank)"]
+        COST["CostRegistryPlugin<br/>(keeper crank)"]
     end
 
     subgraph External["External protocols"]
-        UR["Uniswap Universal Router<br/>(V4-capable)"]
+        NPM["Uniswap V3 NPM"]
+        UR["Uniswap Universal Router<br/>+ V4 PositionManager"]
         AP["AAVE v3 Pool<br/>(v4 via adapter swap)"]
-        REC["Payroll recipients<br/>(EOAs / contracts)"]
+        REC["Payroll + cost recipients"]
     end
 
     U -->|create / vote proposal| TV
-    TV -->|"dao.execute(Action[])"| D
-    D -->|EXECUTE_PERMISSION| UNI
+    TV -->|"dao.execute(Action[])<br/>(direct preview…Actions batch for fund moves)"| D
+    K -->|"crank: executePayroll / processDue"| PAY
+    K -->|crank| COST
+    D -->|EXECUTE_PERMISSION| UV3
+    D -->|EXECUTE_PERMISSION| UV4
     D -->|EXECUTE_PERMISSION| AAVE
     D -->|EXECUTE_PERMISSION| PAY
-    UNI -->|"dao.execute(approve+swap)"| UR
-    AAVE -->|"dao.execute(approve+supply/borrow)"| AP
-    PAY -->|"dao.execute(transfers)<br/>auto, monthly"| REC
+    D -->|EXECUTE_PERMISSION| COST
+    D -.->|"governance batch:<br/>approve + NPM"| NPM
+    D -.->|"governance batch:<br/>approve + router / PM"| UR
+    D -.->|"governance batch:<br/>approve + supply/borrow"| AP
+    PAY -->|"dao.execute(transfers, allowFailureMap)"| REC
+    COST -->|"dao.execute(transfers, allowFailureMap)"| REC
 
     classDef audited fill:#d4edda,stroke:#155724,color:#155724
     classDef new fill:#fff3cd,stroke:#856404,color:#856404
     classDef reused fill:#cce5ff,stroke:#004085,color:#004085
     classDef external fill:#f8d7da,stroke:#721c24,color:#721c24
     class D,P audited
-    class UNI,AAVE,PAY new
+    class UV3,UV4,AAVE,PAY,COST new
     class TV reused
-    class UR,AP,REC external
+    class UR,NPM,AP,REC external
 ```
+
+> **On the governance path** (the `dao.execute(Action[])` arrow above): for fund-moving ops on UniswapV3 / UniswapV4 / AAVE, the proposal bundles the **raw `Action[]` returned by `preview…Actions(...)`** instead of a single-action `dao.execute([{to: plugin, data: swap(...)}])`. That avoids nested `dao.execute` (which would trip OSx's `nonReentrant` guard). The plugin wrappers (`swap`, `mint`, `supply`, …) remain callable directly (tests, alternate governance plugins). See [TRD §9a](docs/TRD.md#9a-governance-path-action-builders-previewactions). Payroll + CostRegistry skip this entirely — their fund-moving entry points are keeper-callable, not vote-gated.
 
 | Color  | Meaning                                                      |
 | ------ | ------------------------------------------------------------ |
@@ -100,34 +112,76 @@ Building a DAO from scratch means rebuilding (and re-auditing) treasury custody,
 
 ## Plugin overview
 
-### 1. Uniswap V4 Plugin
+### 1. Uniswap V4 Plugin (swaps + LP)
+
+**Swap — governance path** (the `preview…Actions` pattern, see [TRD §9a](docs/TRD.md#9a-governance-path-action-builders-previewactions)):
 
 ```mermaid
 sequenceDiagram
     actor V as Voter
     participant TV as TokenVoting
     participant D as DAO
-    participant UNI as UniswapV4Plugin
+    participant UV4 as UniswapV4Plugin
     participant UR as Universal Router
 
-    V->>TV: createProposal({to: UNI, data: swap(...)})
+    V->>UV4: previewSwapActions(...) (view)
+    UV4-->>V: Action[] { approve, permit2, router.execute }
+    V->>TV: createProposal(actions = Action[])
     Note over TV: Voting period
-    V->>TV: vote()
-    V->>TV: execute(proposalId)
-    TV->>D: execute([Action(UNI, swap)])
-    D->>UNI: swap(commands, inputs, deadline, ...)
-    UNI->>D: execute([approve, routerCall])
-    D->>UR: approve + execute swap
+    V->>TV: vote() + execute(proposalId)
+    TV->>D: execute(Action[])
+    D->>UR: approve + execute swap (atomic batch)
     UR-->>D: tokenOut transferred to DAO
-    UNI->>UNI: verify balanceAfter - balanceBefore ≥ minAmountOut
+    Note over V,D: Frontend reads balanceAfter − balanceBefore ≥ minAmountOut<br/>(governance proposals can also append a guard call)
 ```
 
-- Every swap requires a passed proposal.
-- Plugin builds a 3-action atomic batch (approve → swap → revoke).
-- Slippage enforced by post-swap balance delta check inside the plugin.
-- Output tokens land directly in the DAO.
+**LP — `modifyLiquidities` pass-through** (mint / increase / decrease / collect / burn):
 
-### 2. AAVE Lending Plugin
+```mermaid
+sequenceDiagram
+    actor V as Voter
+    participant TV as TokenVoting
+    participant D as DAO
+    participant UV4 as UniswapV4Plugin
+    participant PM as V4 PositionManager
+
+    V->>UV4: previewModifyLiquiditiesActions(unlockData, deadline, inputs, maxIn) (view)
+    UV4-->>V: Action[] { approves + permit2 + PM.modifyLiquidities + resets }
+    V->>TV: createProposal(actions)
+    V->>TV: vote() + execute(proposalId)
+    TV->>D: execute(Action[])
+    D->>PM: modifyLiquidities(unlockData, deadline)
+    PM-->>D: position NFT and/or tokens settle to DAO
+```
+
+- Plugin holds no funds, no NFTs — DAO is `msg.sender` to the router and PM.
+- Allowlist (optional) gates `tokenIn`/`tokenOut` for swaps and every input/output currency for LP ops.
+- Direct wrapper calls (`swap`, `modifyLiquidities`) still work for tests and alternate governance plugins — they just can't be invoked through TokenVoting because of OSx's `nonReentrant` `DAO.execute`.
+
+### 2. Uniswap V3 Plugin (full LP lifecycle)
+
+```mermaid
+sequenceDiagram
+    actor V as Voter
+    participant TV as TokenVoting
+    participant D as DAO
+    participant UV3 as UniswapV3Plugin
+    participant NPM as V3 NonfungiblePositionManager
+
+    V->>UV3: previewMintActions(params) (view)
+    UV3-->>V: Action[] { approve token0, approve token1, NPM.mint, reset approvals }
+    V->>TV: createProposal(actions)
+    V->>TV: vote() + execute(proposalId)
+    TV->>D: execute(Action[])
+    D->>NPM: mint / increaseLiquidity / decreaseLiquidity / collect / burn
+    NPM-->>D: position NFT and/or amounts settle to DAO
+```
+
+- Same preview-based governance pattern as V4.
+- Position NFTs are always minted with `recipient = DAO`; collect target is forced to the DAO.
+- `previewMintActions`, `previewIncreaseLiquidityActions`, `previewDecreaseLiquidityActions`, `previewCollectActions`, `previewBurnActions` cover the full lifecycle.
+
+### 3. AAVE Lending Plugin
 
 ```mermaid
 sequenceDiagram
@@ -135,23 +189,22 @@ sequenceDiagram
     participant TV as TokenVoting
     participant D as DAO
     participant AAVE as AaveLendingPlugin
-    participant ADP as IAaveAdapter
     participant POOL as AAVE Pool
 
-    V->>TV: proposal: supply(USDC, 100k)
-    TV->>D: execute
-    D->>AAVE: supply(USDC, 100k)
-    AAVE->>ADP: poolAddress()
-    AAVE->>D: execute([approve(POOL,100k), supply(USDC,100k,DAO)])
+    V->>AAVE: previewSupplyActions(USDC, 100k) (view)
+    AAVE-->>V: Action[] { approve(POOL,100k), supply(USDC,100k,DAO) }
+    V->>TV: createProposal(actions)
+    V->>TV: vote() + execute(proposalId)
+    TV->>D: execute(Action[])
     D->>POOL: approve + supply (onBehalfOf=DAO)
     POOL-->>D: mint aUSDC to DAO
 ```
 
 - v3 today via `AaveV3Adapter`; v4 later via vote to `setAdapter(newAdapter)`.
 - `onBehalfOf = DAO` for every call — aTokens and debt tokens always issued to the DAO.
-- Supply, withdraw, borrow, repay — each gated by vote.
+- Supply, withdraw, borrow, repay — each gated by vote, each shipped with a `preview…Actions` view helper for the governance path.
 
-### 3. Payroll Plugin (auto-execution)
+### 4. Payroll Plugin (auto-execution)
 
 ```mermaid
 sequenceDiagram
@@ -183,6 +236,37 @@ sequenceDiagram
 - `payDayOfMonth` constrained to 1–28 to avoid month-length edge cases.
 - Calendar math via vendored BokkyPooBah DateTime library.
 
+### 5. CostRegistry Plugin (recurring operating costs)
+
+```mermaid
+sequenceDiagram
+    actor V as Voter
+    actor K as Keeper / anyone
+    participant TV as TokenVoting
+    participant D as DAO
+    participant CR as CostRegistryPlugin
+
+    rect rgb(230, 240, 255)
+        Note over V,CR: Registering / updating a cost entry — VOTE REQUIRED
+        V->>TV: proposal: registerEntry(payee, costUsdc, freqDays, "Datadog")
+        TV->>D: execute
+        D->>CR: registerEntry(...)
+    end
+
+    rect rgb(255, 245, 220)
+        Note over K,CR: Crank — PERMISSIONLESS
+        K->>CR: processDue(offset, limit)
+        CR->>CR: for each entry where block.timestamp ≥ lastPaidAt + freq*1d
+        CR->>D: execute(USDC transfers, allowFailureMap)
+        D-->>K: CostsProcessed(fromIndex, count, failureMap)
+    end
+```
+
+- Each entry pays a fixed USDC amount on its own recurring cadence (`frequencyDays`).
+- Entries pay **independently** by `lastPaidAt + frequencyDays` (no shared period).
+- `processDue(offset, limit)` is keeper-callable and paginated — `failureMap` tags page-local failures.
+- Same `allowFailureMap` semantics as Payroll: one payee revert doesn't block the rest.
+
 ---
 
 ## Trust & audit boundary
@@ -199,9 +283,11 @@ flowchart LR
     end
 
     subgraph B["Our scope (to be audited)"]
-        U[UniswapV4Plugin + Setup]
+        U3[UniswapV3Plugin + Setup]
+        U4[UniswapV4Plugin + Setup]
         L[AaveLendingPlugin + Setup + Adapters]
         P[PayrollPlugin + Setup]
+        C[CostRegistryPlugin + Setup]
     end
 
     A -.->|consumed by| B
@@ -210,7 +296,7 @@ flowchart LR
     style B fill:#fff3cd,stroke:#856404
 ```
 
-Every line of new code in this repo lives in B (yellow). The green side is consumed as-is. Audit scope therefore = ~5 plugins + their setup contracts + the bootstrap script. Nothing more.
+Every line of new code in this repo lives in B (yellow). The green side is consumed as-is. Audit scope therefore = 5 plugins + their setup contracts + the bootstrap script. Nothing more.
 
 ---
 
@@ -258,16 +344,20 @@ sequenceDiagram
     participant DAO as New DAO
     participant PSP as PluginSetupProcessor
 
-    Note over Deployer,PSP: Phase 1 — publish each new plugin (3 txs)
-    Deployer->>PRF: createPluginRepoWithFirstVersion(uniswap)
-    PRF-->>Deployer: UniswapPluginRepo addr
+    Note over Deployer,PSP: Phase 1 — publish each new plugin (5 txs)
+    Deployer->>PRF: createPluginRepoWithFirstVersion(uniswap-v3)
+    PRF-->>Deployer: UniswapV3PluginRepo addr
+    Deployer->>PRF: createPluginRepoWithFirstVersion(uniswap-v4)
+    PRF-->>Deployer: UniswapV4PluginRepo addr
     Deployer->>PRF: createPluginRepoWithFirstVersion(aave)
     PRF-->>Deployer: AavePluginRepo addr
     Deployer->>PRF: createPluginRepoWithFirstVersion(payroll)
     PRF-->>Deployer: PayrollPluginRepo addr
+    Deployer->>PRF: createPluginRepoWithFirstVersion(cost-registry)
+    PRF-->>Deployer: CostRegistryPluginRepo addr
 
     Note over Deployer,PSP: Phase 2 — one tx creates everything
-    Deployer->>DF: createDao(daoSettings, [TokenVoting, Uni, Aave, Payroll])
+    Deployer->>DF: createDao(daoSettings, [TokenVoting, V3, V4, Aave, Payroll, CostRegistry])
     DF->>DAO: deploy proxy + init
     loop For each plugin
         DF->>PSP: prepareInstallation + applyInstallation

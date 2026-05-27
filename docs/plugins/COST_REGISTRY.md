@@ -35,6 +35,8 @@ services…) that also disburses them in USDC.
   vote-gated mutators (`MANAGE_COSTS_PERMISSION`).
 - UUPS upgrades require `UPGRADE_PLUGIN_PERMISSION`, granted only to the DAO.
 
+> **No `preview…Actions` helpers needed.** Like Payroll, the fund-moving entry (`processDue`) is **permissionless** (keeper-callable), not governance-routed — it never participates in the nested-`dao.execute` reentrancy issue that motivated [TRD §9a](../TRD.md#9a-governance-path-action-builders-previewactions). Entry-management mutators (`registerEntry` / `updateEntry` / `removeEntry`) are single-action plugin calls and ride through TokenVoting as one-action proposals directly.
+
 ## 3. Payment scheduling
 
 - Each entry is independent: it becomes due when

@@ -55,6 +55,21 @@ Exact-amount approvals reset to zero in the same batch, so no DAO→NPM allowanc
 ever lingers (enforced by `invariant_zeroResidualAllowance`).
 `decreaseLiquidity` / `collect` / `burn` move nothing in and need no approvals.
 
+## 3a. Governance-path: `preview…Actions` helpers
+
+Each fund-moving entry point ships a `view` sibling that returns the exact
+`Action[]` the wrapper would forward to `IExecutor.execute`. Governance
+proposals call the preview, then submit the returned batch as a TokenVoting
+proposal so the outer `dao.execute` runs the action batch directly — no nested
+`dao.execute`, no reentrancy guard collision. See
+[TRD §9a — Governance-path action builders](../TRD.md#9a-governance-path-action-builders-previewactions)
+for the full pattern + rationale.
+
+Helpers: `previewMintActions`, `previewIncreaseLiquidityActions`,
+`previewDecreaseLiquidityActions`, `previewCollectActions`,
+`previewBurnActions`. Admin ops (`setPositionManager`, `setAllowedToken`) are
+single-call mutators and need no preview.
+
 ## 4. tokenId surfacing
 
 `mint` decodes the NPM return from the executor's `execResults` to emit the new

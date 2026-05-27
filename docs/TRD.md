@@ -691,52 +691,92 @@ GitHub Actions runs the full fork suite in parallel on `mainnetFork` and `baseFo
 ```
 src/
   plugins/
+    uniswap-v3/
+      UniswapV3Plugin.sol            (NPM-backed LP lifecycle: mint/inc/dec/collect/burn + preview…Actions)
+      UniswapV3PluginSetup.sol
+      IUniswapV3Plugin.sol
+      INonfungiblePositionManager.sol
     uniswap-v4/
-      UniswapV4Plugin.sol
+      UniswapV4Plugin.sol            (swaps + LP via modifyLiquidities + preview…Actions)
       UniswapV4PluginSetup.sol
+      IUniswapV4Plugin.sol
       IUniversalRouter.sol
+      IV4PositionManager.sol
       IPermit2.sol
     aave/
-      AaveLendingPlugin.sol
+      AaveLendingPlugin.sol          (supply/withdraw/borrow/repay + preview…Actions)
       AaveLendingPluginSetup.sol
+      IAaveLendingPlugin.sol
       adapters/
         IAaveAdapter.sol
         AaveV3Adapter.sol
-        AaveV4Adapter.sol         (stub until v4 is live)
+        AaveV4Adapter.sol            (stub until v4 is live)
     payroll/
       PayrollPlugin.sol
       PayrollPluginSetup.sol
+      IPayrollPlugin.sol
       lib/
-        BokkyPooBahDateTime.sol   (vendored)
+        BokkyPooBahDateTime.sol      (vendored)
+    cost-registry/
+      CostRegistryPlugin.sol         (per-category caps + bookkeeping)
+      CostRegistryPluginSetup.sol
+      ICostRegistryPlugin.sol
 
-test/                              ← Hardhat + TypeScript tests
+test/                                ← Hardhat + TypeScript tests
   helpers/
-    fork-guard.ts                  (onlyOn / skipOn helpers)
-    addresses.ts                   (loads npm-artifacts/src/addresses.json)
-    impersonate.ts                 (hardhat_impersonateAccount wrappers)
-    time.ts                        (re-exports @nomicfoundation/hardhat-network-helpers)
+    fork-guard.ts                    (onlyOn / skipOn helpers)
+    addresses.ts                     (loads npm-artifacts/src/addresses.json)
+    impersonate.ts                   (hardhat_impersonateAccount wrappers)
+    time.ts                          (re-exports @nomicfoundation/hardhat-network-helpers)
   plugins/
+    uniswap-v3/
+      UniswapV3Plugin.unit.test.ts
+      UniswapV3Plugin.fork.test.ts          (mainnetFork — NPM live)
     uniswap-v4/
       UniswapV4Plugin.unit.test.ts
-      UniswapV4Plugin.fork.test.ts        (mainnetFork + baseFork)
+      UniswapV4Plugin.fork.test.ts          (mainnetFork + baseFork — swaps + LP)
     aave/
       AaveLendingPlugin.unit.test.ts
-      AaveLendingPlugin.fork.test.ts      (mainnetFork + baseFork)
+      AaveLendingPlugin.fork.test.ts        (mainnetFork + baseFork)
     payroll/
       PayrollPlugin.unit.test.ts
-      PayrollPlugin.fork.test.ts          (time-travel scenarios)
+      PayrollPlugin.fork.test.ts            (time-travel scenarios)
+    cost-registry/
+      CostRegistryPlugin.unit.test.ts
   e2e/
-    CustomDaoBootstrap.fork.test.ts       (full DAOFactory + 5 plugins, multi-chain)
+    CustomDaoBootstrap.fork.test.ts         (full DAOFactory + 5 plugins, multi-chain)
 
-hardhat.config.ts                  ← network + forking config (see §12)
+test/invariants/                     ← Foundry invariants (24 total, 50k random sequences each)
+  Aave.invariant.t.sol               (5)
+  CostRegistry.invariant.t.sol       (4)
+  Payroll.invariant.t.sol            (5)
+  UniswapV3.invariant.t.sol          (5)
+  UniswapV4.invariant.t.sol          (5)
+
+hardhat.config.ts                    ← network + forking config (see §12)
 tsconfig.json
-package.json                       ← hardhat, ethers, typechain, chai
+package.json                         ← hardhat, ethers, typechain, chai
 
-scripts/                           ← Foundry deploy scripts (unchanged convention)
-  DeployUniswapV4Plugin.s.sol      (deploys impl + setup + repo)
+scripts/                             ← Foundry deploy scripts (unchanged convention)
+  DeployUniswapV3Plugin.s.sol        (deploys impl + setup + repo)
+  DeployUniswapV4Plugin.s.sol
   DeployAavePlugin.s.sol
   DeployPayrollPlugin.s.sol
-  DeployCustomDao.s.sol            (uses DAOFactory + 5 plugins)
+  DeployCostRegistryPlugin.s.sol
+  DeployCustomDao.s.sol              (uses DAOFactory + 5 plugins)
+  lib/
+    OsxAddresses.sol                 (per-chain OSx + protocol constants)
+
+frontend/                            ← Toy SvelteKit + ethers.js + WalletConnect dApp (see §3b)
+  src/
+    lib/
+      actions.ts                     (typed builders + preview…Actions wrappers)
+      governance.ts                  (TokenVoting createProposal/vote/execute)
+      v3Positions.ts, v4Positions.ts (DAO-owned NFT enumeration)
+      v4Encode.ts                    (modifyLiquidities unlockData encoder)
+      components/
+        ProposeAction.svelte         (multi-action batch submission)
+    routes/                          (positions / lending / payroll / swaps / proposals / costs)
 ```
 
 The Hardhat test tree is rooted at top-level `test/` rather than `packages/contracts/test/` so it's clearly *our* project's test suite, separate from OSx's legacy Hardhat tests (which stay in `packages/contracts/test/` as a reference).
