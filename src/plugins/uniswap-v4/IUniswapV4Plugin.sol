@@ -59,6 +59,16 @@ interface IUniswapV4Plugin {
     /// @notice Reverts when a placeholder function has not yet been implemented.
     error NotImplemented();
 
+    /// @notice Reverts when an action in `unlockData` is a `MINT_POSITION` whose
+    ///         encoded `owner` doesn't match the DAO. Closes the proposal-review-
+    ///         only gap that the plugin would otherwise let a malicious proposal
+    ///         mint a DAO-funded position to a stranger.
+    error MintRecipientMustBeDao(address encodedOwner, address dao);
+
+    /// @notice Reverts when `unlockData` is shorter than the v4 action-stream
+    ///         envelope (`abi.encode(bytes actions, bytes[] params)`) requires.
+    error UnlockDataTooShort();
+
     // --- Vote-gated mutators ---
 
     /// @notice Execute a swap via the Universal Router. The DAO is the spender and recipient.

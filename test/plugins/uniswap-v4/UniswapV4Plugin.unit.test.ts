@@ -534,7 +534,10 @@ describe("UniswapV4Plugin", () => {
   // -------------------------------------------------------------------------
   describe("modifyLiquidities (v4 LP lifecycle)", () => {
     let pm: MockV4PositionManager;
-    const DUMMY_UNLOCK = "0x1234";
+    // A valid (but actionless) v4 unlock envelope: abi.encode(bytes(""), bytes[](0)).
+    // The plugin's MintRecipientMustBeDao check needs a well-formed envelope
+    // even when the mock PM ignores the bytes; the loop simply iterates zero times.
+    const DUMMY_UNLOCK = ethers.utils.defaultAbiCoder.encode(["bytes", "bytes[]"], ["0x", []]);
 
     beforeEach(async () => {
       pm = await new MockV4PositionManager__factory(deployer).deploy();
@@ -610,6 +613,78 @@ describe("UniswapV4Plugin", () => {
       )
         .to.be.revertedWithCustomError(plugin, "TokenNotAllowed")
         .withArgs(tokenOut.address);
+    });
+
+    // Helper: encode a real MINT_POSITION param tuple (matches v4-periphery).
+    // PoolKey + tickLower + tickUpper + liquidity + amount0Max + amount1Max + owner + hookData.
+    function encodeMintParam(owner: string): string {
+      return ethers.utils.defaultAbiCoder.encode(
+        [
+          "(address,address,uint24,int24,address)", // PoolKey
+          "int24",
+          "int24",
+          "uint256",
+          "uint128",
+          "uint128",
+          "address",
+          "bytes",
+        ],
+        [
+          [ethers.constants.AddressZero, ethers.constants.AddressZero, 3000, 60, ethers.constants.AddressZero],
+          -60,
+          60,
+          1,
+          1,
+          1,
+          owner,
+          "0x",
+        ]
+      );
+    }
+    // Helper: build an unlockData envelope with a single MINT_POSITION action.
+    function envelopeWithMint(owner: string): string {
+      const actionStream = "0x" + "02"; // MINT_POSITION
+      const mintParam = encodeMintParam(owner);
+      return ethers.utils.defaultAbiCoder.encode(
+        ["bytes", "bytes[]"],
+        [actionStream, [mintParam]]
+      );
+    }
+
+    it("reverts MintRecipientMustBeDao when the encoded owner is not the DAO", async () => {
+      const stranger = ethers.Wallet.createRandom().address;
+      const bad = envelopeWithMint(stranger);
+      await expect(
+        plugin.connect(voter).modifyLiquidities(bad, FUTURE_DEADLINE, [], [], [], [])
+      )
+        .to.be.revertedWithCustomError(plugin, "MintRecipientMustBeDao")
+        .withArgs(stranger, dao.address);
+    });
+
+    it("passes the MINT_POSITION recipient check when encoded owner is the DAO", async () => {
+      const good = envelopeWithMint(dao.address);
+      // No pull/push legs configured → modifyLiquidities is a no-op on the mock
+      // PM. The plugin still runs all preflight checks; success here proves the
+      // recipient check accepts dao().
+      await expect(
+        plugin.connect(voter).modifyLiquidities(good, FUTURE_DEADLINE, [], [], [], [])
+      ).to.emit(plugin, "LiquidityModified");
+    });
+
+    it("reverts UnlockDataTooShort on an empty payload", async () => {
+      await expect(
+        plugin.connect(voter).modifyLiquidities("0x", FUTURE_DEADLINE, [], [], [], [])
+      ).to.be.revertedWithCustomError(plugin, "UnlockDataTooShort");
+    });
+
+    it("previewModifyLiquiditiesActions also enforces the MINT_POSITION recipient", async () => {
+      const stranger = ethers.Wallet.createRandom().address;
+      const bad = envelopeWithMint(stranger);
+      await expect(
+        plugin.previewModifyLiquiditiesActions(bad, FUTURE_DEADLINE, [], [])
+      )
+        .to.be.revertedWithCustomError(plugin, "MintRecipientMustBeDao")
+        .withArgs(stranger, dao.address);
     });
 
     it("mint leg: DAO→Permit2 allowance pulled to zero post-call, action emitted", async () => {
@@ -723,7 +798,7 @@ describe("UniswapV4Plugin", () => {
         plugin
           .connect(voter)
           .modifyLiquidities(
-            "0x01", // pretend "MINT_POSITION + SETTLE_PAIR" actions byte
+            DUMMY_UNLOCK, // pretend "MINT_POSITION + SETTLE_PAIR" actions byte
             FUTURE_DEADLINE,
             [tokenIn.address, tokenOut.address],
             [mintIn0, mintIn1],
@@ -749,7 +824,7 @@ describe("UniswapV4Plugin", () => {
       await plugin
         .connect(voter)
         .modifyLiquidities(
-          "0x02",
+          DUMMY_UNLOCK,
           FUTURE_DEADLINE,
           [tokenIn.address, tokenOut.address],
           [incIn0, incIn1],
@@ -774,7 +849,7 @@ describe("UniswapV4Plugin", () => {
       await plugin
         .connect(voter)
         .modifyLiquidities(
-          "0x03",
+          DUMMY_UNLOCK,
           FUTURE_DEADLINE,
           [],
           [],
@@ -800,7 +875,7 @@ describe("UniswapV4Plugin", () => {
         plugin
           .connect(voter)
           .modifyLiquidities(
-            "0x04",
+            DUMMY_UNLOCK,
             FUTURE_DEADLINE,
             [],
             [],
@@ -816,7 +891,7 @@ describe("UniswapV4Plugin", () => {
       await plugin
         .connect(voter)
         .modifyLiquidities(
-          "0x04",
+          DUMMY_UNLOCK,
           FUTURE_DEADLINE,
           [],
           [],
@@ -835,7 +910,7 @@ describe("UniswapV4Plugin", () => {
       await plugin
         .connect(voter)
         .modifyLiquidities(
-          "0x05",
+          DUMMY_UNLOCK,
           FUTURE_DEADLINE,
           [],
           [],

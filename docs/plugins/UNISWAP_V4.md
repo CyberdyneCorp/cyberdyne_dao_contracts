@@ -77,11 +77,17 @@ The whole batch is sent through `IExecutor.execute(callId, actions, allowFailure
 
 **Output slippage guard.** Before the call, the plugin snapshots the DAO's balance of every `outputCurrencies[i]`; after the call, it asserts `received_i = balanceAfter_i - balanceBefore_i ≥ minOut[i]` (reverts `OutputShortfall` otherwise). This is the V4-LP analogue of the swap path's `minAmountOut` check.
 
-**Position NFTs.** The position NFT is minted to whichever `owner` the proposal encodes in `MINT_POSITION` params. The plugin doesn't decode `unlockData`, so it can't *force* that recipient to be the DAO — the proposal author must encode `owner = dao()`. The treasury-level safety still holds (the plugin doesn't custody anything), but **proposal review should check this field**. A future build can decode and assert it on-chain.
+**Position NFTs.** The position NFT is minted to whichever `owner` the proposal encodes in `MINT_POSITION` params. **The plugin decodes `unlockData` defensively and reverts `MintRecipientMustBeDao(encodedOwner, dao)` if any `MINT_POSITION` action carries a non-DAO owner** — proposal review no longer has to catch this. Both `modifyLiquidities` and `previewModifyLiquiditiesActions` run the check, so a malformed proposal fails to build the action batch in the first place. An empty/too-short `unlockData` payload reverts `UnlockDataTooShort` with a clear reason rather than an opaque abi-decode error.
 
 **Why pass-through.** V4 LP ops are intentionally compositional: a single `modifyLiquidities` can chain MINT/INCREASE/DECREASE/SETTLE/TAKE actions, with hooks. Forcing the plugin to expose one signature per combination would multiply the surface area without buying more safety — every code path already routes back through `DAO.execute`, so allowlist + slippage are the meaningful guardrails. Same model the swap path already uses for `commands`/`inputs`.
 
 **Set the PositionManager.** v4PositionManager may be `address(0)` at install (LP ops revert `PositionManagerUnset` until set). Call the vote-gated `setV4PositionManager(address)` to wire it — reuses `UPDATE_ROUTER_PERMISSION` (both router and PM are external Uniswap endpoints) so the install grant list stays at 6.
+
+### `previewModifyLiquiditiesActions(...) view returns (Action[])`
+
+Every fund-moving entry point on this plugin (`swap`, `modifyLiquidities`) ships a sibling `view` helper that returns the exact `Action[]` the wrapper would forward to `IExecutor.execute`. Governance proposals call that helper, then submit the returned batch as a TokenVoting proposal so the outer `dao.execute` runs the action batch directly — no nested `dao.execute`, no reentrancy guard collision. See [TRD §9a — Governance-path action builders](../TRD.md#9a-governance-path-action-builders-previewactions) for the full pattern and rationale.
+
+Helpers exposed: `previewSwapActions`, `previewModifyLiquiditiesActions`. Admin ops (`setUniversalRouter`, `setV4PositionManager`, `setAllowedToken`) don't need preview helpers — they're single-call mutators on the plugin itself, callable as a one-action proposal directly.
 
 ## 4. Allowance lifecycle (TRD §11 security note)
 

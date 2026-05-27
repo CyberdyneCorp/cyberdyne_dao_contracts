@@ -430,19 +430,61 @@ Catches issues *before* external auditors see the code (cheaper, faster).
 
 ---
 
-## Phase 13 — V1.1 hardening (post-launch)
+## Phase 13 — V1.1 hardening backlog
 
-**Duration estimate:** 2–4 weeks. Scoped after mainnet operation reveals real priorities.
+**Duration estimate:** 2–4 weeks once prioritized. Items here came out of the post-P9 internal audit (see commits + `docs/plugins/*.md`) and from real fork-test gaps. Each ticked item below has a one-PR scope and self-contained acceptance criteria. Cross-link from the plugin doc when you start an item.
 
-**Candidate items** (ordered by current expectation):
-1. **`BorrowHealthCondition` contract** attached to `TRIGGER_LENDING_PERMISSION_ID` via `grantWithCondition` — enforces post-borrow health factor automatically, removes reliance on proposal review for safety.
-2. **Keeper bounty** on `executePayroll()` — pays `msg.sender` a small ETH bounty from the DAO so Gelato / Chainlink Automation / random keepers have economic incentive.
-3. **Paginated payroll** — `executePayroll(uint256 startIdx, uint256 count)` with per-page idempotency for DAOs exceeding ~100 recipients.
-4. **AAVE v4 adapter** when v4 is live on Ethereum — vote `setAdapter(newAddress)` migration.
-5. **Uniswap V4 LP plugin** — provide liquidity, collect fees, gated by vote.
-6. **DAO sub-treasuries** — child DAOs with capped budgets allocated via parent vote.
+Legend: ✅ shipped · 🟡 in scope for v1.1 · 🔵 stretch / nice-to-have · 🔒 strategic / multi-PR
 
-Each item goes through P1–P10 cycle as a self-contained sub-roadmap.
+### UniswapV3Plugin
+
+- [ ] 🟡 **Beef up fork tests.** Current suite covers only mint + decrease/collect against the live NPM. Add: `increaseLiquidity`, `burn`, fee-only collect with zero decrease, deadline-expired revert, allowlist enforcement against live tokens.
+- [ ] 🟡 **`quoteMint(token0, token1, fee, tickLower, tickUpper, amount0Desired)` view helper** — wraps Uniswap QuoterV2 to surface expected `liquidity` + counter-amount before the proposal is built. Closes a real footgun (bad ticks → mint reverts on `amount0Min`/`amount1Min`).
+- [ ] 🟡 **Subgraph entities** — `V3Position`, `V3Collect`, `V3TokenAllowlistEntry` + mappings for `PositionMinted` / `LiquidityIncreased` / `LiquidityDecreased` / `FeesCollected` / `PositionBurned`. Today the positions page reads RPC only.
+- [ ] 🔵 **Optional ETH-in helper** — when `token0` / `token1` is WETH, prepend `WETH.deposit{value: x}` to `previewMintActions` so a single proposal can wrap + mint atomically.
+
+### UniswapV4Plugin
+
+- [ ] 🟡 **Live V4 LP fork test.** Today `UniswapV4Plugin.fork.test.ts` skips both the V4-native single-hop swap and any LP test (`it.skip` at `test/plugins/uniswap-v4/UniswapV4Plugin.fork.test.ts:273`). At minimum: mint + decrease against the real v4 PositionManager + a pool with adequate liquidity at the pinned block.
+- [x] ✅ **On-chain MINT_POSITION-recipient enforcement.** Plugin now decodes the v4 action stream and reverts `MintRecipientMustBeDao(owner, dao)` if any `MINT_POSITION` action carries a non-DAO owner. Enforced in both `modifyLiquidities` and `previewModifyLiquiditiesActions`. Empty payloads revert `UnlockDataTooShort`. Added 4 unit tests.
+- [ ] 🟡 **V4 LP invariants.** The 5 existing invariants in `test/invariants/UniswapV4.invariant.t.sol` are swap-era. Add: `lpNonce` monotonic, no NFT custody on the plugin, zero residual DAO→Permit2 allowance on any LP input currency after a successful op.
+- [ ] 🟡 **Subgraph entities** — `V4LpOp` (consuming `LiquidityModified`) and `V4PositionManagerMigration`.
+- [ ] 🔵 **`previewModifyLiquidities` quote helper** — same QuoterV2-equivalent gap as V3, but for V4 (using v4-periphery's QuoterV2 surface).
+
+### PayrollPlugin
+
+- [ ] 🟡 **Keeper bounty.** Pay `msg.sender` a small (vote-set, capped) ETH or USDC bounty inside `executePayroll` so Gelato / Chainlink Automation / random keepers have economic incentive on high-gas days. Tracks TRD §16 #3.
+- [ ] 🟡 **Decide ETH-payee path.** `PayrollPlugin.sol:174` has an `r.token == address(0)` branch but DAO-side transfers go through `IERC20.transfer` — native ETH payees aren't actually paid today. Either delete the dead branch or wire ETH transfers through `executeAction` with `value: r.amount`.
+- [ ] 🔵 **Vote-gated `setMaxRecipients(uint256)`** — bounded by a hard constant, so the DAO can grow past 300 without a plugin upgrade.
+- [ ] 🔵 **`forcePayPeriod(uint256 period)`** — vote-gated recovery for a skipped month, capped to N months back.
+
+### CostRegistryPlugin
+
+- [ ] 🟡 **`setPaymentToken(address)` vote-gated migration** — today the payment token is fixed at install. Switching USDC → USDT (or to a multichain stable per chain) currently requires plugin redeploy + entry migration.
+- [ ] 🟡 **Optional `MAX_COST_USDC` cap.** `uint96` allows ~7.9e28; a registry typo behind a passed proposal could pre-stage a treasury drain. Cap on `registerEntry`/`updateEntry` is defense-in-depth.
+- [ ] 🟡 **Subgraph entities** — `CostEntry`, `CostPayment`, `CostCrankRun` (already named in `docs/EVENTS.md` but never indexed).
+- [ ] 🔵 **`processAllDue(uint256 maxBatchSize)`** — keeper-friendlier crank that walks every due entry up to `MAX_PER_PAGE` without the caller tracking `offset`.
+- [ ] 🔵 **Vote-gated `setMaxEntries(uint256)`** — same shape as the Payroll item.
+
+### Frontend (toy SvelteKit dApp)
+
+- [ ] 🟡 **Wire the subgraph.** Today every page pages back N blocks via direct RPC (`frontend/src/routes/swaps/+page.svelte:81` literally tells the user "for richer history, query the subgraph"). Add an `@urql/svelte` (or fetch-wrapped) client and replace the block-scan UI on swaps / lending / positions / costs.
+- [ ] 🟡 **Pre-submit quote previews** for V3 + V4 mint. Show expected `liquidity` + counter-amount + post-mint balances so the form doesn't silently build a tx that will revert.
+- [ ] 🟡 **AAVE health-factor banner** on the lending page — read `Pool.getUserAccountData(dao)` and surface the current value + post-borrow projection.
+- [ ] 🟡 **Proposal-execution simulation.** `eth_call` the proposal's actions against the post-vote state on the proposal-detail page before vote-end so reverts (bad slippage, expired deadline, insufficient balance) surface early.
+- [ ] 🟡 **Wrong-network warning** in `ProposeAction.svelte` — today it silently falls back to "copy calldata" when the connected chain has no TokenVoting entry in `chains.ts`.
+- [ ] 🟡 **V3 fee/PnL view.** Positions browser already shows liquidity + ticks; add uncollected fees (`positions(tokenId).tokensOwed0/1`) and rough USD value per row (one extra RPC per row).
+- [ ] 🔵 **IPFS proposal-metadata pinning.** Slide 12 claims it; the frontend submits `bytes("")` today. Wire a `web3.storage` / Pinata call before `proposeActions` or drop the claim.
+- [ ] 🔵 **V4 LP form validation.** `sortCurrencies()` auto-sorts, but the form still accepts the same address in both currency fields.
+
+### Cross-cutting
+
+- [ ] 🔒 **`BorrowHealthCondition` contract** (from TRD §16 #1) attached to `TRIGGER_LENDING_PERMISSION_ID` via `grantWithCondition` — enforces post-borrow health factor automatically, removes reliance on proposal review.
+- [ ] 🔒 **AAVE v4 adapter** when v4 is live on Ethereum — vote `setAdapter(newAddress)` migration.
+- [ ] 🔒 **DAO sub-treasuries** — child DAOs with capped budgets allocated via parent vote.
+- [ ] 🔵 **Decide the precise CI target chain list** (TRD §16 #5). Today Ethereum + Base are defaults; confirm before locking fork CI per-chain.
+
+Each ✅ item is closed by a referenced PR; each 🟡 item is a self-contained PR sized for the v1.1 sprint; each 🔵 is a stretch with no commitment; each 🔒 is multi-PR and gets its own sub-roadmap (P1→P10 mini-cycle).
 
 ---
 

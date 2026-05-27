@@ -26,3 +26,26 @@ interface IV4PositionManager {
     ///         PoolManager on this chain.
     function poolManager() external view returns (address);
 }
+
+/// @notice Mirror of the v4-periphery `PoolKey` struct (kept local to avoid the
+///         0.8.26 v4 source tree). Layout must match v4-periphery exactly for
+///         abi.decode of `MINT_POSITION` action params to work.
+struct V4PoolKey {
+    address currency0;
+    address currency1;
+    uint24 fee;
+    int24 tickSpacing;
+    address hooks;
+}
+
+/// @notice Action-stream opcodes used by v4-periphery's `modifyLiquidities`.
+///         Library-style so the plugin can reference them without instantiating
+///         a contract.
+library V4Actions {
+    uint8 internal constant INCREASE_LIQUIDITY = 0x00;
+    uint8 internal constant DECREASE_LIQUIDITY = 0x01;
+    uint8 internal constant MINT_POSITION = 0x02;
+    uint8 internal constant BURN_POSITION = 0x03;
+    uint8 internal constant SETTLE_PAIR = 0x0d;
+    uint8 internal constant TAKE_PAIR = 0x11;
+}

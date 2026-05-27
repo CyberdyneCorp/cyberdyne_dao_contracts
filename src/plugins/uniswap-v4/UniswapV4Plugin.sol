@@ -10,7 +10,7 @@ import {IExecutor, Action} from "@aragon/osx-commons-contracts/src/executors/IEx
 import {IUniswapV4Plugin} from "./IUniswapV4Plugin.sol";
 import {IUniversalRouter} from "./IUniversalRouter.sol";
 import {IPermit2} from "./IPermit2.sol";
-import {IV4PositionManager} from "./IV4PositionManager.sol";
+import {IV4PositionManager, V4PoolKey, V4Actions} from "./IV4PositionManager.sol";
 
 /// @title UniswapV4Plugin
 /// @notice Vote-gated swap plugin for Aragon OSx DAOs. The DAO is the sole
@@ -247,6 +247,7 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
         if (outputCurrencies.length != minOut.length) revert LengthMismatch();
         if (v4PositionManager == address(0)) revert PositionManagerUnset();
         _checkAllowlist(inputCurrencies, outputCurrencies);
+        _assertMintRecipientIsDao(unlockData);
 
         // Snapshot output balances before the call — the slippage check.
         uint256[] memory before_ = _snapshotBalances(outputCurrencies);
@@ -324,7 +325,44 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
                 if (!allowedToken[inputCurrencies[i]]) revert TokenNotAllowed(inputCurrencies[i]);
             }
         }
+        _assertMintRecipientIsDao(unlockData);
         return _buildLpActions(unlockData, deadline, inputCurrencies, maxIn);
+    }
+
+    /// @dev Decodes the v4 action stream and reverts if any `MINT_POSITION`
+    ///      action would mint the position NFT to anyone other than the DAO.
+    ///      Defense-in-depth: a malicious proposal could otherwise encode
+    ///      `owner = stranger` and the pass-through would happily fund a
+    ///      stranger's position from the treasury.
+    ///
+    ///      `unlockData = abi.encode(bytes actionStream, bytes[] params)`. Each
+    ///      byte in `actionStream` is one action opcode; `params[i]` is the
+    ///      abi-encoded args for action `i`. `MINT_POSITION` params layout:
+    ///      `(V4PoolKey poolKey, int24 tickLower, int24 tickUpper,
+    ///        uint256 liquidity, uint128 amount0Max, uint128 amount1Max,
+    ///        address owner, bytes hookData)`. We only need `owner`.
+    function _assertMintRecipientIsDao(bytes calldata unlockData) private view {
+        // Decoding the envelope of an empty / too-short payload would itself
+        // revert with an opaque AbiDecodingError; surface a clearer reason.
+        if (unlockData.length < 64) revert UnlockDataTooShort();
+        (bytes memory actionStream, bytes[] memory params) = abi.decode(
+            unlockData,
+            (bytes, bytes[])
+        );
+        // params can be empty (action stream is bytes(0)); a no-op stream is harmless.
+        uint256 n = actionStream.length < params.length ? actionStream.length : params.length;
+        address daoAddr = address(dao());
+        for (uint256 i; i < n; ++i) {
+            if (uint8(actionStream[i]) != V4Actions.MINT_POSITION) continue;
+            // We deliberately decode the full tuple — the type list must match
+            // v4-periphery's PositionManager exactly. Unused locals are dropped
+            // by the optimizer.
+            (, , , , , , address owner, ) = abi.decode(
+                params[i],
+                (V4PoolKey, int24, int24, uint256, uint128, uint128, address, bytes)
+            );
+            if (owner != daoAddr) revert MintRecipientMustBeDao(owner, daoAddr);
+        }
     }
 
     /// @dev Pulled out of `modifyLiquidities` to relieve stack pressure (the
