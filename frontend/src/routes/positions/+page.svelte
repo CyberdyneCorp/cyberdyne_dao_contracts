@@ -11,7 +11,11 @@
   import * as actions from "$lib/actions";
   import type {ProposalAction} from "$lib/actions";
   import ProposeAction from "$lib/components/ProposeAction.svelte";
-  import {listV3PositionsOwnedBy, type V3PositionRead} from "$lib/v3Positions";
+  import {
+    listV3PositionsOwnedBy,
+    simulateV3Collect,
+    type V3PositionRead,
+  } from "$lib/v3Positions";
   import {
     listV4PositionsOwnedBy,
     readV4Position,
@@ -308,6 +312,30 @@
   let listErr: string | null = null;
   let listing = false;
 
+  // Per-tokenId simulated-collect cache. Filled when the user clicks "Live"
+  // on a row; `null` while in-flight, error message if the sim reverted.
+  type FeeCell = {amount0: string; amount1: string} | {error: string} | "loading";
+  let v3LiveFees: Record<string, FeeCell> = {};
+
+  async function simulateCollectFor(tokenId: ethers.BigNumber): Promise<void> {
+    const key = tokenId.toString();
+    v3LiveFees = {...v3LiveFees, [key]: "loading"};
+    try {
+      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
+      const cfg = chainConfig($wallet.chainId);
+      if (!cfg?.dao || !cfg.dao.uniswapV3) throw new Error("V3 not configured");
+      const v3 = uniswapV3Contract(cfg, $wallet.provider);
+      const npmAddr = (await v3.positionManager()) as string;
+      const r = await simulateV3Collect(npmAddr, $wallet.provider, tokenId, cfg.dao.dao);
+      v3LiveFees = {
+        ...v3LiveFees,
+        [key]: {amount0: r.amount0.toString(), amount1: r.amount1.toString()},
+      };
+    } catch (err) {
+      v3LiveFees = {...v3LiveFees, [key]: {error: (err as Error).message}};
+    }
+  }
+
   async function loadPositions(): Promise<void> {
     listErr = null;
     listing = true;
@@ -405,10 +433,19 @@
     {#if v3Positions && v3Positions.length > 0}
       <table>
         <thead>
-          <tr><th>tokenId</th><th>pair</th><th>fee</th><th>tick range</th><th>liquidity</th><th>owed0 / owed1</th></tr>
+          <tr>
+            <th>tokenId</th>
+            <th>pair</th>
+            <th>fee</th>
+            <th>tick range</th>
+            <th>liquidity</th>
+            <th title="tokensOwed[0/1] from positions() — stale until next on-chain op on this position">owed0 / owed1 (stale)</th>
+            <th title="Live pending fees via NPM.callStatic.collect">live fees</th>
+          </tr>
         </thead>
         <tbody>
           {#each v3Positions as p}
+            {@const live = v3LiveFees[p.tokenId.toString()]}
             <tr>
               <td>{p.tokenId.toString()}</td>
               <td><code>{p.token0.slice(0, 8)}…</code> / <code>{p.token1.slice(0, 8)}…</code></td>
@@ -416,6 +453,17 @@
               <td>[{p.tickLower}, {p.tickUpper}]</td>
               <td>{p.liquidity.toString()}</td>
               <td>{p.tokensOwed0.toString()} / {p.tokensOwed1.toString()}</td>
+              <td>
+                {#if live === undefined}
+                  <button class="small" on:click={() => simulateCollectFor(p.tokenId)}>Simulate</button>
+                {:else if live === "loading"}
+                  <span class="muted">…</span>
+                {:else if "error" in live}
+                  <span class="error" title={live.error}>err</span>
+                {:else}
+                  <code>{live.amount0}</code> / <code>{live.amount1}</code>
+                {/if}
+              </td>
             </tr>
           {/each}
         </tbody>
@@ -637,5 +685,9 @@
   }
   .error {
     color: #b00020;
+  }
+  button.small {
+    padding: 0.1rem 0.4rem;
+    font-size: 0.8rem;
   }
 </style>
