@@ -48,6 +48,8 @@ dataSources:
           handler: handleRecipientAmountUpdated
         - event: PayDayUpdated(uint8,uint8)
           handler: handlePayDayUpdated
+        - event: MaxRecipientsUpdated(uint256,uint256)
+          handler: handleMaxRecipientsUpdated
         - event: PayrollExecuted(indexed uint256,uint256,uint256)
           handler: handlePayrollExecuted
         - event: KeeperBountyConfigured(indexed address,uint256,uint256)
@@ -198,3 +200,5 @@ dataSources:
           handler: handleCostsProcessed
         - event: PaymentTokenUpdated(indexed address,indexed address)
           handler: handlePaymentTokenUpdated
+        - event: MaxEntriesUpdated(uint256,uint256)
+          handler: handleMaxEntriesUpdated

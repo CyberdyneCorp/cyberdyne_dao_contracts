@@ -74,6 +74,7 @@ Signatures freeze at **P1**. Any change after P5 (bootstrap) is breaking for the
 | `RecipientRemoved` | `(address payee)` | `payee` | `PayrollRecipient` (active=false) | Payroll schedule screen |
 | `RecipientAmountUpdated` | `(address payee, uint256 oldAmount, uint256 newAmount)` | `payee` | `PayrollRecipient` (amount updated) + `RecipientAmountChange` history | Payroll schedule screen + per-recipient history drawer |
 | `PayDayUpdated` | `(uint8 oldDay, uint8 newDay)` | — | `PayrollConfig` (mutable singleton) | Payroll schedule screen — next-payout countdown |
+| `MaxRecipientsUpdated` | `(uint256 oldMax, uint256 newMax)` | — | `PayrollConfig` (`maxRecipients` field) | Payroll admin: recipient-cap config |
 | `PayrollExecuted` | `(uint256 period, uint256 recipientCount, uint256 failureMap)` | `period` | `PayrollPayout` (per batch) + N×`PayrollPayoutItem` (one per recipient, `failed` derived from `failureMap`) | Payroll schedule screen → per-month execution log |
 | `PayrollPeriodCompleted` | `(uint256 period)` | `period` | marks the `period`'s payout as complete (final page) | Payroll execution log — "period closed" marker |
 | `KeeperBountyConfigured` | `(address token, uint256 perCrank, uint256 maxPerPeriod)` | `token` | `PayrollConfig` (bounty fields) | Payroll admin: keeper-bounty config |
@@ -95,6 +96,7 @@ Signatures freeze at **P1**. Any change after P5 (bootstrap) is breaking for the
 | `CostPaid` | `(uint256 id, address payee, uint256 amount, uint64 paidAt)` | `id`, `payee` | `CostPayment` (one per paid entry) | Per-entry payment history |
 | `CostsProcessed` | `(uint256 fromIndex, uint256 count, uint256 failureMap)` | — | `CostCrankRun` (per batch) | Crank log |
 | `PaymentTokenUpdated` | `(address previous, address current)` | `previous`, `current` | `PaymentTokenMigration` + `CostRegistryPlugin.paymentToken` | Inspector: token-migration history |
+| `MaxEntriesUpdated` | `(uint256 oldMax, uint256 newMax)` | — | `CostRegistryConfig` (`maxEntries` field) | Cost-registry admin: entry-cap config |
 
 > **Pagination note:** `processDue(offset, limit)` (and the offset-free `processAllDue()` convenience wrapper) fire `CostPaid` per paid entry and one `CostsProcessed` per batch. `failureMap` is page-local — bit `i` = the `i`-th paid entry of that batch reverted. Entries are idempotent per their own `lastPaidAt`, so there is no period/cursor to aggregate (unlike Payroll).
 

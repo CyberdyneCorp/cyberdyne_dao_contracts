@@ -13,6 +13,7 @@ import {
   CostPaid,
   CostsProcessed,
   PaymentTokenUpdated,
+  MaxEntriesUpdated,
 } from "../generated/CostRegistryPlugin/CostRegistryPlugin";
 import {
   Dao,
@@ -113,6 +114,12 @@ export function handleCostsProcessed(event: CostsProcessed): void {
   run.block = event.block.number;
   run.txHash = event.transaction.hash;
   run.save();
+}
+
+export function handleMaxEntriesUpdated(event: MaxEntriesUpdated): void {
+  let plugin = getOrCreatePlugin(event.address, event.block.timestamp);
+  plugin.maxEntries = event.params.newMax;
+  plugin.save();
 }
 
 export function handlePaymentTokenUpdated(event: PaymentTokenUpdated): void {

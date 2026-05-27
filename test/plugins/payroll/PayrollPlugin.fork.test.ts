@@ -179,5 +179,30 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       expect(await ethers.provider.getBalance(bAddr)).to.equal(bBefore.add(ethSalary));
       expect(await ethers.provider.getBalance(reverting.address)).to.equal(0);
     });
+
+    it("previewForcePayPeriodActions recovers a skipped month with real USDC", async () => {
+      const aAddr = await alice.getAddress();
+      const salary = ethers.utils.parseUnits("1000", 6);
+      await fundFromWhale(usdcAddress, WHALES[chainKey()], dao.address, salary.mul(5));
+      await plugin.connect(voter).addRecipient(aAddr, usdcAddress, salary);
+
+      // Pay January 2030 → lastPayoutPeriod = 2030*12+1.
+      await time.setNextBlockTimestamp(utcTimestamp(2030, 1, PAY_DAY, 12));
+      await plugin.executePayroll();
+      expect(await usdc.balanceOf(aAddr)).to.equal(salary);
+
+      // March 2030 (February skipped). Build the Feb recovery batch via the
+      // preview view (needs a mined block at the new time so the view reads it).
+      await time.increaseTo(utcTimestamp(2030, 3, PAY_DAY, 12));
+      const period = 2030 * 12 + 2; // Feb 2030
+      const raw = await plugin.previewForcePayPeriodActions(period);
+      const actions = raw.map((a) => ({to: a.to, value: a.value, data: a.data}));
+      expect(actions.length).to.equal(1);
+
+      // Governance carries the batch; the DAO runs it top-level via execute
+      // (no nested dao.execute — the actions are raw DAO→payee transfers).
+      await dao.execute(ethers.utils.id("force-2030-02"), actions, 0);
+      expect(await usdc.balanceOf(aAddr)).to.equal(salary.mul(2)); // Jan + recovered Feb
+    });
   });
 });

@@ -95,6 +95,35 @@ describe("CostRegistryPlugin", () => {
     });
   });
 
+  describe("initializeV2 (upgrade migration)", () => {
+    // _maxEntries is storage slot 303 (see docs/storage-layouts/CostRegistryPlugin.md).
+    const MAX_ENTRIES_SLOT = "0x12f"; // 303
+
+    it("re-seeds the default cap when _maxEntries was zeroed (upgrade-from-constant)", async () => {
+      await ethers.provider.send("hardhat_setStorageAt", [
+        plugin.address,
+        MAX_ENTRIES_SLOT,
+        ethers.constants.HashZero,
+      ]);
+      expect(await plugin.MAX_ENTRIES()).to.equal(0);
+
+      await plugin.initializeV2();
+      expect(await plugin.MAX_ENTRIES()).to.equal(300);
+    });
+
+    it("is permissionless and idempotent (no-op when already set)", async () => {
+      await plugin.connect(stranger).initializeV2();
+      expect(await plugin.MAX_ENTRIES()).to.equal(300);
+    });
+
+    it("cannot run twice", async () => {
+      await plugin.initializeV2();
+      await expect(plugin.initializeV2()).to.be.revertedWith(
+        "Initializable: contract is already initialized"
+      );
+    });
+  });
+
   describe("registerEntry", () => {
     it("registers and emits, returns the new id, stores fields", async () => {
       const id = await plugin

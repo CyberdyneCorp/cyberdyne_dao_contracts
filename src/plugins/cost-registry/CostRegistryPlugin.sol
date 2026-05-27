@@ -73,6 +73,21 @@ contract CostRegistryPlugin is PluginUUPSUpgradeable, ICostRegistryPlugin {
         _maxEntries = DEFAULT_MAX_ENTRIES;
     }
 
+    /// @notice Upgrade migration for instances installed before `MAX_ENTRIES`
+    ///         became a storage value (it used to be a `constant`, so the new
+    ///         `_maxEntries` slot reads as 0 after such an upgrade — which would
+    ///         make `registerEntry` revert `EntryLimitExceeded(0)`). Seeds the
+    ///         default cap once. Run it atomically with the upgrade
+    ///         (`upgradeToAndCall(newImpl, abi.encodeCall(this.initializeV2, ()))`);
+    ///         it is also permissionless and idempotent (only writes when zero)
+    ///         so a forgotten call can still be repaired afterward. Fresh
+    ///         installs set the cap in `initialize` and never need this.
+    function initializeV2() external reinitializer(2) {
+        if (_maxEntries == 0) {
+            _maxEntries = DEFAULT_MAX_ENTRIES;
+        }
+    }
+
     // --- Vote-gated management --------------------------------------------
 
     /// @inheritdoc ICostRegistryPlugin

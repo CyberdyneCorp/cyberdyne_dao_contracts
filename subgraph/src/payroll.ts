@@ -7,6 +7,7 @@ import {
   RecipientRemoved,
   RecipientAmountUpdated,
   PayDayUpdated,
+  MaxRecipientsUpdated,
   PayrollExecuted,
   KeeperBountyConfigured,
   KeeperBountyPaid,
@@ -96,6 +97,12 @@ export function handleRecipientAmountUpdated(event: RecipientAmountUpdated): voi
 export function handlePayDayUpdated(event: PayDayUpdated): void {
   let plugin = getOrCreatePlugin(event.address, event.block.timestamp);
   plugin.payDayOfMonth = event.params.newDay;
+  plugin.save();
+}
+
+export function handleMaxRecipientsUpdated(event: MaxRecipientsUpdated): void {
+  let plugin = getOrCreatePlugin(event.address, event.block.timestamp);
+  plugin.maxRecipients = event.params.newMax;
   plugin.save();
 }
 

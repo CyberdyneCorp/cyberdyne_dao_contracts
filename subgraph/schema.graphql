@@ -27,6 +27,9 @@ type PayrollPlugin @entity {
   dao: Dao!
   payDayOfMonth: Int!
   lastPayoutPeriod: BigInt!
+  # Recipient-slot cap (v1.1). Null until the first MaxRecipientsUpdated; the
+  # plugin defaults to 300 on-chain.
+  maxRecipients: BigInt
   # Keeper-bounty config (v1.1). All zero = disabled (default).
   bountyToken: Bytes
   bountyPerCrank: BigInt
@@ -65,6 +68,9 @@ type CostRegistryPlugin @entity {
   id: ID!                                        # plugin address
   dao: Dao!
   paymentToken: Bytes!                           # current token (USDC by default)
+  # Entry-slot cap (v1.1). Null until the first MaxEntriesUpdated; the plugin
+  # defaults to 300 on-chain.
+  maxEntries: BigInt
   entries: [CostEntry!]! @derivedFrom(field: "plugin")
   payments: [CostPayment!]! @derivedFrom(field: "plugin")
   crankRuns: [CostCrankRun!]! @derivedFrom(field: "plugin")

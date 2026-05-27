@@ -15,10 +15,12 @@ Per-plugin spec for the Cyberdyne DAO PayrollPlugin (TRD §6.3, ROADMAP P2).
 
 - Maintains an on-chain list of payroll recipients (payee, token, amount).
 - Pays every active recipient **once per month**, on a fixed day-of-month chosen at install.
-- Recipient management (`addRecipient` / `removeRecipient` / `setAmount` / `setPayDayOfMonth`) is vote-gated through the DAO.
+- Recipient management (`addRecipient` / `removeRecipient` / `setAmount` / `setPayDayOfMonth` / `setMaxRecipients`) is vote-gated through the DAO.
+- `setMaxRecipients(newMax)` raises/lowers the recipient-slot cap (`MAX_RECIPIENTS()`, default 300), bounded above by the hard `MAX_RECIPIENTS_CEILING` (1000) and below by the live slot count — lets a DAO grow past 300 without a plugin upgrade.
 - The monthly crank is **permissionless** — anyone can call it. Idempotent within a month.
   - `executePayroll()` — pays the whole period in one batch (for payrolls up to one page).
   - `executePayrollPage(maxCount)` — pays the period across multiple cursor-tracked pages for large payrolls (see §3a).
+- `previewForcePayPeriodActions(period)` — vote-gated **recovery** for a month the crank skipped. A *view* returning the DAO→payee transfer batch for every active recipient; a proposal carries those actions and TokenVoting executes them top-level. `period` (`year*12+month`) must be strictly between `lastPayoutPeriod` and now and ≤ `MAX_FORCE_BACK_MONTHS` (12) back. See §2 for why this is a preview helper, not a wrapper.
 - **Native ETH payees are supported** — pass `token = address(0)` to `addRecipient`. The crank builds a value-bearing `Action` (`to: payee, value: amount, data: ""`) which the DAO executes as a native transfer. Mixed ETH + ERC20 batches in the same period are routine; the unit test `pays mixed ETH + ERC20 recipients in one crank` covers the path.
 
 ## 2. Trust + custody model
@@ -28,7 +30,11 @@ Per-plugin spec for the Cyberdyne DAO PayrollPlugin (TRD §6.3, ROADMAP P2).
 - The crank is the only `executePayroll` call site; the DAO is the only call site for management functions (gated by `MANAGE_PAYROLL_PERMISSION`).
 - Plugin upgrades require `UPGRADE_PLUGIN_PERMISSION` on the plugin, granted only to the DAO. UUPS via `_authorizeUpgrade` inherited from `PluginUUPSUpgradeable`.
 
-> **No `preview…Actions` helpers needed.** Unlike the swap/lending/LP plugins, Payroll's fund-moving entry point (`executePayroll`) is **permissionless** (keeper-callable), not governance-routed — so it never participates in the nested-`dao.execute` reentrancy issue that motivated [TRD §9a](../TRD.md#9a-governance-path-action-builders-previewactions). Schedule mutators (`addRecipient` etc.) are single-action plugin calls and ride through TokenVoting as a one-action proposal directly.
+> **`preview…Actions` only for the recovery path.** Payroll's *recurring* fund-moving entry point (`executePayroll`) is **permissionless** (keeper-callable), not governance-routed — so it never participates in the nested-`dao.execute` reentrancy issue that motivated [TRD §9a](../TRD.md#9a-governance-path-action-builders-previewactions). Schedule mutators (`addRecipient`, `setMaxRecipients`, …) are single-action plugin calls and ride through TokenVoting as a one-action proposal directly. The **one** governance-routed fund move — the skipped-month recovery — is therefore exposed as `previewForcePayPeriodActions` (a view returning the transfer batch) rather than an `auth`-gated wrapper that calls `dao.execute` itself: such a wrapper would nest `dao.execute` inside the proposal's `dao.execute` and revert under OSx's `nonReentrant`, exactly like the swap/lending/LP fund ops.
+
+### Upgrade migration (`initializeV2`)
+
+`MAX_RECIPIENTS()` is a storage value (default 300) set in `initialize`. For an instance **upgraded** from a build where it was a `constant`, the new `_maxRecipients` slot reads 0 (it was `__gap`), which would make `addRecipient` revert `RecipientLimitExceeded(0)`. `initializeV2()` (`reinitializer(2)`) seeds the default once; run it atomically with the upgrade (`upgradeToAndCall(newImpl, abi.encodeCall(PayrollPlugin.initializeV2, ()))`). It is permissionless and idempotent (writes only when zero), so a forgotten call can still be repaired afterward. Fresh installs set the cap in `initialize` and never need it.
 
 ### Keeper bounty
 
@@ -114,10 +120,10 @@ The two cursor words were appended in slots 305/306 (consuming two slots from th
 
 | Finding | Location | Disposition |
 |---|---|---|
-| `uninitialized-local` on `count` / `j` | _runPayroll, allActiveRecipients | False positive. The counters default to 0 in Solidity; this is the idiomatic pattern for a write cursor into a freshly-allocated memory array. |
-| `unused-return` on `IExecutor.execute` first return | _runPayroll | Intentional. We only need `failureMap` to emit the event; the per-action `execResults bytes[]` is irrelevant to payroll semantics. |
+| `uninitialized-local` on `count` / `j` | _runPayroll, allActiveRecipients, previewForcePayPeriodActions | False positive. The counters default to 0 in Solidity; this is the idiomatic pattern for a write cursor into a freshly-allocated memory array. |
+| `unused-return` on `IExecutor.execute` first return / `timestampToDate` day field | _runPayroll, previewForcePayPeriodActions | Intentional. `_runPayroll` needs only `failureMap` (the `execResults bytes[]` is irrelevant); `previewForcePayPeriodActions` needs only `(year, month)` to derive the period and ignores `day`. |
 | `reentrancy-events` (event after external call) | _runPayroll | Accepted in our trust model. The only external call is to our own DAO; the cursor / `lastPayoutPeriod` are advanced BEFORE the `execute` (effects-before-interactions), so re-entry through any recipient cannot re-pay a page (a reentrant crank reads the already-advanced cursor / would revert `AlreadyPaidThisPeriod`). |
-| `timestamp` (block.timestamp comparison) | _runPayroll | Design intent. Monthly payroll is by definition timestamp-driven. Miner timestamp jitter (±15s) cannot reorder calendar months at our granularity. |
+| `timestamp` (block.timestamp comparison) | _runPayroll, previewForcePayPeriodActions | Design intent. Monthly payroll (and the skipped-month recovery) is by definition timestamp-driven. Miner timestamp jitter (±15s) cannot reorder calendar months at our granularity. |
 | `naming-convention` on `_dao` / `_payDayOfMonth` / `__gap` | various | Intentional. Matches OSx's project-wide convention of leading-underscore for function parameters and double-underscore for inherited gaps (per OpenZeppelin's upgradeable storage_gaps guide). `MAX_RECIPIENTS` is uppercase per Solidity style. |
 | `unused-state` on `__gap` | PayrollPlugin | Intentional. Reserves slots for future upgrades without breaking the storage layout (OZ upgrade-safety pattern). |
 
@@ -125,6 +131,7 @@ CI gate: `slither --fail-high`. None of the above are high-severity; this list u
 
 ## 10. Tests
 
-- Unit: `test/plugins/payroll/PayrollPlugin.unit.test.ts` — 35 cases (incl. the `executePayrollPage` pagination suite). ≥90% coverage on `src/plugins/payroll/**`.
-- Fork: `test/plugins/payroll/PayrollPlugin.fork.test.ts` — runs on `mainnetFork` and `baseFork` when `RPC_MAINNET` / `RPC_BASE` are set. Gated via `onlyOn(...)`; silently skipped on other networks.
+- Unit: `test/plugins/payroll/PayrollPlugin.unit.test.ts` — incl. the `executePayrollPage` pagination suite, `setMaxRecipients`, `previewForcePayPeriodActions`, and the `initializeV2` upgrade-migration suite. ≥90% coverage on `src/plugins/payroll/**`.
+- Fork: `test/plugins/payroll/PayrollPlugin.fork.test.ts` — real-USDC salary, 3-month skip scenario, per-recipient failure tolerance, and `previewForcePayPeriodActions` recovery. Runs on `mainnetFork` / `baseFork` when `RPC_MAINNET` / `RPC_BASE` are set (gated via `onlyOn(...)`).
+- Governance e2e: `test/e2e/CustomDaoBootstrap.fork.test.ts` — `setMaxRecipients` + `setMaxEntries` through a real TokenVoting create→vote→execute round-trip.
 - Permission matrix: `test/plugins/PluginSetup.unit.test.ts` — asserts `prepareInstallation` returns the TRD §9 set verbatim.

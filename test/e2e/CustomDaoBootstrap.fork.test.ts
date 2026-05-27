@@ -44,6 +44,7 @@ import {
   AaveLendingPlugin__factory,
   AaveLendingPluginSetup__factory,
   AaveV3Adapter__factory,
+  CostRegistryPlugin__factory,
   CostRegistryPluginSetup__factory,
 } from "../../typechain-types";
 
@@ -634,6 +635,73 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork", "localFork"], () => {
       expect(aGained).to.be.gte(amount.sub(2)); // aToken is ~1:1, allow rounding dust
       // The plugin never custodies — aTokens are the DAO's.
       expect(await usdc.balanceOf(aaveAddress)).to.equal(0);
+    });
+
+    // The v1.1 cap setters are auth-gated by MANAGE_PAYROLL / MANAGE_COSTS,
+    // which the bootstrap grants to the DAO. This proves they actually move
+    // through real governance (create → vote → execute), exercising the
+    // permission wiring for the new functions — a single proposal carrying
+    // both setters as a multi-action batch.
+    it("governance updates caps: setMaxRecipients + setMaxEntries via vote → execute", async function () {
+      if (!TOKEN_VOTING_REPO || !tokenVotingAddress) {
+        this.skip();
+        return;
+      }
+
+      const payroll = PayrollPlugin__factory.connect(payrollAddress, ethers.provider);
+      const cost = CostRegistryPlugin__factory.connect(costRegistryAddress, ethers.provider);
+      expect(await payroll.MAX_RECIPIENTS()).to.equal(300);
+      expect(await cost.MAX_ENTRIES()).to.equal(300);
+
+      const actions = [
+        {
+          to: payrollAddress,
+          value: 0,
+          data: PayrollPlugin__factory.createInterface().encodeFunctionData("setMaxRecipients", [
+            500,
+          ]),
+        },
+        {
+          to: costRegistryAddress,
+          value: 0,
+          data: CostRegistryPlugin__factory.createInterface().encodeFunctionData("setMaxEntries", [
+            750,
+          ]),
+        },
+      ];
+
+      const tv = new ethers.Contract(tokenVotingAddress, TOKEN_VOTING_ABI, deployer);
+      const createTx = await tv.createProposal(
+        ethers.utils.toUtf8Bytes("ipfs://e2e-cap-setters"),
+        actions,
+        0,
+        0,
+        0,
+        VOTE_YES,
+        true
+      );
+      const receipt = await createTx.wait();
+      const created = receipt.logs.find(
+        (l: {topics: string[]}) =>
+          l.topics[0] ===
+          ethers.utils.id(
+            "ProposalCreated(uint256,address,uint64,uint64,bytes,(address,uint256,bytes)[],uint256)"
+          )
+      );
+      const proposalId = created
+        ? ethers.BigNumber.from(created.topics[1])
+        : ethers.BigNumber.from(0);
+
+      let proposal = await tv.getProposal(proposalId);
+      if (!proposal.executed) {
+        await time.increase(3600 + 1);
+        await (await tv.execute(proposalId)).wait();
+        proposal = await tv.getProposal(proposalId);
+      }
+      expect(proposal.executed).to.equal(true);
+
+      expect(await payroll.MAX_RECIPIENTS()).to.equal(500);
+      expect(await cost.MAX_ENTRIES()).to.equal(750);
     });
   });
 });

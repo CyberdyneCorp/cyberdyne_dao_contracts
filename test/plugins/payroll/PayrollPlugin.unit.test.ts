@@ -129,6 +129,37 @@ describe("PayrollPlugin", () => {
     });
   });
 
+  describe("initializeV2 (upgrade migration)", () => {
+    // _maxRecipients is storage slot 312 (see docs/storage-layouts/PayrollPlugin.md).
+    const MAX_RECIPIENTS_SLOT = "0x138"; // 312
+
+    it("re-seeds the default cap when _maxRecipients was zeroed (upgrade-from-constant)", async () => {
+      // Simulate an instance upgraded from a build where MAX_RECIPIENTS was a
+      // `constant`: the new storage slot reads 0, which would brick addRecipient.
+      await ethers.provider.send("hardhat_setStorageAt", [
+        plugin.address,
+        MAX_RECIPIENTS_SLOT,
+        ethers.constants.HashZero,
+      ]);
+      expect(await plugin.MAX_RECIPIENTS()).to.equal(0);
+
+      await plugin.initializeV2();
+      expect(await plugin.MAX_RECIPIENTS()).to.equal(300);
+    });
+
+    it("is permissionless and idempotent (no-op when already set)", async () => {
+      await plugin.connect(stranger).initializeV2();
+      expect(await plugin.MAX_RECIPIENTS()).to.equal(300);
+    });
+
+    it("cannot run twice", async () => {
+      await plugin.initializeV2();
+      await expect(plugin.initializeV2()).to.be.revertedWith(
+        "Initializable: contract is already initialized"
+      );
+    });
+  });
+
   describe("setPayDayOfMonth", () => {
     it("updates and emits PayDayUpdated when caller has MANAGE_PAYROLL", async () => {
       await expect(plugin.connect(voter).setPayDayOfMonth(20))

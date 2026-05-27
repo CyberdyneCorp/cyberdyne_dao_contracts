@@ -92,6 +92,21 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
         _maxRecipients = DEFAULT_MAX_RECIPIENTS;
     }
 
+    /// @notice Upgrade migration for instances installed before `MAX_RECIPIENTS`
+    ///         became a storage value (it used to be a `constant`, so the new
+    ///         `_maxRecipients` slot reads as 0 after such an upgrade — which
+    ///         would make `addRecipient` revert `RecipientLimitExceeded(0)`).
+    ///         Seeds the default cap once. Run it atomically with the upgrade
+    ///         (`upgradeToAndCall(newImpl, abi.encodeCall(this.initializeV2, ()))`);
+    ///         it is also permissionless and idempotent (only writes when zero)
+    ///         so a forgotten call can still be repaired afterward. Fresh
+    ///         installs set the cap in `initialize` and never need this.
+    function initializeV2() external reinitializer(2) {
+        if (_maxRecipients == 0) {
+            _maxRecipients = DEFAULT_MAX_RECIPIENTS;
+        }
+    }
+
     // --- Vote-gated management --------------------------------------------
 
     /// @inheritdoc IPayrollPlugin

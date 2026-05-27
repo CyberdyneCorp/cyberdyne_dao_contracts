@@ -11,7 +11,7 @@ services…) that also disburses them in USDC.
 | Base | `PluginUUPSUpgradeable` (OSx commons v1.4) |
 | Permission ID | `MANAGE_COSTS_PERMISSION = keccak256("MANAGE_COSTS_PERMISSION")` |
 | Payment token | one ERC20 (USDC), set at install |
-| Max entries | 300 (`MAX_ENTRIES`) |
+| Max entries | 300 default (`MAX_ENTRIES()`, governance-settable up to `MAX_ENTRIES_CEILING` = 1000) |
 | Max per crank | 100 (`MAX_PER_PAGE`) |
 
 ## 1. What it does
@@ -19,8 +19,11 @@ services…) that also disburses them in USDC.
 - Maintains an on-chain list of recurring cost entries: `name`, `description`,
   `costUsdc` (amount in the payment token's smallest unit), `frequencyDays`
   (pay every N days), and a `payee`.
-- Register / update / remove entries is **vote-gated** through the DAO
-  (`MANAGE_COSTS_PERMISSION`).
+- Register / update / remove entries — and `setMaxEntries` — are **vote-gated**
+  through the DAO (`MANAGE_COSTS_PERMISSION`).
+- `setMaxEntries(newMax)` raises/lowers the entry-slot cap (`MAX_ENTRIES()`,
+  default 300), bounded above by `MAX_ENTRIES_CEILING` (1000) and below by the
+  live slot count — lets a DAO grow past 300 without a plugin upgrade.
 - A **permissionless** `processDue(offset, limit)` crank disburses the USDC cost
   to each entry's payee once its period has elapsed.
 - Entries are publicly readable with **pagination** (`getEntries(offset, limit)`).
@@ -36,7 +39,11 @@ services…) that also disburses them in USDC.
 - UUPS upgrades require `UPGRADE_PLUGIN_PERMISSION`, granted only to the DAO.
 - The payment token is **migratable** via the vote-gated `setPaymentToken(address)` (permission ID `UPDATE_PAYMENT_TOKEN_PERMISSION`). Existing entries' `costUsdc` is stored as raw token units, so a migration to a token with different decimals (e.g. USDC 6dp → DAI 18dp) **must be paired with `updateEntry` calls in the same proposal** to avoid silent value drift on the next crank.
 
-> **No `preview…Actions` helpers needed.** Like Payroll, the fund-moving entry (`processDue`) is **permissionless** (keeper-callable), not governance-routed — it never participates in the nested-`dao.execute` reentrancy issue that motivated [TRD §9a](../TRD.md#9a-governance-path-action-builders-previewactions). Entry-management mutators (`registerEntry` / `updateEntry` / `removeEntry`) are single-action plugin calls and ride through TokenVoting as one-action proposals directly.
+> **No `preview…Actions` helpers needed.** Like Payroll, the fund-moving entry (`processDue`) is **permissionless** (keeper-callable), not governance-routed — it never participates in the nested-`dao.execute` reentrancy issue that motivated [TRD §9a](../TRD.md#9a-governance-path-action-builders-previewactions). Entry-management mutators (`registerEntry` / `updateEntry` / `removeEntry` / `setMaxEntries`) are single-action plugin calls and ride through TokenVoting as one-action proposals directly.
+
+### Upgrade migration (`initializeV2`)
+
+`MAX_ENTRIES()` is a storage value (default 300) set in `initialize`. For an instance **upgraded** from a build where it was a `constant`, the new `_maxEntries` slot reads 0 (it was `__gap`), which would make `registerEntry` revert `EntryLimitExceeded(0)`. `initializeV2()` (`reinitializer(2)`) seeds the default once; run it atomically with the upgrade (`upgradeToAndCall(newImpl, abi.encodeCall(CostRegistryPlugin.initializeV2, ()))`). Permissionless + idempotent (writes only when zero); fresh installs never need it. Same pattern as `docs/plugins/PAYROLL.md §2`.
 
 ## 3. Payment scheduling
 
