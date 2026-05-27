@@ -23,8 +23,7 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
     /// @notice Gates `setKeeperBounty`. Separate from `MANAGE_PAYROLL` so the
     ///         bounty budget can be tuned by a different governance class
     ///         (e.g. a treasury sub-committee) than recipient management.
-    bytes32 public constant UPDATE_BOUNTY_PERMISSION_ID =
-        keccak256("UPDATE_BOUNTY_PERMISSION");
+    bytes32 public constant UPDATE_BOUNTY_PERMISSION_ID = keccak256("UPDATE_BOUNTY_PERMISSION");
 
     /// @inheritdoc IPayrollPlugin
     /// @dev Total slot cap (active + soft-deleted). Bounds the storage scan a

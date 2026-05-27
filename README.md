@@ -90,21 +90,21 @@ graph TB
 
 Building a DAO from scratch means rebuilding (and re-auditing) treasury custody, permission management, proposal lifecycle, plugin distribution, and upgrade paths. Aragon OSx ships all of that, fully audited, and lets us add only what's unique to our use case.
 
-| Concern                                         | Provided by OSx                                 | We build                              |
-| ----------------------------------------------- | ----------------------------------------------- | ------------------------------------- |
-| Treasury custody (ETH + ERC20 + NFTs)           | `DAO.sol`                                       | —                                     |
-| Permission system (grant / revoke / conditions) | `PermissionManager.sol`                         | —                                     |
-| Proposal lifecycle + voting                     | `aragon/token-voting-plugin`                    | —                                     |
-| Plugin install / update / uninstall             | `PluginSetupProcessor` + `PluginRepo`           | —                                     |
-| Versioned plugin distribution                   | `PluginRepoFactory`                             | —                                     |
-| Action execution model                          | `Action{to, value, data}` + `execute(Action[])` | —                                     |
-| Uniswap V4 swap gating                          | —                                               | `UniswapV4Plugin` (swap path)         |
-| Uniswap V4 LP lifecycle                         | —                                               | `UniswapV4Plugin` (LP path — mint/increase/decrease/burn via v4-periphery PositionManager) |
-| Uniswap V3 LP lifecycle                         | —                                               | `UniswapV3Plugin` (mint/increase/decrease/collect/burn via NonfungiblePositionManager) |
-| AAVE lending gating                             | —                                               | `AaveLendingPlugin` + version adapter |
-| Monthly payroll automation                      | —                                               | `PayrollPlugin`                       |
-| Recurring operating-cost registry + payout      | —                                               | `CostRegistryPlugin`                  |
-| Governance-safe action batches (avoids nested `dao.execute` reentrancy under TokenVoting) | — | `preview…Actions` view helpers on each fund-moving plugin — see [TRD §9a](docs/TRD.md#9a-governance-path-action-builders-previewactions) |
+| Concern                                                                                   | Provided by OSx                                 | We build                                                                                                                                 |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Treasury custody (ETH + ERC20 + NFTs)                                                     | `DAO.sol`                                       | —                                                                                                                                        |
+| Permission system (grant / revoke / conditions)                                           | `PermissionManager.sol`                         | —                                                                                                                                        |
+| Proposal lifecycle + voting                                                               | `aragon/token-voting-plugin`                    | —                                                                                                                                        |
+| Plugin install / update / uninstall                                                       | `PluginSetupProcessor` + `PluginRepo`           | —                                                                                                                                        |
+| Versioned plugin distribution                                                             | `PluginRepoFactory`                             | —                                                                                                                                        |
+| Action execution model                                                                    | `Action{to, value, data}` + `execute(Action[])` | —                                                                                                                                        |
+| Uniswap V4 swap gating                                                                    | —                                               | `UniswapV4Plugin` (swap path)                                                                                                            |
+| Uniswap V4 LP lifecycle                                                                   | —                                               | `UniswapV4Plugin` (LP path — mint/increase/decrease/burn via v4-periphery PositionManager)                                               |
+| Uniswap V3 LP lifecycle                                                                   | —                                               | `UniswapV3Plugin` (mint/increase/decrease/collect/burn via NonfungiblePositionManager)                                                   |
+| AAVE lending gating                                                                       | —                                               | `AaveLendingPlugin` + version adapter                                                                                                    |
+| Monthly payroll automation                                                                | —                                               | `PayrollPlugin`                                                                                                                          |
+| Recurring operating-cost registry + payout                                                | —                                               | `CostRegistryPlugin`                                                                                                                     |
+| Governance-safe action batches (avoids nested `dao.execute` reentrancy under TokenVoting) | —                                               | `preview…Actions` view helpers on each fund-moving plugin — see [TRD §9a](docs/TRD.md#9a-governance-path-action-builders-previewactions) |
 
 **Version pinning:** OSx v1.4.0 audited core (`ProtocolVersion == [1, 4, 0]`). Working tree may be tag v1.5.0 because its core is byte-identical to 1.4.0. No forks, no patches, no custom flavors. See [TRD §3](docs/TRD.md#3-aragon-osx-version-policy).
 
@@ -435,7 +435,7 @@ npm install --legacy-peer-deps
 just build-package         # forge + hardhat compile + ABIs + addresses.json
 
 # Test (every command below has a `just` recipe; see `just --list`)
-just test                  # 156 unit tests
+just test                  # 173 unit tests
 just invariants            # 25 Foundry invariants, 50k sequences (CI profile)
 
 # Fork tests: start a fork in one terminal, run the *.fork suites in another.

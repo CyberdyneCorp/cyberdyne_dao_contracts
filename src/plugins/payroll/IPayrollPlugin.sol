@@ -35,11 +35,7 @@ interface IPayrollPlugin {
     ///         for the same `period` to get the period total.
     event PayrollPeriodCompleted(uint256 indexed period);
     /// @notice The keeper bounty configuration was changed by governance.
-    event KeeperBountyConfigured(
-        address indexed token,
-        uint256 perCrank,
-        uint256 maxPerPeriod
-    );
+    event KeeperBountyConfigured(address indexed token, uint256 perCrank, uint256 maxPerPeriod);
     /// @notice A successful crank paid a keeper bounty to `msg.sender`. Fires
     ///         at most once per `executePayroll(Page)` call, only when the
     ///         period's accumulated bounty is below `maxPerPeriod` and the
@@ -90,11 +86,7 @@ interface IPayrollPlugin {
     /// @param maxPerPeriod Maximum total bounty paid in one period (resets per
     ///                    period). Must be ≥ `perCrank` or the cap blocks any
     ///                    payout — config still accepted as "off".
-    function setKeeperBounty(
-        address token,
-        uint256 perCrank,
-        uint256 maxPerPeriod
-    ) external;
+    function setKeeperBounty(address token, uint256 perCrank, uint256 maxPerPeriod) external;
 
     // --- Permissionless crank ---
 

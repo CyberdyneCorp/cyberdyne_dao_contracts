@@ -59,7 +59,7 @@ just build-package
 Sanity-check:
 
 ```bash
-just test                                          # 156 unit tests + 25 invariants
+just test                                          # 173 unit tests + 25 invariants
 ls frontend-abi/ addresses.json                    # artifacts exist
 ```
 

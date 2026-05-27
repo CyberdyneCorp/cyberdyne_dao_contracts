@@ -659,11 +659,7 @@ describe("PayrollPlugin", () => {
       perCrank: ethers.BigNumberish,
       maxPerPeriod: ethers.BigNumberish
     ): Promise<void> {
-      await dao.grant(
-        plugin.address,
-        await voter.getAddress(),
-        UPDATE_BOUNTY_PERMISSION_ID
-      );
+      await dao.grant(plugin.address, await voter.getAddress(), UPDATE_BOUNTY_PERMISSION_ID);
       await plugin.connect(voter).setKeeperBounty(token, perCrank, maxPerPeriod);
     }
 
@@ -673,14 +669,8 @@ describe("PayrollPlugin", () => {
         plugin.connect(stranger).setKeeperBounty(ethers.constants.AddressZero, 100, 1000)
       ).to.be.reverted;
       // Authorized → state + event.
-      await dao.grant(
-        plugin.address,
-        await voter.getAddress(),
-        UPDATE_BOUNTY_PERMISSION_ID
-      );
-      await expect(
-        plugin.connect(voter).setKeeperBounty(ethers.constants.AddressZero, 100, 1000)
-      )
+      await dao.grant(plugin.address, await voter.getAddress(), UPDATE_BOUNTY_PERMISSION_ID);
+      await expect(plugin.connect(voter).setKeeperBounty(ethers.constants.AddressZero, 100, 1000))
         .to.emit(plugin, "KeeperBountyConfigured")
         .withArgs(ethers.constants.AddressZero, 100, 1000);
       expect(await plugin.bountyToken()).to.equal(ethers.constants.AddressZero);
@@ -695,11 +685,7 @@ describe("PayrollPlugin", () => {
         .addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6));
       await token.mint(dao.address, ethers.utils.parseUnits("10000", 6));
       const bounty = ethers.utils.parseEther("0.01");
-      await grantBountyPermissionAndConfigure(
-        ethers.constants.AddressZero,
-        bounty,
-        bounty.mul(10)
-      );
+      await grantBountyPermissionAndConfigure(ethers.constants.AddressZero, bounty, bounty.mul(10));
       // Fund the DAO so it can pay the ETH bounty.
       await fundDaoEth(dao, ethers.utils.parseEther("1"));
 

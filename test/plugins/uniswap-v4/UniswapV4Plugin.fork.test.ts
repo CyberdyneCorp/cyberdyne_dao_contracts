@@ -327,7 +327,13 @@ onlyOn(["mainnetFork", "baseFork", "localFork"], () => {
         usdcAddress.toLowerCase() < wethAddress.toLowerCase()
           ? [usdcAddress, wethAddress]
           : [wethAddress, usdcAddress];
-      const poolKey = {currency0: c0, currency1: c1, fee: 3000, tickSpacing: 60, hooks: ethers.constants.AddressZero};
+      const poolKey = {
+        currency0: c0,
+        currency1: c1,
+        fee: 3000,
+        tickSpacing: 60,
+        hooks: ethers.constants.AddressZero,
+      };
 
       // Range straddling the current tick (199951), aligned to tickSpacing 60.
       const tickLower = 199800; // 199800 / 60 = 3330
@@ -335,7 +341,16 @@ onlyOn(["mainnetFork", "baseFork", "localFork"], () => {
       const liquidity = ethers.BigNumber.from("1000000000000"); // 1e12, ~10% of pool's
 
       const mintParams = ethers.utils.defaultAbiCoder.encode(
-        ["(address,address,uint24,int24,address)", "int24", "int24", "uint256", "uint128", "uint128", "address", "bytes"],
+        [
+          "(address,address,uint24,int24,address)",
+          "int24",
+          "int24",
+          "uint256",
+          "uint128",
+          "uint128",
+          "address",
+          "bytes",
+        ],
         [
           [poolKey.currency0, poolKey.currency1, poolKey.fee, poolKey.tickSpacing, poolKey.hooks],
           tickLower,
@@ -358,7 +373,10 @@ onlyOn(["mainnetFork", "baseFork", "localFork"], () => {
 
       const pm = new ethers.Contract(
         V4_POSITION_MANAGER_MAINNET,
-        ["function nextTokenId() view returns (uint256)", "function ownerOf(uint256) view returns (address)"],
+        [
+          "function nextTokenId() view returns (uint256)",
+          "function ownerOf(uint256) view returns (address)",
+        ],
         ethers.provider
       );
       const expectedTokenId = await pm.nextTokenId();
@@ -369,16 +387,14 @@ onlyOn(["mainnetFork", "baseFork", "localFork"], () => {
       const nowTs = (await ethers.provider.getBlock("latest")).timestamp;
       const deadline = nowTs + 3600;
       await expect(
-        plugin
-          .connect(voter)
-          .modifyLiquidities(
-            unlockData,
-            deadline,
-            [usdcAddress, wethAddress], // input currencies
-            [maxUsdc, maxWeth], // maxIn
-            [], // no output-side slippage assertions on a pure mint
-            []
-          )
+        plugin.connect(voter).modifyLiquidities(
+          unlockData,
+          deadline,
+          [usdcAddress, wethAddress], // input currencies
+          [maxUsdc, maxWeth], // maxIn
+          [], // no output-side slippage assertions on a pure mint
+          []
+        )
       ).to.emit(plugin, "LiquidityModified");
 
       // The freshly-minted NFT is owned by the DAO.
@@ -406,7 +422,16 @@ onlyOn(["mainnetFork", "baseFork", "localFork"], () => {
           : [wethAddress, usdcAddress];
       const stranger = ethers.Wallet.createRandom().address;
       const mintParams = ethers.utils.defaultAbiCoder.encode(
-        ["(address,address,uint24,int24,address)", "int24", "int24", "uint256", "uint128", "uint128", "address", "bytes"],
+        [
+          "(address,address,uint24,int24,address)",
+          "int24",
+          "int24",
+          "uint256",
+          "uint128",
+          "uint128",
+          "address",
+          "bytes",
+        ],
         [[c0, c1, 3000, 60, ethers.constants.AddressZero], 199800, 200100, 1, 1, 1, stranger, "0x"]
       );
       const settleParams = ethers.utils.defaultAbiCoder.encode(["address", "address"], [c0, c1]);
@@ -417,9 +442,7 @@ onlyOn(["mainnetFork", "baseFork", "localFork"], () => {
 
       const nowTs2 = (await ethers.provider.getBlock("latest")).timestamp;
       await expect(
-        plugin
-          .connect(voter)
-          .modifyLiquidities(unlockData, nowTs2 + 3600, [], [], [], [])
+        plugin.connect(voter).modifyLiquidities(unlockData, nowTs2 + 3600, [], [], [], [])
       ).to.be.revertedWithCustomError(plugin, "MintRecipientMustBeDao");
     });
   });

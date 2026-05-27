@@ -41,7 +41,9 @@ import {
 const FUTURE = 99_999_999_999;
 const U128_MAX = ethers.BigNumber.from(2).pow(128).sub(1);
 
-async function deployV3(signer: Signer): Promise<{plugin: UniswapV3Plugin; dao: MinimalDAO; t0: TestERC20; t1: TestERC20; npm: string}> {
+async function deployV3(
+  signer: Signer
+): Promise<{plugin: UniswapV3Plugin; dao: MinimalDAO; t0: TestERC20; t1: TestERC20; npm: string}> {
   const dao = await new MinimalDAO__factory(signer).deploy();
   await dao.deployed();
   const npm = await new MockNonfungiblePositionManager__factory(signer).deploy();
@@ -83,9 +85,7 @@ describe("preview…Actions: governance-path action builders", () => {
       const actions = await plugin.previewMintActions(params);
       expect(actions.length).to.equal(5);
 
-      const erc20 = new ethers.utils.Interface([
-        "function approve(address,uint256)",
-      ]);
+      const erc20 = new ethers.utils.Interface(["function approve(address,uint256)"]);
       // 0: token0.approve(npm, amount0Desired)
       expect(actions[0][0]).to.equal(t0.address);
       expect(actions[0][1]).to.equal(0);
@@ -155,7 +155,11 @@ describe("preview…Actions: governance-path action builders", () => {
       const pool = await new MockAavePool__factory(signer).deploy();
       const adapter = await new AaveV3Adapter__factory(signer).deploy(pool.address);
       const impl = await new AaveLendingPlugin__factory(signer).deploy();
-      const initData = impl.interface.encodeFunctionData("initialize", [dao.address, adapter.address, []]);
+      const initData = impl.interface.encodeFunctionData("initialize", [
+        dao.address,
+        adapter.address,
+        [],
+      ]);
       const Proxy = await ethers.getContractFactory("ERC1967Proxy", signer);
       const proxy = await Proxy.deploy(impl.address, initData);
       return {
@@ -176,7 +180,13 @@ describe("preview…Actions: governance-path action builders", () => {
       expect(actions[1][2].slice(0, 10)).to.equal("0x617ba037");
       // The `onBehalfOf` (4th 32-byte word) should be the DAO address
       const onBehalf = "0x" + actions[1][2].slice(10 + 64 * 2, 10 + 64 * 3); // arg2 (0-indexed)
-      expect(ethers.utils.getAddress(onBehalf.slice(-40).padStart(40, "0").length === 40 ? "0x" + onBehalf.slice(-40) : onBehalf)).to.equal(dao.address);
+      expect(
+        ethers.utils.getAddress(
+          onBehalf.slice(-40).padStart(40, "0").length === 40
+            ? "0x" + onBehalf.slice(-40)
+            : onBehalf
+        )
+      ).to.equal(dao.address);
     });
 
     it("previewWithdrawActions / previewBorrowActions: 1-action batches", async () => {
@@ -236,8 +246,13 @@ describe("preview…Actions: governance-path action builders", () => {
       const {plugin, pm, permit2} = await deployV4();
       const usdc = ethers.Wallet.createRandom().address;
       const weth = ethers.Wallet.createRandom().address;
+      // A valid (actionless) v4 unlock envelope: abi.encode(bytes(""), bytes[](0)).
+      // The plugin's MintRecipientMustBeDao guard decodes this envelope; a
+      // zero-length action stream iterates zero times and passes, while still
+      // exercising the approve/Permit2/modify/reset action-batch shape.
+      const emptyUnlock = ethers.utils.defaultAbiCoder.encode(["bytes", "bytes[]"], ["0x", []]);
       const actions = await plugin.previewModifyLiquiditiesActions(
-        "0x020d", // dummy unlockData (e.g. MINT_POSITION + SETTLE_PAIR action bytes)
+        emptyUnlock,
         FUTURE,
         [usdc, weth],
         [1000, ethers.utils.parseEther("0.5")]

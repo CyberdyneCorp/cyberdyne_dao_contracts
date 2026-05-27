@@ -12,10 +12,7 @@
  */
 import {expect} from "chai";
 import {ethers} from "hardhat";
-import {
-  UniswapV3Plugin__factory,
-  UniswapV4Plugin__factory,
-} from "../../typechain-types";
+import {UniswapV3Plugin__factory, UniswapV4Plugin__factory} from "../../typechain-types";
 
 describe("LP proposal-action encoding (frontend ↔ contracts)", () => {
   describe("UniswapV3Plugin actions", () => {
@@ -60,13 +57,7 @@ describe("LP proposal-action encoding (frontend ↔ contracts)", () => {
       ]);
       expect(v3.decodeFunctionData("increaseLiquidity", inc)[0]).to.equal(tokenId);
 
-      const dec = v3.encodeFunctionData("decreaseLiquidity", [
-        tokenId,
-        1_000_000,
-        0,
-        0,
-        deadline,
-      ]);
+      const dec = v3.encodeFunctionData("decreaseLiquidity", [tokenId, 1_000_000, 0, 0, deadline]);
       expect(v3.decodeFunctionData("decreaseLiquidity", dec)[1]).to.equal(1_000_000);
 
       const U128_MAX = ethers.BigNumber.from(2).pow(128).sub(1);
@@ -87,10 +78,7 @@ describe("LP proposal-action encoding (frontend ↔ contracts)", () => {
       // unlockData is the v4 action stream — the plugin treats it as opaque.
       // Build a representative envelope: actions = [MINT_POSITION=0x02, SETTLE_PAIR=0x0d]
       // and an empty params[] (real flow would carry the encoded params).
-      const unlockData = ethers.utils.defaultAbiCoder.encode(
-        ["bytes", "bytes[]"],
-        ["0x020d", []]
-      );
+      const unlockData = ethers.utils.defaultAbiCoder.encode(["bytes", "bytes[]"], ["0x020d", []]);
       const deadline = 99_999_999_999;
       const inputCurrencies = [usdc, weth];
       const maxIn = [ethers.utils.parseUnits("1000", 6), ethers.utils.parseEther("0.5")];
@@ -118,10 +106,7 @@ describe("LP proposal-action encoding (frontend ↔ contracts)", () => {
         ["bytes", "bytes[]"],
         ["0x0111", []] // [DECREASE_LIQUIDITY=0x01, TAKE_PAIR=0x11]
       );
-      const minOut = [
-        ethers.utils.parseUnits("450", 6),
-        ethers.utils.parseEther("0.22"),
-      ];
+      const minOut = [ethers.utils.parseUnits("450", 6), ethers.utils.parseEther("0.22")];
       const data = v4.encodeFunctionData("modifyLiquidities", [
         unlockData,
         99_999_999_999,

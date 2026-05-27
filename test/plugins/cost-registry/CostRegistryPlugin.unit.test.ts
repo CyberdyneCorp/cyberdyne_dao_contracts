@@ -145,9 +145,7 @@ describe("CostRegistryPlugin", () => {
         "EntryRegistered"
       );
       // MAX + 1 reverts CostTooLarge.
-      await expect(
-        plugin.connect(voter).registerEntry("X", "", max.add(1), 1, aws)
-      )
+      await expect(plugin.connect(voter).registerEntry("X", "", max.add(1), 1, aws))
         .to.be.revertedWithCustomError(plugin, "CostTooLarge")
         .withArgs(max.add(1));
     });
@@ -209,11 +207,7 @@ describe("CostRegistryPlugin", () => {
     beforeEach(async () => {
       usdt = await new TestERC20__factory(deployer).deploy("Tether USD", "USDT", 6);
       await usdt.deployed();
-      await dao.grant(
-        plugin.address,
-        await voter.getAddress(),
-        UPDATE_PAYMENT_TOKEN_PERMISSION_ID
-      );
+      await dao.grant(plugin.address, await voter.getAddress(), UPDATE_PAYMENT_TOKEN_PERMISSION_ID);
     });
 
     it("vote-gated swap emits PaymentTokenUpdated and updates paymentToken()", async () => {

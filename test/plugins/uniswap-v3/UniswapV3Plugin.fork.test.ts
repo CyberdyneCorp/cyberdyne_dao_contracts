@@ -169,9 +169,7 @@ onlyOn(["mainnetFork", "localFork"], () => {
           : ethers.utils.parseUnits("250", 6);
 
       await expect(
-        plugin
-          .connect(voter)
-          .increaseLiquidity(tokenId, addAmount0, addAmount1, 0, 0, FUTURE)
+        plugin.connect(voter).increaseLiquidity(tokenId, addAmount0, addAmount1, 0, 0, FUTURE)
       ).to.emit(plugin, "LiquidityIncreased");
 
       const liqAfter = (await npmRead.positions(tokenId))[7];

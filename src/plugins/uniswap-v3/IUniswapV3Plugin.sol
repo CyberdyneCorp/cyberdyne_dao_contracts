@@ -62,9 +62,7 @@ interface IUniswapV3Plugin {
     // one nonReentrant tx, avoiding the nested-dao.execute reentrancy that
     // blocked the wrapper functions on the governance path.
 
-    function previewMintActions(
-        MintParams calldata params
-    ) external view returns (Action[] memory);
+    function previewMintActions(MintParams calldata params) external view returns (Action[] memory);
 
     function previewIncreaseLiquidityActions(
         uint256 tokenId,
@@ -89,9 +87,7 @@ interface IUniswapV3Plugin {
         uint128 amount1Max
     ) external view returns (Action[] memory);
 
-    function previewBurnActions(
-        uint256 tokenId
-    ) external view returns (Action[] memory);
+    function previewBurnActions(uint256 tokenId) external view returns (Action[] memory);
 
     // --- Vote-gated operations (direct-call entry; same as preview + execute) ---
 

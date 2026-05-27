@@ -630,7 +630,13 @@ describe("UniswapV4Plugin", () => {
           "bytes",
         ],
         [
-          [ethers.constants.AddressZero, ethers.constants.AddressZero, 3000, 60, ethers.constants.AddressZero],
+          [
+            ethers.constants.AddressZero,
+            ethers.constants.AddressZero,
+            3000,
+            60,
+            ethers.constants.AddressZero,
+          ],
           -60,
           60,
           1,
@@ -645,18 +651,13 @@ describe("UniswapV4Plugin", () => {
     function envelopeWithMint(owner: string): string {
       const actionStream = "0x" + "02"; // MINT_POSITION
       const mintParam = encodeMintParam(owner);
-      return ethers.utils.defaultAbiCoder.encode(
-        ["bytes", "bytes[]"],
-        [actionStream, [mintParam]]
-      );
+      return ethers.utils.defaultAbiCoder.encode(["bytes", "bytes[]"], [actionStream, [mintParam]]);
     }
 
     it("reverts MintRecipientMustBeDao when the encoded owner is not the DAO", async () => {
       const stranger = ethers.Wallet.createRandom().address;
       const bad = envelopeWithMint(stranger);
-      await expect(
-        plugin.connect(voter).modifyLiquidities(bad, FUTURE_DEADLINE, [], [], [], [])
-      )
+      await expect(plugin.connect(voter).modifyLiquidities(bad, FUTURE_DEADLINE, [], [], [], []))
         .to.be.revertedWithCustomError(plugin, "MintRecipientMustBeDao")
         .withArgs(stranger, dao.address);
     });
@@ -680,9 +681,7 @@ describe("UniswapV4Plugin", () => {
     it("previewModifyLiquiditiesActions also enforces the MINT_POSITION recipient", async () => {
       const stranger = ethers.Wallet.createRandom().address;
       const bad = envelopeWithMint(stranger);
-      await expect(
-        plugin.previewModifyLiquiditiesActions(bad, FUTURE_DEADLINE, [], [])
-      )
+      await expect(plugin.previewModifyLiquiditiesActions(bad, FUTURE_DEADLINE, [], []))
         .to.be.revertedWithCustomError(plugin, "MintRecipientMustBeDao")
         .withArgs(stranger, dao.address);
     });
@@ -795,16 +794,14 @@ describe("UniswapV4Plugin", () => {
       await pm.addPullLeg(tokenOut.address, mintIn1, dao.address);
 
       await expect(
-        plugin
-          .connect(voter)
-          .modifyLiquidities(
-            DUMMY_UNLOCK, // pretend "MINT_POSITION + SETTLE_PAIR" actions byte
-            FUTURE_DEADLINE,
-            [tokenIn.address, tokenOut.address],
-            [mintIn0, mintIn1],
-            [],
-            []
-          )
+        plugin.connect(voter).modifyLiquidities(
+          DUMMY_UNLOCK, // pretend "MINT_POSITION + SETTLE_PAIR" actions byte
+          FUTURE_DEADLINE,
+          [tokenIn.address, tokenOut.address],
+          [mintIn0, mintIn1],
+          [],
+          []
+        )
       )
         .to.emit(plugin, "LiquidityModified")
         .withArgs(1);
@@ -846,16 +843,14 @@ describe("UniswapV4Plugin", () => {
       await pm.addPushLeg(tokenIn.address, decOut0, dao.address);
       await pm.addPushLeg(tokenOut.address, decOut1, dao.address);
 
-      await plugin
-        .connect(voter)
-        .modifyLiquidities(
-          DUMMY_UNLOCK,
-          FUTURE_DEADLINE,
-          [],
-          [],
-          [tokenIn.address, tokenOut.address],
-          [decOut0, decOut1] // minOut hits exactly
-        );
+      await plugin.connect(voter).modifyLiquidities(
+        DUMMY_UNLOCK,
+        FUTURE_DEADLINE,
+        [],
+        [],
+        [tokenIn.address, tokenOut.address],
+        [decOut0, decOut1] // minOut hits exactly
+      );
       expect(await plugin.lpNonce()).to.equal(3);
       expect(await tokenIn.balanceOf(dao.address)).to.equal(daoInAfterInc.add(decOut0));
       expect(await tokenOut.balanceOf(dao.address)).to.equal(daoOutAfterInc.add(decOut1));
@@ -872,16 +867,14 @@ describe("UniswapV4Plugin", () => {
 
       // Slippage guard fires when minOut > received — assert before the happy path.
       await expect(
-        plugin
-          .connect(voter)
-          .modifyLiquidities(
-            DUMMY_UNLOCK,
-            FUTURE_DEADLINE,
-            [],
-            [],
-            [tokenIn.address, tokenOut.address],
-            [feesOut0.add(1), feesOut1.add(1)] // demand one more than the PM will push
-          )
+        plugin.connect(voter).modifyLiquidities(
+          DUMMY_UNLOCK,
+          FUTURE_DEADLINE,
+          [],
+          [],
+          [tokenIn.address, tokenOut.address],
+          [feesOut0.add(1), feesOut1.add(1)] // demand one more than the PM will push
+        )
       ).to.be.revertedWithCustomError(plugin, "OutputShortfall");
       // The failed call cleared the legs (they were consumed via try/catch?) — re-add.
       await pm.clearLegs();
@@ -909,14 +902,7 @@ describe("UniswapV4Plugin", () => {
 
       await plugin
         .connect(voter)
-        .modifyLiquidities(
-          DUMMY_UNLOCK,
-          FUTURE_DEADLINE,
-          [],
-          [],
-          [tokenIn.address],
-          [burnOut0]
-        );
+        .modifyLiquidities(DUMMY_UNLOCK, FUTURE_DEADLINE, [], [], [tokenIn.address], [burnOut0]);
       expect(await plugin.lpNonce()).to.equal(5);
       await expectPluginHasNothing();
 
@@ -924,9 +910,12 @@ describe("UniswapV4Plugin", () => {
       // (mint/increase pulled, decrease/collect/burn pushed back).
       const cumIn =
         // pulled out:
-        mintIn0.add(incIn0)
-        // pushed back:
-        .sub(decOut0).sub(feesOut0).sub(burnOut0);
+        mintIn0
+          .add(incIn0)
+          // pushed back:
+          .sub(decOut0)
+          .sub(feesOut0)
+          .sub(burnOut0);
       const cumOut = mintIn1.add(incIn1).sub(decOut1).sub(feesOut1);
       expect(await tokenIn.balanceOf(dao.address)).to.equal(initialIn.sub(cumIn));
       expect(await tokenOut.balanceOf(dao.address)).to.equal(initialOut.sub(cumOut));
