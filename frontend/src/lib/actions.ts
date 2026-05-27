@@ -16,7 +16,9 @@ export type ProposalAction = {
   summary: string;
 };
 
-function ifaceFor(name: "PayrollPlugin" | "UniswapV4Plugin" | "AaveLendingPlugin"): ethers.utils.Interface {
+function ifaceFor(
+  name: "PayrollPlugin" | "UniswapV4Plugin" | "AaveLendingPlugin" | "CostRegistryPlugin"
+): ethers.utils.Interface {
   return new ethers.utils.Interface(getAbi(name));
 }
 
@@ -149,4 +151,52 @@ export function aaveSetAllowedAsset(cfg: ChainConfig, asset: string, allowed: bo
   const dao = requireDao(cfg);
   return action(dao.aave, ifaceFor("AaveLendingPlugin"), "setAllowedAsset", [asset, allowed],
     `AAVE: ${allowed ? "allow" : "disallow"} asset ${asset}`);
+}
+
+// --- Cost registry ----------------------------------------------------------
+
+function requireCost(cfg: ChainConfig): string {
+  const addr = cfg.dao?.costRegistry;
+  if (!addr) throw new Error(`No CostRegistry plugin configured for chain ${cfg.chainId}`);
+  return addr;
+}
+
+export function costRegister(
+  cfg: ChainConfig,
+  name: string,
+  description: string,
+  costUsdc: ethers.BigNumber,
+  frequencyDays: number,
+  payee: string
+): ProposalAction {
+  return action(
+    requireCost(cfg),
+    ifaceFor("CostRegistryPlugin"),
+    "registerEntry",
+    [name, description, costUsdc, frequencyDays, payee],
+    `Cost: register "${name}" — ${costUsdc.toString()} every ${frequencyDays}d → ${payee}`
+  );
+}
+
+export function costUpdate(
+  cfg: ChainConfig,
+  id: number,
+  name: string,
+  description: string,
+  costUsdc: ethers.BigNumber,
+  frequencyDays: number,
+  payee: string
+): ProposalAction {
+  return action(
+    requireCost(cfg),
+    ifaceFor("CostRegistryPlugin"),
+    "updateEntry",
+    [id, name, description, costUsdc, frequencyDays, payee],
+    `Cost: update #${id} "${name}" — ${costUsdc.toString()} every ${frequencyDays}d`
+  );
+}
+
+export function costRemove(cfg: ChainConfig, id: number): ProposalAction {
+  return action(requireCost(cfg), ifaceFor("CostRegistryPlugin"), "removeEntry", [id],
+    `Cost: remove entry #${id}`);
 }

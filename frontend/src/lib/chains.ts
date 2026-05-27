@@ -23,9 +23,9 @@ const DAO_ENV_KEY: Record<number, string> = {
 function parseDaoEnv(raw: string | undefined): DaoAddresses | undefined {
   if (!raw) return undefined;
   const parts = raw.split(",").map((p) => p.trim());
-  // 4 addrs (dao,payroll,uniswap,aave) or 5 with the optional TokenVoting plugin.
-  if (parts.length !== 4 && parts.length !== 5) {
-    console.warn(`PUBLIC_DAO_* env var malformed (expected 4 or 5 comma-separated addrs): ${raw}`);
+  // dao,payroll,uniswap,aave (4) + optional governance (5) + optional costRegistry (6).
+  if (parts.length < 4 || parts.length > 6) {
+    console.warn(`PUBLIC_DAO_* env var malformed (expected 4-6 comma-separated addrs): ${raw}`);
     return undefined;
   }
   return {
@@ -34,6 +34,7 @@ function parseDaoEnv(raw: string | undefined): DaoAddresses | undefined {
     uniswap: parts[2],
     aave: parts[3],
     governance: parts[4] || undefined,
+    costRegistry: parts[5] || undefined,
   };
 }
 

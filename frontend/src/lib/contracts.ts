@@ -5,7 +5,11 @@ import {ethers} from "ethers";
 import {getAbi} from "@cyberdyne/dao-contracts";
 import type {ChainConfig} from "./types";
 
-export type PluginName = "PayrollPlugin" | "UniswapV4Plugin" | "AaveLendingPlugin";
+export type PluginName =
+  | "PayrollPlugin"
+  | "UniswapV4Plugin"
+  | "AaveLendingPlugin"
+  | "CostRegistryPlugin";
 
 export function payrollContract(
   chain: ChainConfig,
@@ -29,6 +33,20 @@ export function aaveContract(
 ): ethers.Contract {
   if (!chain.dao) throw new Error(`No DAO configured for chainId ${chain.chainId}`);
   return new ethers.Contract(chain.dao.aave, getAbi("AaveLendingPlugin"), providerOrSigner);
+}
+
+export function costRegistryContract(
+  chain: ChainConfig,
+  providerOrSigner: ethers.providers.Provider | ethers.Signer
+): ethers.Contract {
+  if (!chain.dao?.costRegistry) {
+    throw new Error(`No CostRegistry plugin configured for chainId ${chain.chainId}`);
+  }
+  return new ethers.Contract(
+    chain.dao.costRegistry,
+    getAbi("CostRegistryPlugin"),
+    providerOrSigner
+  );
 }
 
 // Minimal DAO surface — for treasury balance reads + DAO.execute calls.

@@ -52,6 +52,7 @@
     <a href="/">Overview</a>
     <a href="/proposals">Proposals</a>
     <a href="/payroll">Payroll</a>
+    <a href="/costs">Costs</a>
     <a href="/lending">Lending</a>
     <a href="/swaps">Swaps</a>
   </nav>
