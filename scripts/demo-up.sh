@@ -49,8 +49,30 @@ grep -A 8 "installed plugin instances" /tmp/demo-deploy.log || true
 echo "· seeding activity"
 node scripts/seed-local.mjs "http://127.0.0.1:$PORT"
 
+# Sync frontend/.env.local to the freshly-deployed addresses. The DAO address
+# is deterministic but the PLUGIN instances are deployed by the PSP at shifting
+# nonces, so their addresses change between deploys — a stale .env.local points
+# the frontend at dead addresses. Rewrite only the PUBLIC_DAO_MAINNET line.
+echo "· syncing frontend/.env.local to the new addresses"
+node -e '
+const fs = require("fs"), path = require("path");
+const files = fs.readdirSync("deployments")
+  .filter((f) => f.startsWith("31337-") && f.endsWith(".json"))
+  .map((f) => path.join("deployments", f))
+  .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+const d = JSON.parse(fs.readFileSync(files[0], "utf8"));
+const line = "PUBLIC_DAO_MAINNET=" +
+  [d.dao, d.payroll, d.uniswapV4, d.aave, d.governance, d.costRegistry, d.uniswapV3].join(",");
+const env = "frontend/.env.local";
+let txt = fs.existsSync(env) ? fs.readFileSync(env, "utf8") : "PUBLIC_RPC_MAINNET=http://127.0.0.1:8545\n";
+txt = /^PUBLIC_DAO_MAINNET=.*$/m.test(txt)
+  ? txt.replace(/^PUBLIC_DAO_MAINNET=.*$/m, line)
+  : txt.replace(/\n*$/, "\n") + line + "\n";
+fs.writeFileSync(env, txt);
+console.log("  " + line);
+'
+
 echo ""
-echo "Stack up. Frontend: cp the PUBLIC_DAO line above into frontend/.env.local"
-echo "(addresses are deterministic, so an existing .env.local already matches),"
-echo "then: just frontend-dev   →   connect MetaMask to http://127.0.0.1:$PORT (chainId 31337),"
+echo "Stack up. frontend/.env.local synced to the new addresses."
+echo "Run: just frontend-dev   →   connect MetaMask to http://127.0.0.1:$PORT (chainId 31337),"
 echo "import anvil key $ANVIL_KEY"

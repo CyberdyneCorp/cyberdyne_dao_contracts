@@ -1,5 +1,16 @@
 import {test, expect} from "@playwright/test";
 import {injectAnvilProvider, connectWallet} from "./fixtures/inject-provider";
+import {evmSnapshot, evmRevert} from "./fixtures/governance";
+
+// Snapshot/revert so this write test doesn't leave a proposal on the shared
+// fork (which would pollute the proposals list other specs read).
+let snap: string;
+test.beforeEach(async () => {
+  snap = await evmSnapshot();
+});
+test.afterEach(async () => {
+  await evmRevert(snap);
+});
 
 // Full governance write loop driven entirely through the UI:
 //   Payroll "Propose: add recipient" → Build → Submit as proposal
