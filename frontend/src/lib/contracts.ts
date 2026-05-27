@@ -9,7 +9,8 @@ export type PluginName =
   | "PayrollPlugin"
   | "UniswapV4Plugin"
   | "AaveLendingPlugin"
-  | "CostRegistryPlugin";
+  | "CostRegistryPlugin"
+  | "UniswapV3Plugin";
 
 export function payrollContract(
   chain: ChainConfig,
@@ -47,6 +48,16 @@ export function costRegistryContract(
     getAbi("CostRegistryPlugin"),
     providerOrSigner
   );
+}
+
+export function uniswapV3Contract(
+  chain: ChainConfig,
+  providerOrSigner: ethers.providers.Provider | ethers.Signer
+): ethers.Contract {
+  if (!chain.dao?.uniswapV3) {
+    throw new Error(`No UniswapV3 plugin configured for chainId ${chain.chainId}`);
+  }
+  return new ethers.Contract(chain.dao.uniswapV3, getAbi("UniswapV3Plugin"), providerOrSigner);
 }
 
 // Minimal DAO surface — for treasury balance reads + DAO.execute calls.

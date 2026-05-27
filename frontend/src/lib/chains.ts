@@ -35,9 +35,9 @@ function addressesKey(chainId: number): number {
 function parseDaoEnv(raw: string | undefined): DaoAddresses | undefined {
   if (!raw) return undefined;
   const parts = raw.split(",").map((p) => p.trim());
-  // dao,payroll,uniswap,aave (4) + optional governance (5) + optional costRegistry (6).
-  if (parts.length < 4 || parts.length > 6) {
-    console.warn(`PUBLIC_DAO_* env var malformed (expected 4-6 comma-separated addrs): ${raw}`);
+  // dao,payroll,uniswap,aave (4) + optional governance (5), costRegistry (6), uniswapV3 (7).
+  if (parts.length < 4 || parts.length > 7) {
+    console.warn(`PUBLIC_DAO_* env var malformed (expected 4-7 comma-separated addrs): ${raw}`);
     return undefined;
   }
   return {
@@ -47,6 +47,7 @@ function parseDaoEnv(raw: string | undefined): DaoAddresses | undefined {
     aave: parts[3],
     governance: parts[4] || undefined,
     costRegistry: parts[5] || undefined,
+    uniswapV3: parts[6] || undefined,
   };
 }
 

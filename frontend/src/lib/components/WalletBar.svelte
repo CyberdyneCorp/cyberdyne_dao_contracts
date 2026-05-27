@@ -55,6 +55,7 @@
     <a href="/costs">Costs</a>
     <a href="/lending">Lending</a>
     <a href="/swaps">Swaps</a>
+    <a href="/positions">Positions</a>
   </nav>
 </div>
 

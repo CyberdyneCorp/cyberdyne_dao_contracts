@@ -17,7 +17,12 @@ export type ProposalAction = {
 };
 
 function ifaceFor(
-  name: "PayrollPlugin" | "UniswapV4Plugin" | "AaveLendingPlugin" | "CostRegistryPlugin"
+  name:
+    | "PayrollPlugin"
+    | "UniswapV4Plugin"
+    | "AaveLendingPlugin"
+    | "CostRegistryPlugin"
+    | "UniswapV3Plugin"
 ): ethers.utils.Interface {
   return new ethers.utils.Interface(getAbi(name));
 }
@@ -199,4 +204,81 @@ export function costUpdate(
 export function costRemove(cfg: ChainConfig, id: number): ProposalAction {
   return action(requireCost(cfg), ifaceFor("CostRegistryPlugin"), "removeEntry", [id],
     `Cost: remove entry #${id}`);
+}
+
+// --- Uniswap V3 LP positions ------------------------------------------------
+
+function requireV3(cfg: ChainConfig): string {
+  const addr = cfg.dao?.uniswapV3;
+  if (!addr) throw new Error(`No UniswapV3 plugin configured for chain ${cfg.chainId}`);
+  return addr;
+}
+
+export type V3MintInput = {
+  token0: string;
+  token1: string;
+  fee: number;
+  tickLower: number;
+  tickUpper: number;
+  amount0Desired: ethers.BigNumber;
+  amount1Desired: ethers.BigNumber;
+  amount0Min: ethers.BigNumber;
+  amount1Min: ethers.BigNumber;
+  deadline: ethers.BigNumberish;
+};
+
+export function v3Mint(cfg: ChainConfig, p: V3MintInput): ProposalAction {
+  // The plugin's MintParams struct: no recipient (forced to the DAO).
+  return action(requireV3(cfg), ifaceFor("UniswapV3Plugin"), "mint", [p],
+    `Uniswap V3: mint ${p.token0}/${p.token1} fee ${p.fee} [${p.tickLower},${p.tickUpper}]`);
+}
+
+export function v3IncreaseLiquidity(
+  cfg: ChainConfig,
+  tokenId: ethers.BigNumberish,
+  amount0Desired: ethers.BigNumber,
+  amount1Desired: ethers.BigNumber,
+  amount0Min: ethers.BigNumber,
+  amount1Min: ethers.BigNumber,
+  deadline: ethers.BigNumberish
+): ProposalAction {
+  return action(
+    requireV3(cfg),
+    ifaceFor("UniswapV3Plugin"),
+    "increaseLiquidity",
+    [tokenId, amount0Desired, amount1Desired, amount0Min, amount1Min, deadline],
+    `Uniswap V3: increase liquidity on #${tokenId.toString()}`
+  );
+}
+
+export function v3DecreaseLiquidity(
+  cfg: ChainConfig,
+  tokenId: ethers.BigNumberish,
+  liquidity: ethers.BigNumberish,
+  amount0Min: ethers.BigNumber,
+  amount1Min: ethers.BigNumber,
+  deadline: ethers.BigNumberish
+): ProposalAction {
+  return action(
+    requireV3(cfg),
+    ifaceFor("UniswapV3Plugin"),
+    "decreaseLiquidity",
+    [tokenId, liquidity, amount0Min, amount1Min, deadline],
+    `Uniswap V3: decrease liquidity on #${tokenId.toString()}`
+  );
+}
+
+export function v3Collect(
+  cfg: ChainConfig,
+  tokenId: ethers.BigNumberish,
+  amount0Max: ethers.BigNumberish,
+  amount1Max: ethers.BigNumberish
+): ProposalAction {
+  return action(requireV3(cfg), ifaceFor("UniswapV3Plugin"), "collect",
+    [tokenId, amount0Max, amount1Max], `Uniswap V3: collect from #${tokenId.toString()}`);
+}
+
+export function v3Burn(cfg: ChainConfig, tokenId: ethers.BigNumberish): ProposalAction {
+  return action(requireV3(cfg), ifaceFor("UniswapV3Plugin"), "burn", [tokenId],
+    `Uniswap V3: burn #${tokenId.toString()}`);
 }

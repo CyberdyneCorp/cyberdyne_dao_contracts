@@ -11,6 +11,7 @@ export type DaoAddresses = {
   aave: string;
   governance?: string;
   costRegistry?: string;
+  uniswapV3?: string;
 };
 
 export type ChainConfig = {
