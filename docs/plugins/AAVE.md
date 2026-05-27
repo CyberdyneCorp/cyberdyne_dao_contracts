@@ -184,18 +184,57 @@ asserts this invariant.
 `withdraw` and `borrow` don't need an approval — the pool pushes the
 underlying to the DAO directly.
 
-## 5. Borrow guardrail (v1 → v1.1)
+## 5. Borrow guardrail — `BorrowHealthCondition` (v1.1, shipped)
 
-- **v1 (today):** every `borrow` proposal must include a human-readable
-  description of the post-borrow health factor target. Reviewers verify
-  via `Pool.getUserAccountData(dao)` on a fork before voting. There is
-  no on-chain guardrail.
-- **v1.1 (planned, TRD §16 #1):** `BorrowHealthCondition` contract
-  attached to `TRIGGER_LENDING_PERMISSION_ID` via
-  `dao.grantWithCondition`. The condition reads
-  `Pool.getUserAccountData(dao)` post-action and reverts the whole
-  `dao.execute` if `healthFactor < minHealthFactor`. Drops reliance on
-  reviewer attention.
+`src/plugins/aave/conditions/BorrowHealthCondition.sol` turns "don't
+over-leverage" into an on-chain guard. The floor (`minHealthFactor`, 18-dec,
+e.g. `1.5e18`) and the AAVE Pool are fixed at deploy. **Fail-closed:** if the
+oracle / pool / token-metadata reads revert, the check reverts too.
+
+There are **two borrow paths**, and they need different enforcement surfaces —
+the condition exposes one for each:
+
+| Path | How a borrow reaches AAVE | Enforcement | Condition surface |
+|---|---|---|---|
+| **Direct** (operator setup: `TRIGGER_LENDING` delegated to a keeper/multisig that calls `plugin.borrow()`) | plugin `auth` → `dao.execute([pool.borrow])` | pre-trade *projection* gates the call | `isGranted` |
+| **Governance** (the common case: a proposal carries the raw `pool.borrow(onBehalfOf=DAO)` action — the plugin's `auth`, and any condition on it, never fires) | proposal's `dao.execute([…, pool.borrow])` | post-trade assert appended to the batch | `assertHealthFactor` |
+
+### Direct path — `grantWithCondition`
+
+Attach the condition to the operator's grant (a governance proposal):
+
+```solidity
+dao.grantWithCondition(
+    aavePlugin,                       // where
+    operator,                         // who (keeper / risk multisig)
+    aavePlugin.TRIGGER_LENDING_PERMISSION_ID(),
+    IPermissionCondition(borrowHealthCondition)
+);
+```
+
+`isGranted` decodes the pending `borrow(asset, amount, …)`, calls
+`projectedHealthFactorAfterBorrow(borrower, asset, amount)` (adds the new debt
+to the current AAVE position, holding collateral — and therefore the weighted
+liquidation threshold — constant), and denies the call if the result `<
+minHealthFactor`. Non-borrow selectors (supply / withdraw / repay) pass
+through untouched. **Note:** this only fires for the direct path; a pure
+TokenVoting DAO that never delegates `TRIGGER_LENDING` uses the governance path
+below.
+
+### Governance path — in-batch assert
+
+The borrow proposal carries `condition.assertHealthFactor(dao)` as its **final**
+action, after the `pool.borrow`. Executed in the same atomic `dao.execute`
+batch (with `allowFailureMap = 0`), it reverts `HealthFactorBelowFloor` if the
+DAO's now-current health factor is below the floor — rolling the borrow back.
+The frontend's borrow-proposal builder appends this action when a condition is
+configured for the chain. (Because the action is opt-in per proposal, a
+hand-built proposal can still omit it; the floor is enforced for any borrow
+built through the guarded path.)
+
+The projection is validated against AAVE's own math on a live position in
+`test/plugins/aave/BorrowHealthCondition.fork.test.ts` (projection ≈ AAVE's
+post-borrow HF within ~1%).
 
 ## 6. Events (full table in `docs/EVENTS.md`)
 
@@ -263,6 +302,8 @@ produces these findings; each is reviewed and accepted:
 | `solc-version 0.8.17 has known severe issues` | every file | Accepted by project policy. TRD §3 pins `solc 0.8.17` to match the audited Aragon OSx v1.4.0 build verbatim. The three listed issues (VerbatimInvalidDeduplication, FullInlinerNonExpressionSplitArgumentEvaluationOrder, MissingSideEffectsOnSelectorAccess) don't affect our codebase — no inline assembly using `verbatim`, no inliner-sensitive expressions, no `.selector` usage on storage-loaded variables. |
 | `naming-convention` on `_dao` / `_adapter` / `_initialAllowlist` / `__gap` / `POOL` | various | Intentional. Leading underscore on function parameters matches OSx upstream convention. `__gap` matches OpenZeppelin's upgradeable storage_gaps guide. `POOL` is uppercase per Solidity style for immutables. |
 | `unused-state` on `__gap` | AaveLendingPlugin | Intentional. Reserves slots for future upgrades without breaking the storage layout (OZ upgrade-safety pattern). |
+| `unused-return` on `getUserAccountData` partial destructure | BorrowHealthCondition | Intentional. The projection / assert each need only a subset of the 6-tuple (collateral + debt + liquidation threshold, or just the health factor). |
+| `naming-convention` on `ADDRESSES_PROVIDER` / `_who` / `_data` | BorrowHealthCondition | Forced. `ADDRESSES_PROVIDER()` matches AAVE's on-chain function name; `_who` / `_data` match the `IPermissionCondition.isGranted` signature the override must mirror. |
 
 CI gate: `slither --fail-high`. None of the above are high-severity; this
 list updates if the implementation changes.
@@ -281,6 +322,12 @@ list updates if the implementation changes.
   `onlyOn(["mainnetFork", "baseFork"], ...)`.
 - Permission matrix: `test/plugins/PluginSetup.unit.test.ts` already
   asserts `prepareInstallation` returns the TRD §9 set verbatim.
+- `BorrowHealthCondition` (§5): `test/plugins/aave/BorrowHealthCondition.unit.test.ts`
+  — 15 cases, 100% lines/branches/functions (projection math, `isGranted`
+  allow/deny/boundary + non-borrow + fail-closed, `assertHealthFactor`).
+  Fork: `test/plugins/aave/BorrowHealthCondition.fork.test.ts` — 4 cases on
+  `mainnetFork`/`baseFork`, including the projection ≈ AAVE's own post-borrow
+  HF (within ~1%) on a live WETH-collateral position.
 
 ## 11. Known limitations + future work
 
@@ -289,8 +336,13 @@ list updates if the implementation changes.
   multi-adapter registry in **§3a**, which adds per-call adapter selection
   (`supply(adapterId, …)` etc.) and lets the DAO operate both protocol
   versions at once.
-- **No on-chain health-factor guardrail on `borrow`** — see §5. v1.1
-  candidate: `BorrowHealthCondition`.
+- **On-chain health-factor guardrail on `borrow`** — ✅ shipped as
+  `BorrowHealthCondition` (§5). Remaining nuance: the governance-path guard
+  (`assertHealthFactor`) is appended per-proposal, so it protects borrows built
+  through the guarded path but a hand-crafted proposal can still omit it.
+  Always-on enforcement for the governance path would require routing borrows
+  back through the plugin's `auth`, which the nested-`dao.execute` constraint
+  precludes (see §3b).
 - **`interestRateMode` is passed through unchecked.** AAVE v3 has
   effectively removed stable-rate borrows on mainnet (legacy debt only).
   Validation belongs in the proposal review, not the plugin, so the

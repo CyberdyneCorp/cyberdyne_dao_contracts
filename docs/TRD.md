@@ -337,8 +337,8 @@ function setAllowedAsset(address asset, bool allowed) external auth(MANAGE_ALLOW
 
 **Why `onBehalfOf = dao`:** aTokens (the interest-bearing receipts) and debt tokens must be issued to the DAO so the DAO remains the sole custodian.
 
-**Borrow guardrails (recommended for v1):**
-- `borrow` requires the proposal to also include a sanity-check action that asserts a post-borrow health factor. This can be enforced by a `BorrowHealthCondition` contract attached to the `TRIGGER_LENDING_PERMISSION_ID` grant via `grantWithCondition`. (Optional in v1, recommended for v1.1.)
+**Borrow guardrails (shipped v1.1):**
+- `borrow` health-factor enforcement is implemented by `BorrowHealthCondition` (`src/plugins/aave/conditions/BorrowHealthCondition.sol`). Direct/operator borrows are gated by attaching it to the `TRIGGER_LENDING_PERMISSION_ID` grant via `grantWithCondition` (`isGranted` projects the post-borrow health factor pre-trade). Governance borrows append `condition.assertHealthFactor(dao)` as the final in-batch action of the proposal — the preview path carries a raw `pool.borrow` action that bypasses the plugin's `auth`, so the floor is enforced post-trade in the same atomic batch instead. See `docs/plugins/AAVE.md §5`.
 
 **Permissions** mirror the Uniswap plugin (EXECUTE on DAO, TRIGGER_LENDING on plugin, UPDATE_ADAPTER on plugin, MANAGE_ALLOWLIST on plugin).
 
@@ -567,7 +567,7 @@ Permissionless cranks (`executePayroll`, `executePayrollPage`, `processDue`) kee
 | Reentrancy via external protocols | DAO's `nonReentrant` on `execute()` (`src/core/dao/DAO.sol:73`) blocks. Plugins do not re-enter DAO mid-execution. |
 | Unbounded loops in payroll | Cap `recipients.length` at 100 (configurable). DAO's `execute` already caps at 256 actions. |
 | Slippage on swaps | Plugin enforces post-swap `balanceAfter - balanceBefore >= minAmountOut`. Proposal must set `minAmountOut`. |
-| AAVE liquidation from over-borrow | v1: documentation + proposal review. v1.1: `BorrowHealthCondition` enforces post-borrow health factor via OSx `grantWithCondition`. |
+| AAVE liquidation from over-borrow | **Shipped (v1.1):** `BorrowHealthCondition` enforces a min health factor — `isGranted` (via `grantWithCondition`) for direct/operator borrows, `assertHealthFactor(dao)` appended in-batch for governance borrows. Fail-closed. |
 | Upgrade hijack | `UPGRADE_PLUGIN_PERMISSION_ID` granted only to DAO. Only a vote can upgrade. |
 | Malicious adapter swap | `UPDATE_ADAPTER_PERMISSION_ID` granted only to DAO. Vote required. |
 | Payroll back-pay attack | `executePayroll` always pays only the current period (`lastPayoutPeriod = currentPeriod`, no loop). Missed months are skipped permanently. |
