@@ -130,6 +130,81 @@ test("Treasury ERC-20 transfer: build → vote → execute moves USDC out of the
   expect(usdcBefore.sub(usdcAfter).toString()).toBe("100000000");
 });
 
+test("Treasury ETH transfer: build → vote → execute sends DAO ETH to a recipient", async ({page}) => {
+  const DAO = process.env.E2E_DAO!;
+  // Burner address with no mainnet state — anvil's default accounts have been
+  // EIP-7702-delegated on mainnet, so a plain ETH transfer to them ends up at
+  // the delegate contract instead of moving the balance as expected. A clean
+  // address (no upstream code, no delegation) keeps the transfer simple.
+  const recipient = "0x0000000000000000000000000000000000C0FFEE";
+  const balanceOf = async (addr: string) =>
+    (await rpcProvider().getBalance(addr)) as ethers.BigNumber;
+  const daoBefore = await balanceOf(DAO);
+  const recBefore = await balanceOf(recipient);
+  // The seeded DAO holds ETH from setBalance during demo-up; require at least
+  // 0.001 ETH so the transfer actually has funds to move.
+  expect(daoBefore.gte(ethers.utils.parseEther("0.001"))).toBe(true);
+
+  await page.goto("/proposals");
+  await connectWallet(page);
+  const actionSelect = page.locator("select").filter({has: page.locator('option[value="raw"]')});
+  await actionSelect.selectOption("treasury-eth-transfer");
+
+  // Typed form: Recipient, Amount (ETH).
+  const form = page.locator("div.form").filter({has: actionSelect});
+  const fieldLabels = form.locator("label").filter({hasNotText: /^\s*Action\b/});
+  await fieldLabels.nth(0).locator("input").fill(recipient);
+  await fieldLabels.nth(1).locator("input").fill("0.001");
+
+  await page.getByRole("button", {name: /^Build$/}).click();
+  // Humanized headline + decoded ETH-value row.
+  await expect(page.getByText(/Treasury: send 0\.001 ETH/i)).toBeVisible();
+  await expect(page.locator(".decode").getByText(/1000000000000000 wei/)).toBeVisible();
+
+  const id = await submitProposal(page);
+  await voteExecute(page, id);
+
+  const daoAfter = await balanceOf(DAO);
+  const recAfter = await balanceOf(recipient);
+  expect(recAfter.sub(recBefore).toString()).toBe(ethers.utils.parseEther("0.001").toString());
+  expect(daoBefore.sub(daoAfter).toString()).toBe(ethers.utils.parseEther("0.001").toString());
+});
+
+test("Raw-call proposal: hand-encoded USDC.transfer via vote → execute", async ({page}) => {
+  const DAO = process.env.E2E_DAO!;
+  // Lowercase to skip the EIP-55 checksum check; ethers accepts both.
+  const recipient = "0x00000000000000000000000000000000000decaf";
+  const usdc = new ethers.Contract(USDC, ["function balanceOf(address) view returns (uint256)"], rpcProvider());
+  const daoBefore = (await usdc.balanceOf(DAO)) as ethers.BigNumber;
+
+  // Hand-encode ERC-20 transfer(recipient, 50 USDC) calldata — the raw path is
+  // independent of any preset.
+  const iface = new ethers.utils.Interface(["function transfer(address,uint256)"]);
+  const data = iface.encodeFunctionData("transfer", [recipient, ethers.BigNumber.from("50000000")]);
+
+  await page.goto("/proposals");
+  await connectWallet(page);
+  const actionSelect = page.locator("select").filter({has: page.locator('option[value="raw"]')});
+  await actionSelect.selectOption("raw");
+
+  // Typed form for raw call: to (address), data (0x…), value (wei).
+  const form = page.locator("div.form").filter({has: actionSelect});
+  const fieldLabels = form.locator("label").filter({hasNotText: /^\s*Action\b/});
+  await fieldLabels.nth(0).locator("input").fill(USDC);
+  await fieldLabels.nth(1).locator("input").fill(data);
+  await fieldLabels.nth(2).locator("input").fill("0");
+
+  await page.getByRole("button", {name: /^Build$/}).click();
+  // Decoded preview should still recognize the calldata as ERC-20 transfer.
+  await expect(page.locator(".decode").getByText("transfer(address,uint256)")).toBeVisible();
+
+  const id = await submitProposal(page);
+  await voteExecute(page, id);
+
+  const daoAfter = (await usdc.balanceOf(DAO)) as ethers.BigNumber;
+  expect(daoBefore.sub(daoAfter).toString()).toBe("50000000");
+});
+
 test("ABI explorer: load bundled ABI → pick function → build encoded call", async ({page}) => {
   await page.goto("/proposals");
   await connectWallet(page);

@@ -83,6 +83,41 @@ test("V4 LP mint via vote → execute (real v4 PositionManager, count increments
   await expect(page.getByText(/Uniswap V4 \(1\)/)).toBeVisible({timeout: 45_000});
 });
 
+test("V3 increase liquidity via vote → execute (on a seeded position)", async ({page}) => {
+  await page.goto("/positions");
+  await connectWallet(page);
+  await page.getByRole("button", {name: /Load positions|Refresh/}).first().click();
+  await expect(page.getByText(/Uniswap V3 \(2\)/)).toBeVisible({timeout: 45_000});
+
+  // Prefill the manage form (tokenId + token0 + token1 + liquidity) from the
+  // first seeded V3 row via its per-row "Manage ↓" button.
+  await page.getByRole("button", {name: /^Manage ↓$/}).first().click();
+
+  // Increase section has the "0.05" placeholder on amount1 — unique to that
+  // form on this page.
+  const incForm = page.locator("div.form").filter({has: page.getByPlaceholder("0.05")});
+  await incForm.getByPlaceholder("100").fill("10"); // 10 USDC
+  await incForm.getByPlaceholder("0.05").fill("0.005"); // 0.005 WETH
+  await incForm.getByRole("button", {name: /^Build$/}).click();
+
+  const id = await submitProposal(page);
+  await voteExecute(page, id);
+});
+
+test("V3 collect via vote → execute (on a seeded position)", async ({page}) => {
+  await page.goto("/positions");
+  await connectWallet(page);
+  await page.getByRole("button", {name: /Load positions|Refresh/}).first().click();
+  await expect(page.getByText(/Uniswap V3 \(2\)/)).toBeVisible({timeout: 45_000});
+
+  // Prefill from the first row; the Collect section just needs tokenId.
+  await page.getByRole("button", {name: /^Manage ↓$/}).first().click();
+  await page.getByRole("button", {name: /^Build collect-max$/}).click();
+
+  const id = await submitProposal(page);
+  await voteExecute(page, id);
+});
+
 test("V3 collect Simulate reports live fees on a seeded position", async ({page}) => {
   await page.goto("/positions");
   await connectWallet(page);
