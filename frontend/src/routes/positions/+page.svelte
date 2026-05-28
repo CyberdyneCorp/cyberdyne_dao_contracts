@@ -11,6 +11,7 @@
   import ProposeAction from "$lib/components/ProposeAction.svelte";
   import TokenSelect from "$lib/components/TokenSelect.svelte";
   import FeeSelect from "$lib/components/FeeSelect.svelte";
+  import ConnectPrompt from "$lib/components/ConnectPrompt.svelte";
   import {
     formatPair,
     formatFeePct,
@@ -69,7 +70,7 @@
 </div>
 
 {#if $wallet.status !== "connected"}
-  <p class="muted">Connect a wallet to manage positions.</p>
+  <ConnectPrompt context="manage DAO-owned Uniswap LP positions" />
 {:else if !cfg?.dao}
   <p class="empty">No DAO configured for chain {$wallet.chainId}.</p>
 {:else}

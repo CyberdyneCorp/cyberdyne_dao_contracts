@@ -15,6 +15,7 @@
   import Skeleton from "$lib/components/Skeleton.svelte";
   import ProposeAction from "$lib/components/ProposeAction.svelte";
   import TokenSelect from "$lib/components/TokenSelect.svelte";
+  import ConnectPrompt from "$lib/components/ConnectPrompt.svelte";
 
   const vm = createLendingVM();
   const {loading, loadError, noDao, data, op, lAsset, lAmount, lDecimals, lRateMode, lendingAction} =
@@ -48,7 +49,7 @@
 </div>
 
 {#if $wallet.status !== "connected"}
-  <p class="muted">Connect to load lending positions.</p>
+  <ConnectPrompt context="load AAVE lending positions" />
 {:else if $noDao}
   <p class="empty">No DAO configured for chain {$wallet.chainId}.</p>
 {:else}

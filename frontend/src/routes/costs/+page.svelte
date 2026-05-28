@@ -9,6 +9,7 @@
   import {subgraphEnabled} from "$lib/subgraph";
   import Skeleton from "$lib/components/Skeleton.svelte";
   import ProposeAction from "$lib/components/ProposeAction.svelte";
+  import ConnectPrompt from "$lib/components/ConnectPrompt.svelte";
 
   const vm = createCostsVM();
   const {
@@ -57,7 +58,7 @@
 </div>
 
 {#if $wallet.status !== "connected"}
-  <p class="muted">Connect to load the cost registry.</p>
+  <ConnectPrompt context="load the cost registry" />
 {:else if $noPlugin}
   <p class="empty">
     No CostRegistry plugin configured (6th address in <code>PUBLIC_DAO_*</code>).

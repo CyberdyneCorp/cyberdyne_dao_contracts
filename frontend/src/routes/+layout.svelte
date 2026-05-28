@@ -12,6 +12,19 @@
   <slot />
 </main>
 
+<footer class="site-footer">
+  <span>
+    <strong>Cyberdyne DAO</strong> · vote-gated treasury on Aragon OSx 1.4
+  </span>
+  <span class="footer-links">
+    <a href="https://github.com/CyberdyneCorp/cyberdyne_dao_contracts" target="_blank" rel="noreferrer">GitHub</a>
+    <span class="muted">·</span>
+    <a href="https://docs.aragon.org/osx/v1.4" target="_blank" rel="noreferrer">OSx docs</a>
+    <span class="muted">·</span>
+    <span class="muted">dev / inspector tool</span>
+  </span>
+</footer>
+
 <style>
   :global(:root) {
     /* Palette — Cyberdyne navy + warm accent, light surfaces. */
@@ -190,7 +203,33 @@
   main {
     margin: 0 auto;
     max-width: 1160px;
-    padding: 0.5rem 1.25rem 3rem;
+    padding: 0.5rem 1.25rem 2rem;
+  }
+  .site-footer {
+    margin: 1rem auto 0;
+    max-width: 1160px;
+    padding: 1.25rem 1.25rem 1.5rem;
+    border-top: 1px solid var(--color-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+  }
+  .footer-links {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .footer-links a {
+    color: var(--color-text-muted);
+    text-decoration: none;
+  }
+  .footer-links a:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
   }
   /* Section card — wraps an H2 + its content as a soft white panel so propose
    * forms / status panels get clear visual rhythm. Pages opt in by wrapping
@@ -203,6 +242,10 @@
     box-shadow: var(--shadow-sm);
     padding: 1rem 1.25rem 1.1rem;
     margin: 1.25rem 0;
+    transition: box-shadow 200ms ease, transform 200ms ease;
+  }
+  :global(section.card-section:hover) {
+    box-shadow: var(--shadow-md);
   }
   :global(section.card-section > h2:first-child) {
     margin-top: 0;

@@ -18,6 +18,7 @@
   import {decodeCall, targetDisplay} from "$lib/decode";
   import {humanize} from "$lib/humanize";
   import TokenSelect from "$lib/components/TokenSelect.svelte";
+  import ConnectPrompt from "$lib/components/ConnectPrompt.svelte";
 
   const vm = createProposalsVM();
   const {kind, argA, argB, argC, built, buildSim, submitMsg, submitting, proposals, loading, rowBusy, simResults} =
@@ -66,7 +67,7 @@
 </div>
 
 {#if $wallet.status !== "connected"}
-  <p class="muted">Connect a wallet to build proposals and vote.</p>
+  <ConnectPrompt context="build proposals and vote" />
 {:else if !cfg?.dao}
   <p class="empty">No DAO configured for chain {$wallet.chainId}.</p>
 {:else}

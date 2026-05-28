@@ -8,6 +8,7 @@
   import {formatUnits} from "$lib/format";
   import Skeleton from "$lib/components/Skeleton.svelte";
   import AddressTag from "$lib/components/AddressTag.svelte";
+  import ConnectPrompt from "$lib/components/ConnectPrompt.svelte";
 
   const vm = createOverviewVM();
   const {loading, loadError, unsupported, noDao, data} = vm;
@@ -31,7 +32,7 @@
 </div>
 
 {#if $wallet.status !== "connected"}
-  <p class="muted">Connect a wallet to load DAO state.</p>
+  <ConnectPrompt context="load treasury balances and plugin addresses" />
 {:else if $unsupported}
   <p class="empty">Unsupported chain id {$wallet.chainId}.</p>
 {:else if $noDao}

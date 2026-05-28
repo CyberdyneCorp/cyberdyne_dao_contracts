@@ -9,6 +9,7 @@
   import Skeleton from "$lib/components/Skeleton.svelte";
   import ProposeAction from "$lib/components/ProposeAction.svelte";
   import AddressTag from "$lib/components/AddressTag.svelte";
+  import ConnectPrompt from "$lib/components/ConnectPrompt.svelte";
 
   const vm = createPayrollVM();
   const {
@@ -53,7 +54,7 @@
 </div>
 
 {#if $wallet.status !== "connected"}
-  <p class="muted">Connect to load payroll schedule.</p>
+  <ConnectPrompt context="load the payroll schedule" />
 {:else if $loadError}
   <p class="empty">{$loadError}</p>
 {:else if $loading || !$data}

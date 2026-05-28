@@ -8,6 +8,7 @@
   import {formatAmount, shortAddress} from "$lib/format";
   import Skeleton from "$lib/components/Skeleton.svelte";
   import ProposeAction from "$lib/components/ProposeAction.svelte";
+  import ConnectPrompt from "$lib/components/ConnectPrompt.svelte";
 
   const vm = createSwapsVM();
   const {
@@ -46,7 +47,7 @@
 </div>
 
 {#if $wallet.status !== "connected"}
-  <p class="muted">Connect to load swap history.</p>
+  <ConnectPrompt context="load swap history" />
 {:else if $noDao}
   <p class="empty">No DAO configured for chain {$wallet.chainId}.</p>
 {:else}
