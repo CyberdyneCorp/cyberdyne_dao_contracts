@@ -1,173 +1,50 @@
 <!--
-  Operating costs registry: paginated list of recurring cost entries, the
-  permissionless processDue crank, and propose register/update/remove forms
-  (vote-gated). Mirrors the payroll page's read + crank + propose layout.
+  Operating costs View (MVVM). Thin: binds the costs ViewModel's stores +
+  commands. Logic lives in $lib/viewmodels/costs.ts.
 -->
 <script lang="ts">
-  import {ethers} from "ethers";
-  import {wallet, signer} from "$lib/wallet";
-  import {chainConfig} from "$lib/chains";
-  import {costRegistryContract} from "$lib/contracts";
-  import * as actions from "$lib/actions";
-  import type {ProposalAction} from "$lib/actions";
+  import {wallet} from "$lib/wallet";
+  import {createCostsVM, PAGE, isDue, fmtDate} from "$lib/viewmodels/costs";
+  import {formatToken, shortAddress} from "$lib/format";
+  import {subgraphEnabled} from "$lib/subgraph";
+  import Skeleton from "$lib/components/Skeleton.svelte";
   import ProposeAction from "$lib/components/ProposeAction.svelte";
-  import {subgraphEnabled, fetchCostPayments, type CostPaymentRow} from "$lib/subgraph";
 
-  // Payment history (subgraph-only — no cheap RPC equivalent without an
-  // unbounded log scan). Loaded on demand by the "Load history" button.
-  let payments: CostPaymentRow[] | null = null;
-  let payErr: string | null = null;
-  let payLoading = false;
+  const vm = createCostsVM();
+  const {
+    loading,
+    loadError,
+    noPlugin,
+    data,
+    offset,
+    crankBusy,
+    crankResult,
+    crankOffset,
+    crankLimit,
+    payments,
+    payLoading,
+    rId,
+    rName,
+    rDesc,
+    rCost,
+    rFreq,
+    rPayee,
+    regAction,
+    removeId,
+    removeAction,
+    maxEntries,
+    setMaxEntriesAction,
+  } = vm;
 
-  async function loadPayments(): Promise<void> {
-    payErr = null;
-    payLoading = true;
-    try {
-      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
-      const cfg = chainConfig($wallet.chainId);
-      if (!cfg?.dao) throw new Error("No DAO configured");
-      payments = await fetchCostPayments(cfg.dao.dao);
-    } catch (err) {
-      payErr = (err as Error).message;
-    } finally {
-      payLoading = false;
+  const USDC = {symbol: "USDC", decimals: 6};
+
+  let lastKey = "";
+  $: {
+    const key = $wallet.status === "connected" ? String($wallet.chainId) : "";
+    if (key && key !== lastKey) {
+      lastKey = key;
+      vm.load();
     }
-  }
-
-  const PAGE = 20;
-  let offset = 0;
-
-  type Row = {
-    id: number;
-    name: string;
-    description: string;
-    payee: string;
-    costUsdc: ethers.BigNumber;
-    frequencyDays: number;
-    active: boolean;
-    lastPaidAt: number;
-    nextAt: number;
-  };
-
-  async function load(chainId: number, provider: ethers.providers.Provider, off: number) {
-    const cfg = chainConfig(chainId);
-    if (!cfg?.dao?.costRegistry) throw new Error("No CostRegistry plugin configured");
-    const reg = costRegistryContract(cfg, provider);
-    const [token, raw] = await Promise.all([reg.paymentToken(), reg.getEntries(off, PAGE)]);
-    const page = raw[0];
-    const total: ethers.BigNumber = raw[1];
-    const rows: Row[] = page.map(
-      (
-        e: {
-          payee: string;
-          costUsdc: ethers.BigNumber;
-          frequencyDays: number;
-          lastPaidAt: ethers.BigNumber;
-          active: boolean;
-          name: string;
-          description: string;
-        },
-        i: number
-      ) => ({
-        id: off + i,
-        name: e.name,
-        description: e.description,
-        payee: e.payee,
-        costUsdc: e.costUsdc,
-        frequencyDays: e.frequencyDays,
-        active: e.active,
-        lastPaidAt: Number(e.lastPaidAt),
-        nextAt: Number(e.lastPaidAt) + e.frequencyDays * 86_400,
-      })
-    );
-    return {cfg, token, rows, total: total.toNumber()};
-  }
-
-  let crankBusy = false;
-  let crankResult: string | null = null;
-  let crankOffset = "0";
-  let crankLimit = "100";
-
-  async function runCrank(): Promise<void> {
-    if ($wallet.status !== "connected" || !$signer) return;
-    const cfg = chainConfig($wallet.chainId);
-    if (!cfg?.dao?.costRegistry) return;
-    crankBusy = true;
-    crankResult = null;
-    try {
-      const tx = await costRegistryContract(cfg, $signer).processDue(
-        ethers.BigNumber.from(crankOffset || "0"),
-        ethers.BigNumber.from(crankLimit || "100")
-      );
-      crankResult = `Submitted: ${tx.hash}. Waiting…`;
-      const receipt = await tx.wait();
-      crankResult = `Confirmed in block ${receipt.blockNumber}.`;
-    } catch (err) {
-      crankResult = `Failed: ${(err as Error).message}`;
-    } finally {
-      crankBusy = false;
-    }
-  }
-
-  // --- Propose: register / update / remove ---
-  let rName = "";
-  let rDesc = "";
-  let rCost = "";
-  let rFreq = "";
-  let rPayee = "";
-  let rId = ""; // blank → register; set → update
-  let regAction: ProposalAction | null = null;
-
-  function buildRegisterOrUpdate(): void {
-    regAction = null;
-    try {
-      const cfg = chainConfig($wallet.status === "connected" ? $wallet.chainId : 1);
-      if (!cfg?.dao) throw new Error("No DAO configured");
-      const cost = ethers.utils.parseUnits(rCost || "0", 6); // USDC 6dp
-      const freq = parseInt(rFreq || "0", 10);
-      regAction =
-        rId.trim() === ""
-          ? actions.costRegister(cfg, rName, rDesc, cost, freq, rPayee)
-          : actions.costUpdate(cfg, parseInt(rId, 10), rName, rDesc, cost, freq, rPayee);
-    } catch (err) {
-      alert(`Build failed: ${(err as Error).message}`);
-    }
-  }
-
-  let removeId = "";
-  let removeAction: ProposalAction | null = null;
-  function buildRemove(): void {
-    removeAction = null;
-    try {
-      const cfg = chainConfig($wallet.status === "connected" ? $wallet.chainId : 1);
-      if (!cfg?.dao) throw new Error("No DAO configured");
-      removeAction = actions.costRemove(cfg, parseInt(removeId, 10));
-    } catch (err) {
-      alert(`Build failed: ${(err as Error).message}`);
-    }
-  }
-
-  let maxEntries = "";
-  let setMaxEntriesAction: ProposalAction | null = null;
-  function buildSetMaxEntries(): void {
-    setMaxEntriesAction = null;
-    try {
-      const cfg = chainConfig($wallet.status === "connected" ? $wallet.chainId : 1);
-      if (!cfg?.dao) throw new Error("No DAO configured");
-      setMaxEntriesAction = actions.costSetMaxEntries(cfg, parseInt(maxEntries || "0", 10));
-    } catch (err) {
-      alert(`Build failed: ${(err as Error).message}`);
-    }
-  }
-
-  function fmtUsdc(v: ethers.BigNumber): string {
-    return ethers.utils.formatUnits(v, 6);
-  }
-  function fmtTs(n: number): string {
-    return n === 0 ? "—" : new Date(n * 1000).toISOString().slice(0, 10);
-  }
-  function due(r: Row): boolean {
-    return r.active && Date.now() / 1000 >= r.nextAt;
   }
 </script>
 
@@ -175,138 +52,129 @@
 
 {#if $wallet.status !== "connected"}
   <p class="muted">Connect to load the cost registry.</p>
+{:else if $noPlugin}
+  <p class="empty">
+    No CostRegistry plugin configured (6th address in <code>PUBLIC_DAO_*</code>).
+  </p>
+{:else if $loadError}
+  <p class="empty">{$loadError}</p>
+{:else if $loading || !$data}
+  <Skeleton rows={5} />
 {:else}
-  {@const cfg = chainConfig($wallet.chainId)}
-  {#if !cfg?.dao}
-    <p class="empty">No DAO configured for chain {$wallet.chainId}.</p>
-  {:else if !cfg.dao.costRegistry}
-    <p class="empty">
-      No CostRegistry plugin configured (6th address in <code>PUBLIC_DAO_*</code>). You can
-      still build proposal calldata below.
-    </p>
+  {@const d = $data}
+  <p class="muted">
+    Paid in <code>{d.token}</code> · {d.total} entr{d.total === 1 ? "y" : "ies"} total
+  </p>
+  {#if d.rows.length === 0}
+    <p class="empty">No entries in this page.</p>
   {:else}
-    {#await load($wallet.chainId, $wallet.provider, offset)}
-      <p class="muted">Loading…</p>
-    {:then data}
-      <p class="muted">
-        Paid in <code>{data.token}</code> · {data.total} entr{data.total === 1 ? "y" : "ies"} total
-      </p>
-      {#if data.rows.length === 0}
-        <p class="empty">No entries in this page.</p>
-      {:else}
-        <table>
-          <thead>
-            <tr>
-              <th>#</th><th>Name</th><th>Payee</th><th>Cost (USDC)</th>
-              <th>Every</th><th>Next due</th><th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each data.rows as r}
-              <tr class={r.active ? "" : "inactive"}>
-                <td>{r.id}</td>
-                <td title={r.description}>{r.name}</td>
-                <td><code>{r.payee.slice(0, 10)}…</code></td>
-                <td>{fmtUsdc(r.costUsdc)}</td>
-                <td>{r.frequencyDays}d</td>
-                <td>{fmtTs(r.nextAt)}</td>
-                <td>
-                  {#if !r.active}<span class="muted">removed</span>
-                  {:else if due(r)}<span class="warn">due</span>
-                  {:else}<span class="ok">scheduled</span>{/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      {/if}
-      <div class="pager">
-        <button disabled={offset === 0} on:click={() => (offset = Math.max(0, offset - PAGE))}>
-          ← Prev
-        </button>
-        <span class="muted">rows {offset}–{offset + data.rows.length} of {data.total}</span>
-        <button disabled={offset + PAGE >= data.total} on:click={() => (offset += PAGE)}>
-          Next →
-        </button>
-      </div>
-    {:catch err}
-      <p class="error">Failed: {err.message}</p>
-    {/await}
-
-    <h2>Payment history</h2>
-    {#if subgraphEnabled()}
-      <button on:click={loadPayments} disabled={payLoading}>
-        {payLoading ? "Loading…" : payments ? "Refresh" : "Load history"}
-      </button>
-      {#if payErr}<p class="error">{payErr}</p>{/if}
-      {#if payments && payments.length > 0}
-        <table>
-          <thead>
-            <tr><th>When</th><th>Entry</th><th>Payee</th><th>Amount</th><th>Tx</th></tr>
-          </thead>
-          <tbody>
-            {#each payments as p}
-              <tr>
-                <td>{new Date(Number(p.paidAt) * 1000).toISOString().slice(0, 16).replace("T", " ")}</td>
-                <td>#{p.entry.entryId} {p.entry.name}</td>
-                <td><code>{p.payee.slice(0, 10)}…</code></td>
-                <td>{p.amount}</td>
-                <td><code>{p.txHash.slice(0, 10)}…</code></td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      {:else if payments}
-        <p class="empty">No payments indexed yet.</p>
-      {/if}
-    {:else}
-      <p class="muted">
-        Set <code>PUBLIC_SUBGRAPH_URL</code> to see per-entry payment history
-        (<code>CostPaid</code> events) here. Without a subgraph, only the live entry
-        list above is available.
-      </p>
-    {/if}
-
-    <h2>Crank (permissionless)</h2>
-    <p class="muted">
-      <code>processDue(offset, limit)</code> pays every due entry in the index window. Idempotent
-      per entry — re-runs only pay entries that have since come due.
-    </p>
-    <div class="form">
-      <label>offset <input bind:value={crankOffset} style="min-width:80px" /></label>
-      <label>limit <input bind:value={crankLimit} style="min-width:80px" /></label>
-      <button on:click={runCrank} disabled={crankBusy}>{crankBusy ? "Submitting…" : "processDue"}</button>
-    </div>
-    {#if crankResult}<p>{crankResult}</p>{/if}
-
-    <h2>Propose: register / update entry</h2>
-    <p class="muted">Leave "id" blank to register a new entry; set it to update an existing one.</p>
-    <div class="form">
-      <label>id (update only) <input bind:value={rId} placeholder="blank = new" style="min-width:110px" /></label>
-      <label>name <input bind:value={rName} placeholder="AWS" /></label>
-      <label>description <input bind:value={rDesc} placeholder="cloud bill" /></label>
-      <label>cost (USDC) <input bind:value={rCost} placeholder="500" /></label>
-      <label>frequency (days) <input bind:value={rFreq} placeholder="30" style="min-width:120px" /></label>
-      <label>payee <input bind:value={rPayee} placeholder="0x..." /></label>
-      <button on:click={buildRegisterOrUpdate}>Build</button>
-    </div>
-    <ProposeAction action={regAction} />
-
-    <h2>Propose: remove entry</h2>
-    <div class="form">
-      <label>id <input bind:value={removeId} placeholder="0" style="min-width:90px" /></label>
-      <button on:click={buildRemove}>Build</button>
-    </div>
-    <ProposeAction action={removeAction} />
-
-    <h2>Propose: set max entries</h2>
-    <p class="muted">Raise or lower the entry-slot cap (≤ ceiling, ≥ current count). Vote-gated.</p>
-    <div class="form">
-      <label>New max <input bind:value={maxEntries} placeholder="500" style="min-width:120px" /></label>
-      <button on:click={buildSetMaxEntries}>Build</button>
-    </div>
-    <ProposeAction action={setMaxEntriesAction} />
+    <table>
+      <thead>
+        <tr>
+          <th>#</th><th>Name</th><th>Payee</th><th>Cost</th>
+          <th>Every</th><th>Next due</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each d.rows as r}
+          <tr class={r.active ? "" : "inactive"}>
+            <td>{r.id}</td>
+            <td title={r.description}>{r.name}</td>
+            <td><code>{shortAddress(r.payee)}</code></td>
+            <td>{formatToken(r.costUsdc, USDC)}</td>
+            <td>{r.frequencyDays}d</td>
+            <td>{fmtDate(r.nextAt)}</td>
+            <td>
+              {#if !r.active}<span class="muted">removed</span>
+              {:else if isDue(r)}<span class="warn">due</span>
+              {:else}<span class="ok">scheduled</span>{/if}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
   {/if}
+  <div class="pager">
+    <button disabled={$offset === 0} on:click={() => vm.setOffset($offset - PAGE)}>← Prev</button>
+    <span class="muted">rows {$offset}–{$offset + d.rows.length} of {d.total}</span>
+    <button disabled={$offset + PAGE >= d.total} on:click={() => vm.setOffset($offset + PAGE)}>
+      Next →
+    </button>
+  </div>
+
+  <h2>Payment history</h2>
+  {#if subgraphEnabled()}
+    <button on:click={vm.loadPayments} disabled={$payLoading}>
+      {$payLoading ? "Loading…" : $payments ? "Refresh" : "Load history"}
+    </button>
+    {#if $payments && $payments.length > 0}
+      <table>
+        <thead>
+          <tr><th>When</th><th>Entry</th><th>Payee</th><th>Amount</th><th>Tx</th></tr>
+        </thead>
+        <tbody>
+          {#each $payments as p}
+            <tr>
+              <td>{new Date(Number(p.paidAt) * 1000).toISOString().slice(0, 16).replace("T", " ")}</td>
+              <td>#{p.entry.entryId} {p.entry.name}</td>
+              <td><code>{shortAddress(p.payee)}</code></td>
+              <td>{formatToken(p.amount, USDC)}</td>
+              <td><code>{p.txHash.slice(0, 10)}…</code></td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {:else if $payments}
+      <p class="empty">No payments indexed yet.</p>
+    {/if}
+  {:else}
+    <p class="muted">
+      Set <code>PUBLIC_SUBGRAPH_URL</code> to see per-entry payment history (<code>CostPaid</code>
+      events) here. Without a subgraph, only the live entry list above is available.
+    </p>
+  {/if}
+
+  <h2>Crank (permissionless)</h2>
+  <p class="muted">
+    <code>processDue(offset, limit)</code> pays every due entry in the index window. Idempotent per
+    entry — re-runs only pay entries that have since come due.
+  </p>
+  <div class="form">
+    <label>offset <input bind:value={$crankOffset} style="min-width:80px" /></label>
+    <label>limit <input bind:value={$crankLimit} style="min-width:80px" /></label>
+    <button on:click={vm.runCrank} disabled={$crankBusy}>
+      {$crankBusy ? "Submitting…" : "processDue"}
+    </button>
+  </div>
+  {#if $crankResult}<p>{$crankResult}</p>{/if}
+
+  <h2>Propose: register / update entry</h2>
+  <p class="muted">Leave "id" blank to register a new entry; set it to update an existing one.</p>
+  <div class="form">
+    <label>id (update only) <input bind:value={$rId} placeholder="blank = new" style="min-width:110px" /></label>
+    <label>name <input bind:value={$rName} placeholder="AWS" /></label>
+    <label>description <input bind:value={$rDesc} placeholder="cloud bill" /></label>
+    <label>cost (USDC) <input bind:value={$rCost} placeholder="500" /></label>
+    <label>frequency (days) <input bind:value={$rFreq} placeholder="30" style="min-width:120px" /></label>
+    <label>payee <input bind:value={$rPayee} placeholder="0x..." /></label>
+    <button on:click={vm.buildRegisterOrUpdate}>Build</button>
+  </div>
+  <ProposeAction action={$regAction} />
+
+  <h2>Propose: remove entry</h2>
+  <div class="form">
+    <label>id <input bind:value={$removeId} placeholder="0" style="min-width:90px" /></label>
+    <button on:click={vm.buildRemove}>Build</button>
+  </div>
+  <ProposeAction action={$removeAction} />
+
+  <h2>Propose: set max entries</h2>
+  <p class="muted">Raise or lower the entry-slot cap (≤ ceiling, ≥ current count). Vote-gated.</p>
+  <div class="form">
+    <label>New max <input bind:value={$maxEntries} placeholder="500" style="min-width:120px" /></label>
+    <button on:click={vm.buildSetMaxEntries}>Build</button>
+  </div>
+  <ProposeAction action={$setMaxEntriesAction} />
 {/if}
 
 <style>
@@ -333,9 +201,6 @@
   }
   tr.inactive {
     opacity: 0.5;
-  }
-  .error {
-    color: #b00020;
   }
   .ok {
     color: #0a7;

@@ -1,134 +1,45 @@
 <!--
-  Payroll schedule: active recipients, amounts, pay day, last-paid period,
-  + the permissionless crank button + an "add recipient" form that builds an
-  Action[] payload to paste into a proposal.
+  Payroll View (MVVM). Thin: binds to the payroll ViewModel's stores + commands
+  and renders. All logic lives in $lib/viewmodels/payroll.ts.
 -->
 <script lang="ts">
-  import {ethers} from "ethers";
-  import {wallet, signer} from "$lib/wallet";
-  import {chainConfig} from "$lib/chains";
-  import {payrollContract} from "$lib/contracts";
-  import * as actions from "$lib/actions";
-  import type {ProposalAction} from "$lib/actions";
+  import {wallet} from "$lib/wallet";
+  import {createPayrollVM, periodLabel} from "$lib/viewmodels/payroll";
+  import {formatToken, resolveToken} from "$lib/format";
+  import Skeleton from "$lib/components/Skeleton.svelte";
   import ProposeAction from "$lib/components/ProposeAction.svelte";
 
-  async function load(chainId: number, provider: ethers.providers.Provider) {
-    const cfg = chainConfig(chainId);
-    if (!cfg?.dao) throw new Error("No DAO configured");
-    const payroll = payrollContract(cfg, provider);
-    const [recipients, payDay, lastPeriod, cursor, cursorPeriod, perPage] = await Promise.all([
-      payroll.allActiveRecipients(),
-      payroll.payDayOfMonth(),
-      payroll.lastPayoutPeriod(),
-      payroll.payoutCursor(),
-      payroll.cursorPeriod(),
-      payroll.MAX_RECIPIENTS_PER_PAGE(),
-    ]);
-    return {cfg, recipients, payDay, lastPeriod, cursor, cursorPeriod, perPage};
-  }
+  const vm = createPayrollVM();
+  const {
+    loading,
+    loadError,
+    data,
+    crankBusy,
+    crankResult,
+    pageSize,
+    newPayee,
+    newToken,
+    newAmount,
+    addAction,
+    setAmtPayee,
+    setAmtToken,
+    setAmtValue,
+    setAmountAction,
+    maxRecip,
+    setMaxAction,
+    forceYear,
+    forceMonth,
+    forceActions,
+  } = vm;
 
-  let crankBusy = false;
-  let crankResult: string | null = null;
-  let pageSize = "100";
-
-  // Run the crank. `full` → executePayroll() (one batch); else
-  // executePayrollPage(pageSize) for large/paginated payrolls.
-  async function runCrank(full: boolean): Promise<void> {
-    if ($wallet.status !== "connected" || !$signer) return;
-    const cfg = chainConfig($wallet.chainId);
-    if (!cfg?.dao) return;
-    crankBusy = true;
-    crankResult = null;
-    try {
-      const payroll = payrollContract(cfg, $signer);
-      const tx = full
-        ? await payroll.executePayroll()
-        : await payroll.executePayrollPage(ethers.BigNumber.from(pageSize || "100"));
-      crankResult = `Submitted: ${tx.hash}. Waiting…`;
-      const receipt = await tx.wait();
-      crankResult = `Confirmed in block ${receipt.blockNumber}.`;
-    } catch (err) {
-      crankResult = `Failed: ${(err as Error).message}`;
-    } finally {
-      crankBusy = false;
+  // Load once per (chain) connection — re-run when the connected chain changes.
+  let lastKey = "";
+  $: {
+    const key = $wallet.status === "connected" ? String($wallet.chainId) : "";
+    if (key && key !== lastKey) {
+      lastKey = key;
+      vm.load();
     }
-  }
-
-  // --- Proposal builders (vote-gated) ---
-  let newPayee = "";
-  let newToken = ethers.constants.AddressZero; // 0x0 = ETH
-  let newAmount = "";
-  let addAction: ProposalAction | null = null;
-
-  function buildAddRecipient(): void {
-    addAction = null;
-    try {
-      const cfg = chainConfig($wallet.status === "connected" ? $wallet.chainId : 1);
-      if (!cfg?.dao) throw new Error("No DAO configured");
-      const decimals = newToken === ethers.constants.AddressZero ? 18 : 6; // ETH=18, USDC=6 default
-      const amount = ethers.utils.parseUnits(newAmount || "0", decimals);
-      addAction = actions.payrollAddRecipient(cfg, newPayee, newToken, amount);
-    } catch (err) {
-      crankResult = null;
-      addAction = null;
-      alert(`Build failed: ${(err as Error).message}`);
-    }
-  }
-
-  let setAmtPayee = "";
-  let setAmtValue = "";
-  let setAmtToken = ethers.constants.AddressZero;
-  let setAmountAction: ProposalAction | null = null;
-
-  function buildSetAmount(): void {
-    setAmountAction = null;
-    try {
-      const cfg = chainConfig($wallet.status === "connected" ? $wallet.chainId : 1);
-      if (!cfg?.dao) throw new Error("No DAO configured");
-      const decimals = setAmtToken === ethers.constants.AddressZero ? 18 : 6;
-      const amount = ethers.utils.parseUnits(setAmtValue || "0", decimals);
-      setAmountAction = actions.payrollSetAmount(cfg, setAmtPayee, amount);
-    } catch (err) {
-      alert(`Build failed: ${(err as Error).message}`);
-    }
-  }
-
-  let maxRecip = "";
-  let setMaxAction: ProposalAction | null = null;
-  function buildSetMaxRecipients(): void {
-    setMaxAction = null;
-    try {
-      const cfg = chainConfig($wallet.status === "connected" ? $wallet.chainId : 1);
-      if (!cfg?.dao) throw new Error("No DAO configured");
-      setMaxAction = actions.payrollSetMaxRecipients(cfg, parseInt(maxRecip || "0", 10));
-    } catch (err) {
-      alert(`Build failed: ${(err as Error).message}`);
-    }
-  }
-
-  // Force-pay a skipped month: year + month → packed period (year*12+month).
-  let forceYear = "";
-  let forceMonth = "";
-  let forceActions: ProposalAction[] | null = null;
-  async function buildForcePay(): Promise<void> {
-    forceActions = null;
-    try {
-      if ($wallet.status !== "connected") throw new Error("Connect a wallet");
-      const cfg = chainConfig($wallet.chainId);
-      if (!cfg?.dao) throw new Error("No DAO configured");
-      const period = parseInt(forceYear || "0", 10) * 12 + parseInt(forceMonth || "0", 10);
-      forceActions = await actions.previewPayrollForcePayPeriod(cfg, $wallet.provider, period);
-    } catch (err) {
-      alert(`Build failed: ${(err as Error).message}`);
-    }
-  }
-
-  function periodLabel(p: bigint | ethers.BigNumber): string {
-    const n = Number(p);
-    if (n === 0) return "—";
-    const year = Math.floor(n / 12);
-    const month = n - year * 12;
-    return `${year}-${String(month).padStart(2, "0")}`;
   }
 </script>
 
@@ -136,106 +47,98 @@
 
 {#if $wallet.status !== "connected"}
   <p class="muted">Connect to load payroll schedule.</p>
+{:else if $loadError}
+  <p class="empty">{$loadError}</p>
+{:else if $loading || !$data}
+  <Skeleton rows={4} />
 {:else}
-  {@const cfg = chainConfig($wallet.chainId)}
-  {#if !cfg?.dao}
-    <p class="empty">No DAO configured for chain {$wallet.chainId}.</p>
-  {:else}
-    {#await load($wallet.chainId, $wallet.provider)}
-      <p class="muted">Loading…</p>
-    {:then data}
-      <h2>Schedule</h2>
-      <p>
-        Pay day of month: <strong>{data.payDay}</strong> ·
-        Last paid period: <strong>{periodLabel(data.lastPeriod)}</strong> ·
-        Page size cap: <strong>{data.perPage.toString()}</strong>
-      </p>
-      {#if !data.cursor.isZero()}
-        <p class="muted">
-          Pagination in progress for period {periodLabel(data.cursorPeriod)} — resume at recipient
-          index {data.cursor.toString()} via "Run page" below.
-        </p>
-      {/if}
-
-      <h2>Active recipients ({data.recipients.length})</h2>
-      {#if data.recipients.length === 0}
-        <p class="empty">No active recipients.</p>
-      {:else}
-        <table>
-          <thead>
-            <tr><th>Payee</th><th>Token</th><th>Amount</th></tr>
-          </thead>
-          <tbody>
-            {#each data.recipients as r}
-              <tr>
-                <td><code>{r.payee}</code></td>
-                <td>{r.token === ethers.constants.AddressZero ? "ETH" : r.token.slice(0, 10) + "…"}</td>
-                <td>{r.amount.toString()}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      {/if}
-
-      <h2>Crank (permissionless)</h2>
-      <p class="muted">
-        <code>executePayroll()</code> pays the whole period in one batch (reverts if it
-        exceeds {data.perPage.toString()} recipients). For larger payrolls run pages with
-        <code>executePayrollPage(n)</code> until the period completes.
-      </p>
-      <div class="form">
-        <button on:click={() => runCrank(true)} disabled={crankBusy}>
-          {crankBusy ? "Submitting…" : "executePayroll()"}
-        </button>
-        <label>Page size <input bind:value={pageSize} placeholder="100" style="min-width:80px" /></label>
-        <button on:click={() => runCrank(false)} disabled={crankBusy}>Run page</button>
-      </div>
-      {#if crankResult}
-        <p>{crankResult}</p>
-      {/if}
-    {:catch err}
-      <p class="error">Failed: {err.message}</p>
-    {/await}
-
-    <h2>Propose: add recipient</h2>
-    <p class="muted">Vote-gated — builds an action the DAO executes after a vote passes.</p>
-    <div class="form">
-      <label>Payee <input bind:value={newPayee} placeholder="0x..." /></label>
-      <label>Token <input bind:value={newToken} placeholder="0x... (or 0x0 for ETH)" /></label>
-      <label>Amount (decimal) <input bind:value={newAmount} placeholder="1000" /></label>
-      <button on:click={buildAddRecipient}>Build</button>
-    </div>
-    <ProposeAction action={addAction} />
-
-    <h2>Propose: set recipient amount</h2>
-    <div class="form">
-      <label>Payee <input bind:value={setAmtPayee} placeholder="0x..." /></label>
-      <label>Token <input bind:value={setAmtToken} placeholder="0x... (0x0 = ETH)" /></label>
-      <label>New amount (decimal) <input bind:value={setAmtValue} placeholder="1500" /></label>
-      <button on:click={buildSetAmount}>Build</button>
-    </div>
-    <ProposeAction action={setAmountAction} />
-
-    <h2>Propose: set max recipients</h2>
-    <p class="muted">Raise or lower the recipient-slot cap (≤ ceiling, ≥ current count). Vote-gated.</p>
-    <div class="form">
-      <label>New max <input bind:value={maxRecip} placeholder="500" style="min-width:120px" /></label>
-      <button on:click={buildSetMaxRecipients}>Build</button>
-    </div>
-    <ProposeAction action={setMaxAction} />
-
-    <h2>Propose: force-pay a skipped period</h2>
+  {@const d = $data}
+  <h2>Schedule</h2>
+  <p>
+    Pay day of month: <strong>{d.payDay}</strong> ·
+    Last paid period: <strong>{periodLabel(d.lastPeriod)}</strong> ·
+    Page size cap: <strong>{d.perPage.toString()}</strong>
+  </p>
+  {#if !d.cursor.isZero()}
     <p class="muted">
-      Recovery for a month the crank skipped — pays every active recipient once. Only periods after
-      the last paid month and before now (≤ 12 months back) qualify. Vote-gated.
+      Pagination in progress for period {periodLabel(d.cursorPeriod)} — resume at recipient index
+      {d.cursor.toString()} via "Run page" below.
     </p>
-    <div class="form">
-      <label>Year <input bind:value={forceYear} placeholder="2027" style="min-width:90px" /></label>
-      <label>Month <input bind:value={forceMonth} placeholder="2" style="min-width:80px" /></label>
-      <button on:click={buildForcePay}>Build</button>
-    </div>
-    <ProposeAction action={forceActions} />
   {/if}
+
+  <h2>Active recipients ({d.recipients.length})</h2>
+  {#if d.recipients.length === 0}
+    <p class="empty">No active recipients.</p>
+  {:else}
+    <table>
+      <thead>
+        <tr><th>Payee</th><th>Token</th><th>Amount</th></tr>
+      </thead>
+      <tbody>
+        {#each d.recipients as r}
+          <tr>
+            <td><code>{r.payee}</code></td>
+            <td>{resolveToken(d.cfg, r.token).symbol}</td>
+            <td>{formatToken(r.amount, resolveToken(d.cfg, r.token))}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  {/if}
+
+  <h2>Crank (permissionless)</h2>
+  <p class="muted">
+    <code>executePayroll()</code> pays the whole period in one batch (reverts if it exceeds
+    {d.perPage.toString()} recipients). For larger payrolls run pages with
+    <code>executePayrollPage(n)</code> until the period completes.
+  </p>
+  <div class="form">
+    <button on:click={() => vm.runCrank(true)} disabled={$crankBusy}>
+      {$crankBusy ? "Submitting…" : "executePayroll()"}
+    </button>
+    <label>Page size <input bind:value={$pageSize} placeholder="100" style="min-width:80px" /></label>
+    <button on:click={() => vm.runCrank(false)} disabled={$crankBusy}>Run page</button>
+  </div>
+  {#if $crankResult}<p>{$crankResult}</p>{/if}
+
+  <h2>Propose: add recipient</h2>
+  <p class="muted">Vote-gated — builds an action the DAO executes after a vote passes.</p>
+  <div class="form">
+    <label>Payee <input bind:value={$newPayee} placeholder="0x..." /></label>
+    <label>Token <input bind:value={$newToken} placeholder="0x... (or 0x0 for ETH)" /></label>
+    <label>Amount (decimal) <input bind:value={$newAmount} placeholder="1000" /></label>
+    <button on:click={vm.buildAddRecipient}>Build</button>
+  </div>
+  <ProposeAction action={$addAction} />
+
+  <h2>Propose: set recipient amount</h2>
+  <div class="form">
+    <label>Payee <input bind:value={$setAmtPayee} placeholder="0x..." /></label>
+    <label>Token <input bind:value={$setAmtToken} placeholder="0x... (0x0 = ETH)" /></label>
+    <label>New amount (decimal) <input bind:value={$setAmtValue} placeholder="1500" /></label>
+    <button on:click={vm.buildSetAmount}>Build</button>
+  </div>
+  <ProposeAction action={$setAmountAction} />
+
+  <h2>Propose: set max recipients</h2>
+  <p class="muted">Raise or lower the recipient-slot cap (≤ ceiling, ≥ current count). Vote-gated.</p>
+  <div class="form">
+    <label>New max <input bind:value={$maxRecip} placeholder="500" style="min-width:120px" /></label>
+    <button on:click={vm.buildSetMaxRecipients}>Build</button>
+  </div>
+  <ProposeAction action={$setMaxAction} />
+
+  <h2>Propose: force-pay a skipped period</h2>
+  <p class="muted">
+    Recovery for a month the crank skipped — pays every active recipient once. Only periods after
+    the last paid month and before now (≤ 12 months back) qualify. Vote-gated.
+  </p>
+  <div class="form">
+    <label>Year <input bind:value={$forceYear} placeholder="2027" style="min-width:90px" /></label>
+    <label>Month <input bind:value={$forceMonth} placeholder="2" style="min-width:80px" /></label>
+    <button on:click={vm.buildForcePay}>Build</button>
+  </div>
+  <ProposeAction action={$forceActions} />
 {/if}
 
 <style>
@@ -252,8 +155,5 @@
   }
   .form input {
     min-width: 240px;
-  }
-  .error {
-    color: #b00020;
   }
 </style>

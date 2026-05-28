@@ -51,7 +51,8 @@ test("setAmount via vote → execute (verified on the payroll page)", async ({pa
 
   await page.goto("/payroll");
   await connectWallet(page);
-  await expect(page.getByText("9999000000")).toBeVisible({timeout: 30_000});
+  // Amounts now render human-readable (formatToken): 9999000000 → "9,999 USDC".
+  await expect(page.getByText("9,999 USDC")).toBeVisible({timeout: 30_000});
 });
 
 test("removeRecipient via the proposals admin builder (count drops)", async ({page}) => {

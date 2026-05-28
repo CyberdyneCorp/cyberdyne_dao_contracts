@@ -1,10 +1,12 @@
 <script lang="ts">
   import Banner from "$lib/components/Banner.svelte";
   import WalletBar from "$lib/components/WalletBar.svelte";
+  import Toasts from "$lib/components/Toasts.svelte";
 </script>
 
 <Banner />
 <WalletBar />
+<Toasts />
 
 <main>
   <slot />
