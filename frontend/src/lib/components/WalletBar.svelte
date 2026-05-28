@@ -49,7 +49,10 @@
           <span class="dot ok"></span>
           <strong>{short($wallet.address)}</strong>
           <span class="muted">·</span>
-          <em>{chains.find((c) => c.id === $wallet.chainId)?.name ?? `chain-${$wallet.chainId}`}</em>
+          <em title="MetaMask-reported chain id">
+            {chains.find((c) => c.id === $wallet.chainId)?.name ?? `chain-${$wallet.chainId}`}
+            <span class="chain-id">· id {$wallet.chainId}</span>
+          </em>
           <span class="muted">·</span>
           <span class="kind">{$wallet.kind}</span>
         </span>
@@ -156,6 +159,11 @@
   .conn-pill .kind {
     color: var(--color-text-muted);
     font-size: 0.78rem;
+  }
+  .chain-id {
+    color: var(--color-text-muted);
+    font-size: 0.78rem;
+    font-style: normal;
   }
   .dot {
     width: 0.5rem;

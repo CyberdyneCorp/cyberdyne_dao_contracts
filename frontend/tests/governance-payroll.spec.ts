@@ -64,6 +64,26 @@ test("removeRecipient via the proposals admin builder (count drops)", async ({pa
   await expect(page.getByText(/Active recipients \(3\)/)).toBeVisible({timeout: 30_000});
 });
 
+test("setRecipientDescription via vote → execute (verified on the payroll table)", async ({page}) => {
+  const NEW_LABEL = "Updated: senior staff engineer";
+  // SEEDED_PAYEE is the first seeded recipient (anvil acct #1). It starts with
+  // a description set by scripts/seed-local.mjs; the test updates it.
+  const id = await buildAdminAction(
+    page,
+    "payroll-setRecipientDescription",
+    SEEDED_PAYEE,
+    NEW_LABEL
+  );
+  await voteExecute(page, id);
+
+  // The recipients table renders one Description cell per row. Scope to the
+  // row containing the short address of SEEDED_PAYEE and verify the new label
+  // is visible — covers both the on-chain write AND the UI render path.
+  await page.goto("/payroll");
+  await connectWallet(page);
+  await expect(page.getByText(NEW_LABEL)).toBeVisible({timeout: 30_000});
+});
+
 test("setPayDayOfMonth via the proposals admin builder", async ({page}) => {
   const id = await buildAdminAction(page, "payroll-setPayDayOfMonth", "20");
   await voteExecute(page, id);

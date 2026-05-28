@@ -43,6 +43,18 @@
   <Skeleton rows={6} />
 {:else}
   {@const d = $data}
+  {@const allZero =
+    d.ethBalance.isZero() && d.tokens.every((t) => t.balance.isZero())}
+  {#if allZero}
+    <p class="net-hint">
+      ⚠ Every treasury balance reads zero. Most likely your wallet is connected
+      to <strong>real Ethereum Mainnet</strong>, not the local anvil fork —
+      the DAO contract <code>{d.dao.dao}</code> only exists on the fork. In
+      MetaMask, switch the active network to a custom one with RPC
+      <code>http://127.0.0.1:8545</code> and chain id <code>31337</code>,
+      then reload.
+    </p>
+  {/if}
   <section class="card-section">
     <h2>Treasury</h2>
     <div class="cards">
@@ -133,5 +145,20 @@
     font-weight: 600;
     color: #555;
     font-size: 0.85rem;
+  }
+  .net-hint {
+    background: var(--color-warn-bg);
+    border: 1px solid #f0d9b9;
+    border-radius: var(--radius-md);
+    padding: 0.75rem 1rem;
+    color: var(--color-warn);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    margin: 0.5rem 0 1rem;
+  }
+  .net-hint code {
+    background: rgba(0, 0, 0, 0.05);
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
   }
 </style>
