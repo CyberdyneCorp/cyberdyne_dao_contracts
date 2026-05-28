@@ -70,7 +70,8 @@ test("setPayDayOfMonth via the proposals admin builder", async ({page}) => {
 
   await page.goto("/payroll");
   await connectWallet(page);
-  await expect(page.getByText(/Pay day of month:\s*20/)).toBeVisible({timeout: 30_000});
+  const payDayCard = page.locator(".card").filter({hasText: "Pay day of month"});
+  await expect(payDayCard.locator(".card-value")).toHaveText("20", {timeout: 30_000});
 });
 
 test("forcePayPeriod (preview) via vote → execute", async ({page}) => {
@@ -92,13 +93,14 @@ test("forcePayPeriod (preview) via vote → execute", async ({page}) => {
 test("executePayroll crank pays the period (last-paid updates)", async ({page}) => {
   await page.goto("/payroll");
   await connectWallet(page);
-  await expect(page.getByText(/Last paid period:/)).toBeVisible();
+  await expect(page.getByText("Last paid period")).toBeVisible();
   await page.getByRole("button", {name: "executePayroll()"}).click();
   await expect(page.getByText(/Confirmed in block/)).toBeVisible({timeout: 30_000});
 
   await page.goto("/payroll");
   await connectWallet(page);
-  await expect(page.getByText(/Last paid period:\s*\d{4}-\d{2}/)).toBeVisible({timeout: 30_000});
+  const lastPaidCard = page.locator(".card").filter({hasText: "Last paid period"});
+  await expect(lastPaidCard.locator(".card-value")).toHaveText(/\d{4}-\d{2}/, {timeout: 30_000});
 });
 
 test("executePayrollPage crank (paginated) confirms a tx", async ({page}) => {

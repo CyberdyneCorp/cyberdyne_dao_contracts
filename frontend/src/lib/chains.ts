@@ -32,6 +32,12 @@ function addressesKey(chainId: number): number {
   return chainId === LOCAL_FORK ? 1 : chainId;
 }
 
+// The chain id to use for public explorer lookups (Sourcify): the 31337 fork
+// mirrors mainnet state, so its contracts are verified under mainnet (1).
+export function explorerChainId(chainId: number): number {
+  return addressesKey(chainId);
+}
+
 function parseDaoEnv(raw: string | undefined): DaoAddresses | undefined {
   if (!raw) return undefined;
   const parts = raw.split(",").map((p) => p.trim());

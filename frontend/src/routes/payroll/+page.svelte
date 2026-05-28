@@ -8,6 +8,7 @@
   import {formatToken, resolveToken} from "$lib/format";
   import Skeleton from "$lib/components/Skeleton.svelte";
   import ProposeAction from "$lib/components/ProposeAction.svelte";
+  import AddressTag from "$lib/components/AddressTag.svelte";
 
   const vm = createPayrollVM();
   const {
@@ -54,11 +55,20 @@
 {:else}
   {@const d = $data}
   <h2>Schedule</h2>
-  <p>
-    Pay day of month: <strong>{d.payDay}</strong> ·
-    Last paid period: <strong>{periodLabel(d.lastPeriod)}</strong> ·
-    Page size cap: <strong>{d.perPage.toString()}</strong>
-  </p>
+  <div class="cards">
+    <div class="card">
+      <span class="card-label">Pay day of month</span>
+      <span class="card-value">{d.payDay}</span>
+    </div>
+    <div class="card">
+      <span class="card-label">Last paid period</span>
+      <span class="card-value">{periodLabel(d.lastPeriod)}</span>
+    </div>
+    <div class="card">
+      <span class="card-label">Page size cap</span>
+      <span class="card-value">{d.perPage.toString()}</span>
+    </div>
+  </div>
   {#if !d.cursor.isZero()}
     <p class="muted">
       Pagination in progress for period {periodLabel(d.cursorPeriod)} — resume at recipient index
@@ -77,7 +87,7 @@
       <tbody>
         {#each d.recipients as r}
           <tr>
-            <td><code>{r.payee}</code></td>
+            <td><AddressTag address={r.payee} /></td>
             <td>{resolveToken(d.cfg, r.token).symbol}</td>
             <td>{formatToken(r.amount, resolveToken(d.cfg, r.token))}</td>
           </tr>
@@ -155,5 +165,32 @@
   }
   .form input {
     min-width: 240px;
+  }
+  .cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin: 0.5rem 0 1rem;
+  }
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 150px;
+    padding: 0.75rem 1rem;
+    border: 1px solid #e2e6ef;
+    border-radius: 8px;
+    background: #fbfcfe;
+  }
+  .card-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #5a6b8a;
+    letter-spacing: 0.03em;
+  }
+  .card-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
   }
 </style>

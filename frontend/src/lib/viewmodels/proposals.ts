@@ -4,12 +4,19 @@
 import {ethers} from "ethers";
 import {writable, get} from "svelte/store";
 import {wallet} from "$lib/wallet";
-import {chainConfig} from "$lib/chains";
+import {chainConfig, explorerChainId} from "$lib/chains";
 import * as actions from "$lib/actions";
 import type {ProposalAction} from "$lib/actions";
 import type {ChainConfig} from "$lib/types";
 import {toasts} from "$lib/stores/toasts";
 import {errorMessage} from "$lib/format";
+import {
+  bundledAbiFor,
+  sourcifyAbi,
+  parsePastedAbi,
+  encodeCall,
+  type LoadedAbi,
+} from "$lib/abiExplorer";
 import {
   proposeActions,
   castVote,
@@ -53,11 +60,22 @@ export function createProposalsVM() {
 
   const submitMsg = writable<string | null>(null);
   const submitting = writable(false);
+  const buildSim = writable<SimResult | null>(null);
 
   const proposals = writable<ProposalView[]>([]);
   const loading = writable(false);
   const rowBusy = writable<Record<string, boolean>>({});
   const simResults = writable<Record<string, SimResult>>({});
+
+  // --- ABI explorer (paste address → ABI → pick function → encode call) ------
+  const exAddress = writable("");
+  const exAbi = writable<LoadedAbi | null>(null);
+  const exLoading = writable(false);
+  const exError = writable<string | null>(null);
+  const exPaste = writable(""); // manual ABI JSON / signatures
+  const exFn = writable<string>(""); // selected function key
+  const exArgs = writable<string[]>([]); // one raw value per input
+  const exValue = writable(""); // wei, for payable fns
 
   function cfgOrThrow(): ChainConfig {
     const w = get(wallet);
@@ -74,6 +92,7 @@ export function createProposalsVM() {
 
   function build(): void {
     built.set(null);
+    buildSim.set(null);
     try {
       const cfg = cfgOrThrow();
       const a = get(argA);
@@ -194,6 +213,23 @@ export function createProposalsVM() {
     }
   }
 
+  // Dry-run the just-built action via dao.callStatic.execute BEFORE creating a
+  // proposal, so the user sees whether it would succeed (and why not).
+  async function simulateBuilt(): Promise<void> {
+    const action = get(built);
+    if (!action) return;
+    buildSim.set("loading");
+    try {
+      const w = get(wallet);
+      if (w.status !== "connected") throw new Error("Connect a wallet");
+      const cfg = chainConfig(w.chainId);
+      if (!cfg?.dao) throw new Error("No DAO configured");
+      buildSim.set(await simulateProposalExecution(cfg, w.provider, [action]));
+    } catch (err) {
+      buildSim.set({ok: false, reason: errorMessage(err)});
+    }
+  }
+
   async function simulateRow(p: ProposalView): Promise<void> {
     simResults.update((m) => ({...m, [p.id]: "loading"}));
     try {
@@ -208,12 +244,117 @@ export function createProposalsVM() {
     }
   }
 
+  // When a new ABI is loaded, preselect the first function and size the args.
+  function adoptAbi(loaded: LoadedAbi): void {
+    exAbi.set(loaded);
+    exError.set(null);
+    const first = loaded.functions[0];
+    selectExFn(first ? first.key : "");
+  }
+
+  function selectExFn(key: string): void {
+    exFn.set(key);
+    exValue.set("");
+    const loaded = get(exAbi);
+    const fn = loaded?.functions.find((f) => f.key === key);
+    exArgs.set(fn ? fn.inputs.map(() => "") : []);
+  }
+
+  function setExArg(i: number, value: string): void {
+    exArgs.update((a) => {
+      const next = a.slice();
+      next[i] = value;
+      return next;
+    });
+  }
+
+  // Resolve the ABI for the pasted address: bundled (our plugins/tokens) first,
+  // then Sourcify on the mainnet chain id (the fork mirrors mainnet).
+  async function loadAbi(): Promise<void> {
+    const addr = get(exAddress).trim();
+    exAbi.set(null);
+    exError.set(null);
+    if (!ethers.utils.isAddress(addr)) {
+      exError.set("Enter a valid contract address (0x…40 hex).");
+      return;
+    }
+    const w = get(wallet);
+    if (w.status !== "connected") {
+      exError.set("Connect a wallet first.");
+      return;
+    }
+    const cfg = chainConfig(w.chainId);
+    const bundled = bundledAbiFor(cfg, addr);
+    if (bundled) {
+      adoptAbi(bundled);
+      return;
+    }
+    exLoading.set(true);
+    try {
+      adoptAbi(await sourcifyAbi(explorerChainId(w.chainId), addr));
+    } catch (err) {
+      exError.set(errorMessage(err));
+    } finally {
+      exLoading.set(false);
+    }
+  }
+
+  // Parse the manually pasted ABI / signatures.
+  function applyPastedAbi(): void {
+    exError.set(null);
+    try {
+      adoptAbi(parsePastedAbi(get(exPaste)));
+    } catch (err) {
+      exError.set(errorMessage(err));
+    }
+  }
+
+  // Encode the selected function + args into a ProposalAction, surfacing it in
+  // the shared decode/simulate/submit panel.
+  function buildFromExplorer(): void {
+    built.set(null);
+    buildSim.set(null);
+    try {
+      const loaded = get(exAbi);
+      if (!loaded) throw new Error("Load an ABI first");
+      const addr = ethers.utils.getAddress(get(exAddress).trim());
+      const key = get(exFn);
+      const fn = loaded.functions.find((f) => f.key === key);
+      if (!fn) throw new Error("Pick a function");
+      const {data, value} = encodeCall(loaded, key, get(exArgs), get(exValue));
+      built.set({
+        to: addr,
+        value,
+        data,
+        summary: `Call ${fn.name}(${fn.inputs.map((p) => p.type).join(",")}) on ${addr}${
+          value !== "0" ? ` (value ${value} wei)` : ""
+        }`,
+      });
+    } catch (err) {
+      toasts.error(`Encode failed: ${errorMessage(err)}`);
+    }
+  }
+
   return {
     kind,
     argA,
     argB,
     argC,
     built,
+    buildSim,
+    exAddress,
+    exAbi,
+    exLoading,
+    exError,
+    exPaste,
+    exFn,
+    exArgs,
+    exValue,
+    loadAbi,
+    applyPastedAbi,
+    selectExFn,
+    setExArg,
+    buildFromExplorer,
     submitMsg,
     submitting,
     proposals,
@@ -225,6 +366,7 @@ export function createProposalsVM() {
     refresh,
     doVote,
     doExecute,
+    simulateBuilt,
     simulateRow,
   };
 }

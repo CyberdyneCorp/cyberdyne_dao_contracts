@@ -96,6 +96,35 @@ test("Simulate button reports a valid proposal as ok", async ({page}) => {
   await expect(row.getByText(/…|✓ ok|✗/)).toBeVisible({timeout: 30_000});
 });
 
+test("ABI explorer: load bundled ABI → pick function → build encoded call", async ({page}) => {
+  await page.goto("/proposals");
+  await connectWallet(page);
+
+  // WETH is a tracked external → the explorer resolves a bundled ERC20 ABI
+  // (no network), so this stays deterministic.
+  await page.getByPlaceholder("0x… contract").fill(WETH);
+  await page.getByRole("button", {name: /^Load ABI$/}).click();
+
+  // ABI loaded: source chip + function count.
+  await expect(page.getByText(/ABI source:/)).toBeVisible({timeout: 30_000});
+  await expect(page.locator(".abi").getByText("bundled", {exact: true})).toBeVisible();
+
+  // Pick approve(address,uint256) and fill its two params.
+  await page.locator(".abi select").selectOption("approve(address,uint256)");
+  const args = page.locator(".args input");
+  await args.nth(0).fill(DUMMY);
+  await args.nth(1).fill("1000");
+  await page.getByRole("button", {name: /^Build call$/}).click();
+
+  // The shared decode panel confirms the encoded action: WETH target + signature.
+  await expect(page.locator(".decode").getByText("approve(address,uint256)")).toBeVisible();
+  await expect(page.locator(".decode").getByText("WETH", {exact: true})).toBeVisible();
+
+  // Pre-submit Simulate resolves to a verdict.
+  await page.locator(".build-actions").getByRole("button", {name: /^Simulate$/}).click();
+  await expect(page.getByText(/would execute successfully|✗/)).toBeVisible({timeout: 30_000});
+});
+
 test("swap form builds a ProposalAction (calldata smoke)", async ({page}) => {
   await page.goto("/swaps");
   await connectWallet(page);

@@ -24,17 +24,18 @@ test("V3 mint via vote → execute (position count increments)", async ({page}) 
   await page.goto("/positions");
   await connectWallet(page);
 
-  const form = page
-    .locator("div.form")
-    .filter({has: page.getByPlaceholder("0x… (lower addr)")});
-  await form.getByPlaceholder("0x… (lower addr)").fill(USDC);
-  await form.getByPlaceholder("0x… (higher addr)").fill(WETH);
-  await form.getByPlaceholder("3000").fill("3000");
-  await form.getByPlaceholder("1000").fill("1000");
-  await form.getByLabel("dec0").fill("6");
-  await form.getByPlaceholder("0.5").fill("0.3");
-  await form.getByLabel("dec1").fill("18");
-  // full-range checkbox is checked by default → no tick inputs needed.
+  const form = page.locator('[data-form="v3-mint"]');
+  // TokenSelect dropdowns; pick by address value.
+  await form.locator("label").filter({hasText: "token0"}).locator("select").selectOption(USDC);
+  await form.locator("label").filter({hasText: "token1"}).locator("select").selectOption(WETH);
+  await form.locator("label").filter({hasText: "fee tier"}).locator("select").selectOption("3000");
+  await form.locator("label").filter({hasText: /^amount0/}).locator("input").fill("1000");
+  await form.locator("label").filter({hasText: /^amount1/}).locator("input").fill("0.3");
+  // Full range mints consume amounts proportional to the pool's current price,
+  // which can diverge from desired by far more than the default 0.5% slippage —
+  // widen the tolerance so the NPM doesn't revert on amount0Min/amount1Min.
+  await form.locator("label").filter({hasText: "slippage %"}).locator("input").fill("100");
+  // Decimals auto-resolve via cfg (USDC=6, WETH=18). full-range default ON.
   await form.getByRole("button", {name: "Build"}).click();
   const id = await submitProposal(page);
   await voteExecute(page, id);
@@ -50,23 +51,25 @@ test("V4 LP mint via vote → execute (real v4 PositionManager, count increments
   await page.goto("/positions");
   await connectWallet(page);
 
-  // Pool key: the live mainnet v4 USDC/WETH pool (fee 3000, tickSpacing 60, no
-  // hooks). fee/tickSpacing/hooks fields default to 3000/60/0x0 already.
-  const poolForm = page.locator("div.form").filter({has: page.getByPlaceholder("0x… (USDC)")});
-  await poolForm.getByPlaceholder("0x… (USDC)").fill(USDC);
-  await poolForm.getByPlaceholder("0x… (WETH)").fill(WETH);
+  // Pool key: live mainnet v4 USDC/WETH pool (fee 3000 → tickSpacing 60 auto).
+  const poolForm = page.locator('[data-form="v4-pool"]');
+  await poolForm.locator("label").filter({hasText: "token A"}).locator("select").selectOption(USDC);
+  await poolForm.locator("label").filter({hasText: "token B"}).locator("select").selectOption(WETH);
+  await poolForm.locator("label").filter({hasText: "fee tier"}).locator("select").selectOption("3000");
 
-  // Narrow range straddling the live tick (~199951), small liquidity; the
-  // PositionManager pulls only what L needs — well under the generous maxes.
-  // The frontend (v4Encode.ts) builds the v4 action stream from these fields.
-  const mintForm = page
-    .locator("div.form")
-    .filter({has: page.getByPlaceholder("10000000000000", {exact: true})});
-  await mintForm.getByLabel("tickLower").fill("199800");
-  await mintForm.getByLabel("tickUpper").fill("200100");
-  await mintForm.getByPlaceholder("10000000000000", {exact: true}).fill("1000000000000"); // L = 1e12
-  await mintForm.getByPlaceholder("2000", {exact: true}).fill("10000"); // amount0Max (USDC)
-  await mintForm.getByPlaceholder("1", {exact: true}).fill("5"); // amount1Max (WETH)
+  // Narrow range straddling the live tick (~199951). Disable auto-derive so we
+  // paste a known L + maxes (deterministic; the auto-derive path would also
+  // work but needs Quote pool + math the test would replicate).
+  const mintForm = page.locator('[data-form="v4-mint"]');
+  await mintForm.locator("label").filter({hasText: "tickLower"}).locator("input").fill("199800");
+  await mintForm.locator("label").filter({hasText: "tickUpper"}).locator("input").fill("200100");
+  await mintForm.locator("label.chk").locator('input[type="checkbox"]').uncheck();
+
+  // The raw L + maxes section (a sibling <details>) is now visible.
+  const rawSection = page.locator("details", {hasText: "Raw L + maxes"});
+  await rawSection.locator("label").filter({hasText: /^liquidity \(L\)/}).locator("input").fill("1000000000000");
+  await rawSection.locator("label").filter({hasText: /^amount0Max/}).locator("input").fill("10000");
+  await rawSection.locator("label").filter({hasText: /^amount1Max/}).locator("input").fill("5");
   await mintForm.getByRole("button", {name: "Build"}).click();
 
   const id = await submitProposal(page);
