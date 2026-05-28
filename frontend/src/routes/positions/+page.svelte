@@ -59,13 +59,21 @@
   }
 </script>
 
-<h1>Uniswap V3 + V4 positions</h1>
+<div class="hero">
+  <h1>Uniswap V3 + V4 positions</h1>
+  <p class="hero-sub">
+    Every LP NFT held by the DAO across Uniswap V3 (NonfungiblePositionManager)
+    and V4 (PositionManager), plus vote-gated forms to mint / increase /
+    decrease / collect / burn each position lifecycle.
+  </p>
+</div>
 
 {#if $wallet.status !== "connected"}
   <p class="muted">Connect a wallet to manage positions.</p>
 {:else if !cfg?.dao}
   <p class="empty">No DAO configured for chain {$wallet.chainId}.</p>
 {:else}
+  <section class="card-section">
   <h2>DAO-owned positions</h2>
   <p class="muted">
     Read-only view of every LP NFT currently held by the DAO across both Uniswap V3 (NPM) and V4
@@ -188,11 +196,13 @@
     <p class="muted">No UniswapV3 plugin configured (7th address in <code>PUBLIC_DAO_*</code>).</p>
   {/if}
 
-  <p class="muted">
+  <p class="muted note">
     Every operation is vote-gated; the position NFT is owned by the DAO and collected tokens return
     to the treasury. Tokens must be ERC20 (use WETH for ETH), ordered token0 &lt; token1.
   </p>
+  </section>
 
+  <section class="card-section">
   <h2>Propose: mint position (V3)</h2>
   <div data-form="v3-mint" class="form">
     <label>token0 <TokenSelect bind:value={$mToken0} {cfg} placeholder="0x… (lower addr)" /></label>
@@ -254,6 +264,9 @@
   {/if}
   <ProposeAction action={$mintAction} />
 
+  </section>
+
+  <section class="card-section">
   <h2>Manage an existing V3 position</h2>
   <p class="muted">Click <em>Manage ↓</em> on a row above to prefill these fields.</p>
   <div class="form">
@@ -289,6 +302,9 @@
   </div>
   <ProposeAction action={$burnAction} />
 
+  </section>
+
+  <section class="card-section">
   <h2>Look up a V3 position</h2>
   <div class="form">
     <label>tokenId <input bind:value={$lookupId} placeholder="123" style="min-width:120px" /></label>
@@ -306,6 +322,9 @@
     </table>
   {/if}
 
+  </section>
+
+  <section class="card-section">
   <h2>Look up a V4 position</h2>
   <div class="form">
     <label>tokenId <input bind:value={$v4LookupId} placeholder="293418" style="min-width:120px" /></label>
@@ -326,6 +345,9 @@
     </table>
   {/if}
 
+  </section>
+
+  <section class="card-section">
   <h2>Uniswap V4 LP</h2>
   <p class="muted">
     Vote-gated full lifecycle on the v4-periphery PositionManager. The DAO is the owner
@@ -437,6 +459,7 @@
   <ProposeAction action={$v4DecAction} />
   <ProposeAction action={$v4CollectAction} />
   <ProposeAction action={$v4BurnAction} />
+  </section>
 {/if}
 
 <style>

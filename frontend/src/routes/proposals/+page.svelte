@@ -56,7 +56,14 @@
   }
 </script>
 
-<h1>Proposals</h1>
+<div class="hero">
+  <h1>Proposals</h1>
+  <p class="hero-sub">
+    Build, simulate, and vote on every action the DAO can take. Pick a typed
+    preset, paste a contract address to discover its ABI, or hand-code a raw
+    call — every path lands in the same vote → execute pipeline.
+  </p>
+</div>
 
 {#if $wallet.status !== "connected"}
   <p class="muted">Connect a wallet to build proposals and vote.</p>
@@ -70,6 +77,7 @@
     </p>
   {/if}
 
+  <section class="card-section">
   <h2>Build an action</h2>
   <div class="form">
     <label>
@@ -105,7 +113,9 @@
     {/each}
     <button on:click={vm.build}>Build</button>
   </div>
+  </section>
 
+  <section class="card-section">
   <h2>Call a contract function</h2>
   <p class="muted">
     Paste a contract address to load its ABI (bundled for this DAO's plugins/tokens, else fetched
@@ -178,6 +188,7 @@
       {/if}
     </div>
   {/if}
+  </section>
 
   {#if $built}
     <div class="built">
@@ -248,6 +259,7 @@
     </div>
   {/if}
 
+  <section class="card-section">
   <h2>Open proposals</h2>
   {#if !hasGov}
     <p class="empty">Configure a TokenVoting address to list + vote.</p>
@@ -329,6 +341,7 @@
       </table>
     {/if}
   {/if}
+  </section>
 {/if}
 
 <style>
