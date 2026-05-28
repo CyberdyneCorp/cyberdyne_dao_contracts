@@ -46,6 +46,40 @@ test("V3 mint via vote → execute (position count increments)", async ({page}) 
   await expect(page.getByText(/Uniswap V3 \(3\)/)).toBeVisible({timeout: 45_000});
 });
 
+test("V4 LP mint via vote → execute (real v4 PositionManager, count increments)", async ({page}) => {
+  await page.goto("/positions");
+  await connectWallet(page);
+
+  // Pool key: the live mainnet v4 USDC/WETH pool (fee 3000, tickSpacing 60, no
+  // hooks). fee/tickSpacing/hooks fields default to 3000/60/0x0 already.
+  const poolForm = page.locator("div.form").filter({has: page.getByPlaceholder("0x… (USDC)")});
+  await poolForm.getByPlaceholder("0x… (USDC)").fill(USDC);
+  await poolForm.getByPlaceholder("0x… (WETH)").fill(WETH);
+
+  // Narrow range straddling the live tick (~199951), small liquidity; the
+  // PositionManager pulls only what L needs — well under the generous maxes.
+  // The frontend (v4Encode.ts) builds the v4 action stream from these fields.
+  const mintForm = page
+    .locator("div.form")
+    .filter({has: page.getByPlaceholder("10000000000000", {exact: true})});
+  await mintForm.getByLabel("tickLower").fill("199800");
+  await mintForm.getByLabel("tickUpper").fill("200100");
+  await mintForm.getByPlaceholder("10000000000000", {exact: true}).fill("1000000000000"); // L = 1e12
+  await mintForm.getByPlaceholder("2000", {exact: true}).fill("10000"); // amount0Max (USDC)
+  await mintForm.getByPlaceholder("1", {exact: true}).fill("5"); // amount1Max (WETH)
+  await mintForm.getByRole("button", {name: "Build"}).click();
+
+  const id = await submitProposal(page);
+  await voteExecute(page, id);
+
+  // The seed makes V4 swaps (no LP positions), so the DAO's V4 position count
+  // goes 0 → 1.
+  await page.goto("/positions");
+  await connectWallet(page);
+  await page.getByRole("button", {name: /Load positions|Refresh/}).first().click();
+  await expect(page.getByText(/Uniswap V4 \(1\)/)).toBeVisible({timeout: 45_000});
+});
+
 test("V3 collect Simulate reports live fees on a seeded position", async ({page}) => {
   await page.goto("/positions");
   await connectWallet(page);

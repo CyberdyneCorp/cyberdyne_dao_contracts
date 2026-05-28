@@ -31,7 +31,8 @@ export type PoolKey = {
 const ABI = ethers.utils.defaultAbiCoder;
 
 function packActions(bytes: number[]): string {
-  return "0x" + Buffer.from(bytes).toString("hex");
+  // ethers.utils.hexlify works in the browser; Node's Buffer is not defined there.
+  return ethers.utils.hexlify(bytes);
 }
 
 function encodePoolKey(k: PoolKey): string {
