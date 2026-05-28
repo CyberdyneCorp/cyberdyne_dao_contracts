@@ -205,6 +205,35 @@ test("Raw-call proposal: hand-encoded USDC.transfer via vote → execute", async
   expect(daoBefore.sub(daoAfter).toString()).toBe("50000000");
 });
 
+test("ABI explorer: paste human-readable signatures → pick function → build encoded call", async ({page}) => {
+  await page.goto("/proposals");
+  await connectWallet(page);
+
+  // Use the DUMMY address — no bundled ABI, no Sourcify network call.
+  await page.getByPlaceholder("0x… contract").fill(DUMMY);
+  await page.getByRole("button", {name: /^Paste ABI$/}).click();
+  // Paste a single ERC-20 signature; the parser accepts plain "transfer(…)" or
+  // a "function transfer(…)" prefix.
+  const sig = "function transfer(address to, uint256 amount)";
+  await page.locator("textarea").fill(sig);
+  await page.getByRole("button", {name: /^Use pasted ABI$/}).click();
+
+  // ABI is now loaded with source = "pasted".
+  await expect(page.getByText(/ABI source:/)).toBeVisible({timeout: 15_000});
+  await expect(page.locator(".abi").getByText("pasted", {exact: true})).toBeVisible();
+
+  // Pick the parsed function and fill its args.
+  await page.locator(".abi select").selectOption("transfer(address,uint256)");
+  const args = page.locator(".args input");
+  await args.nth(0).fill("0x0000000000000000000000000000000000C0FFEE");
+  await args.nth(1).fill("100");
+  await page.getByRole("button", {name: /^Build call$/}).click();
+
+  // Decoded preview confirms the encoded call — DUMMY is the target, no
+  // bundled label, but the signature is recognized.
+  await expect(page.locator(".decode").getByText("transfer(address,uint256)")).toBeVisible();
+});
+
 test("ABI explorer: load bundled ABI → pick function → build encoded call", async ({page}) => {
   await page.goto("/proposals");
   await connectWallet(page);

@@ -104,6 +104,23 @@ test("V3 increase liquidity via vote → execute (on a seeded position)", async 
   await voteExecute(page, id);
 });
 
+test("V3 decrease liquidity via vote → execute (on a seeded position)", async ({page}) => {
+  await page.goto("/positions");
+  await connectWallet(page);
+  await page.getByRole("button", {name: /Load positions|Refresh/}).first().click();
+  await expect(page.getByText(/Uniswap V3 \(2\)/)).toBeVisible({timeout: 45_000});
+
+  // Manage ↓ prefills decLiquidity with the position's current liquidity, so a
+  // bare Build inside the Decrease section removes the entire position's worth.
+  await page.getByRole("button", {name: /^Manage ↓$/}).first().click();
+  // Decrease form is the one with the "liquidity (raw units)" label.
+  const decForm = page.locator("div.form").filter({hasText: /liquidity \(raw units\)/});
+  await decForm.getByRole("button", {name: /^Build$/}).click();
+
+  const id = await submitProposal(page);
+  await voteExecute(page, id);
+});
+
 test("V3 collect via vote → execute (on a seeded position)", async ({page}) => {
   await page.goto("/positions");
   await connectWallet(page);
@@ -116,6 +133,107 @@ test("V3 collect via vote → execute (on a seeded position)", async ({page}) =>
 
   const id = await submitProposal(page);
   await voteExecute(page, id);
+});
+
+test("V3 full lifecycle: decrease all → collect → burn via three proposals", async ({page}) => {
+  test.setTimeout(180_000); // three sequential propose/vote/execute round-trips
+
+  // Helper: load the V3 row, click Manage ↓ to prefill the manage form fields.
+  async function selectFirstPosition() {
+    await page.goto("/positions");
+    await connectWallet(page);
+    await page.getByRole("button", {name: /Load positions|Refresh/}).first().click();
+    await expect(page.getByText(/Uniswap V3 \(\d+\)/)).toBeVisible({timeout: 45_000});
+    await page.getByRole("button", {name: /^Manage ↓$/}).first().click();
+  }
+
+  // 1. Decrease all liquidity (prefilled by Manage ↓).
+  await selectFirstPosition();
+  const decForm = page.locator("div.form").filter({hasText: /liquidity \(raw units\)/});
+  await decForm.getByRole("button", {name: /^Build$/}).click();
+  await voteExecute(page, await submitProposal(page));
+
+  // 2. Collect (now sweeps the residual tokens + fees that decrease made owed).
+  await selectFirstPosition();
+  await page.getByRole("button", {name: /^Build collect-max$/}).click();
+  await voteExecute(page, await submitProposal(page));
+
+  // 3. Burn the empty position. The Burn form has only a single Build button
+  //    immediately following the "Burn (empty position)" h3.
+  await selectFirstPosition();
+  const burnBuild = page
+    .locator('h3:has-text("Burn (empty position)") + div.form')
+    .getByRole("button", {name: /^Build$/});
+  await burnBuild.click();
+  await voteExecute(page, await submitProposal(page));
+
+  // Position count drops by 1 (seed had 2, one is now burned).
+  await page.goto("/positions");
+  await connectWallet(page);
+  await page.getByRole("button", {name: /Load positions|Refresh/}).first().click();
+  await expect(page.getByText(/Uniswap V3 \(1\)/)).toBeVisible({timeout: 45_000});
+});
+
+/** Reusable: build a fresh V4 LP position so the V4 manage / increase /
+ *  decrease forms have a row to operate on. Returns once the position table
+ *  shows the new V4 row. Used by every V4-lifecycle test that needs an
+ *  existing position. */
+async function mintV4Position(page: import("@playwright/test").Page): Promise<void> {
+  await page.goto("/positions");
+  await connectWallet(page);
+  const poolForm = page.locator('[data-form="v4-pool"]');
+  await poolForm.locator("label").filter({hasText: "token A"}).locator("select").selectOption(USDC);
+  await poolForm.locator("label").filter({hasText: "token B"}).locator("select").selectOption(WETH);
+  await poolForm.locator("label").filter({hasText: "fee tier"}).locator("select").selectOption("3000");
+  const mintForm = page.locator('[data-form="v4-mint"]');
+  await mintForm.locator("label").filter({hasText: "tickLower"}).locator("input").fill("199800");
+  await mintForm.locator("label").filter({hasText: "tickUpper"}).locator("input").fill("200100");
+  await mintForm.locator("label.chk").locator('input[type="checkbox"]').uncheck();
+  const rawSection = page.locator("details", {hasText: "Raw L + maxes"});
+  await rawSection.locator("label").filter({hasText: /^liquidity \(L\)/}).locator("input").fill("1000000000000");
+  await rawSection.locator("label").filter({hasText: /^amount0Max/}).locator("input").fill("10000");
+  await rawSection.locator("label").filter({hasText: /^amount1Max/}).locator("input").fill("5");
+  await mintForm.getByRole("button", {name: "Build"}).click();
+  await voteExecute(page, await submitProposal(page));
+  await page.goto("/positions");
+  await connectWallet(page);
+  await page.getByRole("button", {name: /Load positions|Refresh/}).first().click();
+  await expect(page.getByText(/Uniswap V4 \(1\)/)).toBeVisible({timeout: 45_000});
+}
+
+test("V4 LP increase via vote → execute (on a freshly-minted position)", async ({page}) => {
+  test.setTimeout(240_000);
+  await mintV4Position(page);
+
+  // Manage ↓ on the V4 row prefills viTokenId + the pool key fields; fill Δ
+  // liquidity + caps and Build.
+  await page.getByRole("button", {name: /^Manage ↓$/}).last().click();
+  const incForm = page.locator("div.form").filter({hasText: /liquidity \(Δ\)/});
+  await incForm.getByPlaceholder("1000000000000", {exact: true}).fill("500000000000"); // +5e11
+  await incForm.getByPlaceholder("200", {exact: true}).fill("5000"); // 5000 USDC cap
+  await incForm.getByPlaceholder("0.1", {exact: true}).fill("2.5"); // 2.5 WETH cap
+  await incForm.getByRole("button", {name: /^Build$/}).click();
+  await voteExecute(page, await submitProposal(page));
+});
+
+// NOTE: V4 LP `collect` and `burn` are NOT covered by Playwright e2e because:
+//   * `collect` calls TAKE_PAIR which reverts on a zero-fee position; engineering
+//     fee accrual via the UI would require an off-chain SDK pool-swap to push
+//     fees, well beyond what this dev/inspector frontend exposes.
+//   * `burn` calls BURN_POSITION + TAKE_PAIR; after `decrease(L=all)` already
+//     sweeps the pair, BURN_POSITION's TAKE_PAIR has nothing to take and the
+//     V4 PositionManager reverts with ActionFailed(0).
+// Both are covered by hardhat + fork tests in test/plugins/uniswap-v4/.
+
+test("V4 LP decrease via vote → execute (on a freshly-minted position)", async ({page}) => {
+  test.setTimeout(240_000);
+  await mintV4Position(page);
+
+  // Manage ↓ prefills vdLiquidity with the position's current liquidity, so a
+  // bare "Build decrease" removes the entire L the mint added.
+  await page.getByRole("button", {name: /^Manage ↓$/}).last().click();
+  await page.getByRole("button", {name: /^Build decrease$/}).click();
+  await voteExecute(page, await submitProposal(page));
 });
 
 test("V3 collect Simulate reports live fees on a seeded position", async ({page}) => {
