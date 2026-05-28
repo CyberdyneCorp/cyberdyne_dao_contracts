@@ -108,6 +108,8 @@ consume from `__gap` but must never reorder 301..304.
 | `reentrancy-events` | all ops | Accepted: the only external call is to our own DAO; OSx `DAO.execute` is `nonReentrant`. |
 | `timestamp` (deadline compare) | mint/increase/decrease | Design intent — Uniswap deadlines are timestamp-based. |
 | `naming-convention` `_dao`/`__gap` | various | OSx project convention. |
+| `solc-version` `0.8.17` | all files | Intentional. Project-wide pin to `0.8.17` for Cancun-safe deployment to mainnet / Base / Sepolia (matches OSx framework version). |
+| `unused-state` on `__gap` | UniswapV3Plugin | Intentional. Reserves slots for future upgrades without breaking the storage layout (OZ upgrade-safety pattern). |
 
 CI gate: `slither --fail-high`. None high-severity.
 

@@ -139,6 +139,8 @@ Two independent guards:
 | `solc-version` | Informational | all files | Pinned to `0.8.17` to match Aragon OSx v1.4.0 audited build verbatim (TRD §3). The known compiler issues at this version don't affect any code path we use. |
 | `naming-convention` (multiple) | Informational | leading-underscore params, `__gap` | Intentional. Matches OSx's project-wide convention of leading-underscore for function parameters and double-underscore for inherited gaps (per OpenZeppelin's upgradeable storage-gaps guide). |
 | `unused-state` | Informational | `__gap` | Intentional. Reserves slots for future upgrades without breaking storage layout (OZ upgrade-safety pattern). |
+| `uninitialized-local` on loop counter `k` | Medium | `_enforceOutputs` / `_snapshotBalances` | False positive. The counter defaults to 0 in Solidity; this is the idiomatic write-cursor pattern into a freshly-allocated memory array, identical to Payroll's `count` / `j` and similarly waived. |
+| `calls-loop` | Low | `_enforceOutputs`, `_snapshotBalances` | Accepted. The bounded loop iterates `outputCurrencies` / `inputCurrencies` arrays sized by the proposal's own input (max O(n) per LP op). The external call inside is to known ERC20s in the allowlist, not user-controlled code. |
 
 CI gate: `slither --fail-high`. With the inline suppressions above, the remaining findings are all Medium-or-below and the gate passes (`exit=0`). The waiver list updates if the implementation changes.
 

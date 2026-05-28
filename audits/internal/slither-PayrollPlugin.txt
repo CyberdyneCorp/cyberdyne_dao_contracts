@@ -1,0 +1,77 @@
+'forge clean' running (wd: /Users/leonardoaraujo/work/cyberdyne_dao_contracts)
+'forge config --json' running
+'forge build --build-info src/plugins/payroll' running (wd: /Users/leonardoaraujo/work/cyberdyne_dao_contracts)
+INFO:Detectors:
+Detector: incorrect-equality
+PayrollPlugin._calcBountyAmount(uint256) (src/plugins/payroll/PayrollPlugin.sol#396-406) uses a dangerous strict equality:
+	- (_bountyAccumPeriod == currentPeriod) (src/plugins/payroll/PayrollPlugin.sol#402)
+PayrollPlugin._runPayroll(uint256,bool) (src/plugins/payroll/PayrollPlugin.sol#281-391) uses a dangerous strict equality:
+	- (_cursorPeriod == currentPeriod) (src/plugins/payroll/PayrollPlugin.sol#294)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#dangerous-strict-equalities
+INFO:Detectors:
+Detector: uninitialized-local
+PayrollPlugin._runPayroll(uint256,bool).count (src/plugins/payroll/PayrollPlugin.sol#300) is a local variable never initialized
+PayrollPlugin.allActiveRecipients().j (src/plugins/payroll/PayrollPlugin.sol#439) is a local variable never initialized
+PayrollPlugin.previewForcePayPeriodActions(uint256).count (src/plugins/payroll/PayrollPlugin.sol#228) is a local variable never initialized
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#uninitialized-local-variables
+INFO:Detectors:
+Detector: unused-return
+PayrollPlugin.previewForcePayPeriodActions(uint256) (src/plugins/payroll/PayrollPlugin.sol#216-250) ignores return value by (year,month,None) = BokkyPooBahsDateTimeLibrary.timestampToDate(block.timestamp) (src/plugins/payroll/PayrollPlugin.sol#219)
+PayrollPlugin._runPayroll(uint256,bool) (src/plugins/payroll/PayrollPlugin.sol#281-391) ignores return value by (None,failureMap) = IExecutor(address(dao())).execute(keccak256(bytes)(abi.encodePacked(PAYROLL:,currentPeriod,:,start)),actions,allowFailureMap) (src/plugins/payroll/PayrollPlugin.sol#380-384)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-return
+INFO:Detectors:
+Detector: missing-zero-check
+PayrollPlugin.setKeeperBounty(address,uint256,uint256).token (src/plugins/payroll/PayrollPlugin.sol#190) lacks a zero-check on :
+		- bountyToken = token (src/plugins/payroll/PayrollPlugin.sol#194)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#missing-zero-address-validation
+INFO:Detectors:
+Detector: reentrancy-events
+Reentrancy in PayrollPlugin._runPayroll(uint256,bool) (src/plugins/payroll/PayrollPlugin.sol#281-391):
+	External calls:
+	- (None,failureMap) = IExecutor(address(dao())).execute(keccak256(bytes)(abi.encodePacked(PAYROLL:,currentPeriod,:,start)),actions,allowFailureMap) (src/plugins/payroll/PayrollPlugin.sol#380-384)
+	Event emitted after the call(s):
+	- KeeperBountyPaid(msg.sender,bountyToken,bountyAmount,currentPeriod) (src/plugins/payroll/PayrollPlugin.sol#388)
+	- PayrollExecuted(currentPeriod,count,failureMap) (src/plugins/payroll/PayrollPlugin.sol#386)
+	- PayrollPeriodCompleted(currentPeriod) (src/plugins/payroll/PayrollPlugin.sol#390)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-4
+INFO:Detectors:
+Detector: timestamp
+PayrollPlugin.previewForcePayPeriodActions(uint256) (src/plugins/payroll/PayrollPlugin.sol#216-250) uses timestamp for comparisons
+	Dangerous comparisons:
+	- period >= currentPeriod (src/plugins/payroll/PayrollPlugin.sol#222)
+	- period <= lastPayoutPeriod (src/plugins/payroll/PayrollPlugin.sol#223)
+	- currentPeriod - period > MAX_FORCE_BACK_MONTHS (src/plugins/payroll/PayrollPlugin.sol#224)
+PayrollPlugin._runPayroll(uint256,bool) (src/plugins/payroll/PayrollPlugin.sol#281-391) uses timestamp for comparisons
+	Dangerous comparisons:
+	- currentPeriod <= lastPayoutPeriod (src/plugins/payroll/PayrollPlugin.sol#285)
+	- day < payDayOfMonth (src/plugins/payroll/PayrollPlugin.sol#288)
+	- _bountyAccumPeriod != currentPeriod (src/plugins/payroll/PayrollPlugin.sol#373)
+	- (_cursorPeriod == currentPeriod) (src/plugins/payroll/PayrollPlugin.sol#294)
+PayrollPlugin._calcBountyAmount(uint256) (src/plugins/payroll/PayrollPlugin.sol#396-406) uses timestamp for comparisons
+	Dangerous comparisons:
+	- (_bountyAccumPeriod == currentPeriod) (src/plugins/payroll/PayrollPlugin.sol#402)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#block-timestamp
+INFO:Detectors:
+Detector: cyclomatic-complexity
+PayrollPlugin._runPayroll(uint256,bool) (src/plugins/payroll/PayrollPlugin.sol#281-391) has a high cyclomatic complexity (18).
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#cyclomatic-complexity
+INFO:Detectors:
+Detector: naming-convention
+Function IPayrollPlugin.MAX_RECIPIENTS() (src/plugins/payroll/IPayrollPlugin.sol#173) is not in mixedCase
+Function IPayrollPlugin.MAX_RECIPIENTS_CEILING() (src/plugins/payroll/IPayrollPlugin.sol#177) is not in mixedCase
+Function IPayrollPlugin.MAX_FORCE_BACK_MONTHS() (src/plugins/payroll/IPayrollPlugin.sol#180) is not in mixedCase
+Function IPayrollPlugin.MAX_RECIPIENTS_PER_PAGE() (src/plugins/payroll/IPayrollPlugin.sol#184) is not in mixedCase
+Parameter PayrollPlugin.initialize(IDAO,uint8)._dao (src/plugins/payroll/PayrollPlugin.sol#86) is not in mixedCase
+Parameter PayrollPlugin.initialize(IDAO,uint8)._payDayOfMonth (src/plugins/payroll/PayrollPlugin.sol#86) is not in mixedCase
+Function PayrollPlugin.MAX_RECIPIENTS() (src/plugins/payroll/PayrollPlugin.sol#426-428) is not in mixedCase
+Variable PayrollPlugin.__gap (src/plugins/payroll/PayrollPlugin.sol#77) is not in mixedCase
+Parameter PayrollPluginSetup.prepareInstallation(address,bytes)._dao (src/plugins/payroll/PayrollPluginSetup.sol#26) is not in mixedCase
+Parameter PayrollPluginSetup.prepareInstallation(address,bytes)._data (src/plugins/payroll/PayrollPluginSetup.sol#27) is not in mixedCase
+Parameter PayrollPluginSetup.prepareUninstallation(address,IPluginSetup.SetupPayload)._dao (src/plugins/payroll/PayrollPluginSetup.sol#89) is not in mixedCase
+Parameter PayrollPluginSetup.prepareUninstallation(address,IPluginSetup.SetupPayload)._payload (src/plugins/payroll/PayrollPluginSetup.sol#90) is not in mixedCase
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#conformance-to-solidity-naming-conventions
+INFO:Detectors:
+Detector: unused-state
+PayrollPlugin.__gap (src/plugins/payroll/PayrollPlugin.sol#77) is never used in PayrollPlugin (src/plugins/payroll/PayrollPlugin.sol#20-466)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-state-variable
+INFO:Slither:src/plugins/payroll analyzed (39 contracts with 96 detectors), 26 result(s) found

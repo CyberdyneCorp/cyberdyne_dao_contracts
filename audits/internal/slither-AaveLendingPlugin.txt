@@ -1,0 +1,71 @@
+'forge clean' running (wd: /Users/leonardoaraujo/work/cyberdyne_dao_contracts)
+'forge config --json' running
+'forge build --build-info src/plugins/aave' running (wd: /Users/leonardoaraujo/work/cyberdyne_dao_contracts)
+INFO:Detectors:
+Detector: unused-return
+AaveLendingPlugin.supply(address,uint256) (src/plugins/aave/AaveLendingPlugin.sol#146-153) ignores return value by IExecutor(address(dao())).execute(_nextCallId(AAVE_SUPPLY:),actions,0) (src/plugins/aave/AaveLendingPlugin.sol#151)
+AaveLendingPlugin.withdraw(address,uint256) (src/plugins/aave/AaveLendingPlugin.sol#159-168) ignores return value by IExecutor(address(dao())).execute(_nextCallId(AAVE_WITHDRAW:),actions,0) (src/plugins/aave/AaveLendingPlugin.sol#165)
+AaveLendingPlugin.borrow(address,uint256,uint256) (src/plugins/aave/AaveLendingPlugin.sol#171-179) ignores return value by IExecutor(address(dao())).execute(_nextCallId(AAVE_BORROW:),actions,0) (src/plugins/aave/AaveLendingPlugin.sol#177)
+AaveLendingPlugin.repay(address,uint256,uint256) (src/plugins/aave/AaveLendingPlugin.sol#182-192) ignores return value by IExecutor(address(dao())).execute(_nextCallId(AAVE_REPAY:),actions,0) (src/plugins/aave/AaveLendingPlugin.sol#189)
+BorrowHealthCondition.currentHealthFactor(address) (src/plugins/aave/conditions/BorrowHealthCondition.sol#157-159) ignores return value by (None,None,None,None,None,healthFactor) = pool.getUserAccountData(account) (src/plugins/aave/conditions/BorrowHealthCondition.sol#158)
+BorrowHealthCondition.projectedHealthFactorAfterBorrow(address,address,uint256) (src/plugins/aave/conditions/BorrowHealthCondition.sol#166-191) ignores return value by (totalCollateralBase,totalDebtBase,None,liquidationThreshold,None,None) = pool.getUserAccountData(account) (src/plugins/aave/conditions/BorrowHealthCondition.sol#171-178)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-return
+INFO:Detectors:
+Detector: reentrancy-events
+Reentrancy in AaveLendingPlugin.borrow(address,uint256,uint256) (src/plugins/aave/AaveLendingPlugin.sol#171-179):
+	External calls:
+	- IExecutor(address(dao())).execute(_nextCallId(AAVE_BORROW:),actions,0) (src/plugins/aave/AaveLendingPlugin.sol#177)
+	Event emitted after the call(s):
+	- Borrowed(asset,amount,interestRateMode) (src/plugins/aave/AaveLendingPlugin.sol#178)
+Reentrancy in AaveLendingPlugin.repay(address,uint256,uint256) (src/plugins/aave/AaveLendingPlugin.sol#182-192):
+	External calls:
+	- IExecutor(address(dao())).execute(_nextCallId(AAVE_REPAY:),actions,0) (src/plugins/aave/AaveLendingPlugin.sol#189)
+	Event emitted after the call(s):
+	- Repaid(asset,amount,interestRateMode,paid) (src/plugins/aave/AaveLendingPlugin.sol#191)
+Reentrancy in AaveLendingPlugin.supply(address,uint256) (src/plugins/aave/AaveLendingPlugin.sol#146-153):
+	External calls:
+	- IExecutor(address(dao())).execute(_nextCallId(AAVE_SUPPLY:),actions,0) (src/plugins/aave/AaveLendingPlugin.sol#151)
+	Event emitted after the call(s):
+	- Supplied(asset,amount) (src/plugins/aave/AaveLendingPlugin.sol#152)
+Reentrancy in AaveLendingPlugin.withdraw(address,uint256) (src/plugins/aave/AaveLendingPlugin.sol#159-168):
+	External calls:
+	- IExecutor(address(dao())).execute(_nextCallId(AAVE_WITHDRAW:),actions,0) (src/plugins/aave/AaveLendingPlugin.sol#165)
+	Event emitted after the call(s):
+	- Withdrawn(asset,amount,received) (src/plugins/aave/AaveLendingPlugin.sol#167)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-4
+INFO:Detectors:
+Detector: solc-version
+Version constraint 0.8.17 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)
+	- VerbatimInvalidDeduplication
+	- FullInlinerNonExpressionSplitArgumentEvaluationOrder
+	- MissingSideEffectsOnSelectorAccess.
+It is used by:
+	- 0.8.17 (src/plugins/aave/AaveLendingPlugin.sol#2)
+	- 0.8.17 (src/plugins/aave/AaveLendingPluginSetup.sol#2)
+	- 0.8.17 (src/plugins/aave/IAaveLendingPlugin.sol#2)
+	- 0.8.17 (src/plugins/aave/adapters/AaveV3Adapter.sol#2)
+	- 0.8.17 (src/plugins/aave/adapters/AaveV4Adapter.sol#2)
+	- 0.8.17 (src/plugins/aave/adapters/IAaveAdapter.sol#2)
+	- 0.8.17 (src/plugins/aave/adapters/IAavePool.sol#2)
+	- 0.8.17 (src/plugins/aave/conditions/BorrowHealthCondition.sol#2)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#incorrect-versions-of-solidity
+INFO:Detectors:
+Detector: naming-convention
+Parameter AaveLendingPlugin.initialize(IDAO,IAaveAdapter,address[])._dao (src/plugins/aave/AaveLendingPlugin.sol#46) is not in mixedCase
+Parameter AaveLendingPlugin.initialize(IDAO,IAaveAdapter,address[])._adapter (src/plugins/aave/AaveLendingPlugin.sol#47) is not in mixedCase
+Parameter AaveLendingPlugin.initialize(IDAO,IAaveAdapter,address[])._initialAllowlist (src/plugins/aave/AaveLendingPlugin.sol#48) is not in mixedCase
+Variable AaveLendingPlugin.__gap (src/plugins/aave/AaveLendingPlugin.sol#38) is not in mixedCase
+Parameter AaveLendingPluginSetup.prepareInstallation(address,bytes)._dao (src/plugins/aave/AaveLendingPluginSetup.sol#27) is not in mixedCase
+Parameter AaveLendingPluginSetup.prepareInstallation(address,bytes)._data (src/plugins/aave/AaveLendingPluginSetup.sol#28) is not in mixedCase
+Parameter AaveLendingPluginSetup.prepareUninstallation(address,IPluginSetup.SetupPayload)._dao (src/plugins/aave/AaveLendingPluginSetup.sol#96) is not in mixedCase
+Parameter AaveLendingPluginSetup.prepareUninstallation(address,IPluginSetup.SetupPayload)._payload (src/plugins/aave/AaveLendingPluginSetup.sol#97) is not in mixedCase
+Variable AaveV3Adapter.POOL (src/plugins/aave/adapters/AaveV3Adapter.sol#18) is not in mixedCase
+Function IAavePoolView.ADDRESSES_PROVIDER() (src/plugins/aave/conditions/BorrowHealthCondition.sol#28) is not in mixedCase
+Parameter BorrowHealthCondition.isGranted(address,address,bytes32,bytes)._who (src/plugins/aave/conditions/BorrowHealthCondition.sol#134) is not in mixedCase
+Parameter BorrowHealthCondition.isGranted(address,address,bytes32,bytes)._data (src/plugins/aave/conditions/BorrowHealthCondition.sol#136) is not in mixedCase
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#conformance-to-solidity-naming-conventions
+INFO:Detectors:
+Detector: unused-state
+AaveLendingPlugin.__gap (src/plugins/aave/AaveLendingPlugin.sol#38) is never used in AaveLendingPlugin (src/plugins/aave/AaveLendingPlugin.sol#23-253)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-state-variable
+INFO:Slither:src/plugins/aave analyzed (49 contracts with 96 detectors), 24 result(s) found

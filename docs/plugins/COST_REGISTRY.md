@@ -135,6 +135,9 @@ but tight enough that an unintended extra zero in `registerEntry` /
 | `reentrancy-events` (event after external call) | processDue | Accepted. The only external call is to our own DAO; each entry's `lastPaidAt` is advanced BEFORE `execute`, so re-entry cannot re-pay an entry. |
 | `timestamp` (block.timestamp comparison) | processDue / isDue | Design intent. Recurring billing is timestamp-driven; miner jitter (±15s) is immaterial at day granularity. |
 | `naming-convention` on `_dao` / `__gap` | various | Matches the OSx project-wide convention (leading underscore params, double-underscore gaps). |
+| `uninitialized-local` on cursor `count` | `_processDue` | False positive. Standard Solidity zero-default for a write cursor; the variable is written before it's read. Same pattern as Payroll's documented `uninitialized-local` waiver. |
+| `solc-version` `0.8.17` | all files | Intentional. Project-wide pin to `0.8.17` for Cancun-safe deployment to mainnet / Base / Sepolia (matches OSx framework version). |
+| `unused-state` on `__gap` | CostRegistryPlugin | Intentional. Reserves slots for future upgrades without breaking the storage layout (OZ upgrade-safety pattern). |
 
 CI gate: `slither --fail-high`. None of the above are high-severity.
 

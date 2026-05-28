@@ -236,6 +236,19 @@ describe("UniswapV3Plugin", () => {
     it("setAllowedToken gated on MANAGE_ALLOWLIST", async () => {
       await expect(plugin.connect(stranger).setAllowedToken(t0.address, true)).to.be.reverted;
     });
+
+    it("setAllowedToken emits AllowedTokenSet + flips the allowedToken getter", async () => {
+      // Add then revoke; assert event payload + getter on each transition.
+      expect(await plugin.allowedToken(t0.address)).to.equal(false);
+      await expect(plugin.connect(voter).setAllowedToken(t0.address, true))
+        .to.emit(plugin, "AllowedTokenSet")
+        .withArgs(t0.address, true);
+      expect(await plugin.allowedToken(t0.address)).to.equal(true);
+      await expect(plugin.connect(voter).setAllowedToken(t0.address, false))
+        .to.emit(plugin, "AllowedTokenSet")
+        .withArgs(t0.address, false);
+      expect(await plugin.allowedToken(t0.address)).to.equal(false);
+    });
   });
 
   describe("setPositionManager", () => {

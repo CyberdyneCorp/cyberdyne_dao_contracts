@@ -1,0 +1,77 @@
+'forge clean' running (wd: /Users/leonardoaraujo/work/cyberdyne_dao_contracts)
+'forge config --json' running
+'forge build --build-info src/plugins/cost-registry' running (wd: /Users/leonardoaraujo/work/cyberdyne_dao_contracts)
+INFO:Detectors:
+Detector: uninitialized-local
+CostRegistryPlugin._processDue(uint256,uint256).count (src/plugins/cost-registry/CostRegistryPlugin.sol#214) is a local variable never initialized
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#uninitialized-local-variables
+INFO:Detectors:
+Detector: unused-return
+CostRegistryPlugin._processDue(uint256,uint256) (src/plugins/cost-registry/CostRegistryPlugin.sol#200-255) ignores return value by (None,failureMap) = IExecutor(address(dao())).execute(keccak256(bytes)(abi.encodePacked(COSTS:,offset,:,nowTs)),actions,allowFailureMap) (src/plugins/cost-registry/CostRegistryPlugin.sol#244-248)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-return
+INFO:Detectors:
+Detector: reentrancy-events
+Reentrancy in CostRegistryPlugin._processDue(uint256,uint256) (src/plugins/cost-registry/CostRegistryPlugin.sol#200-255):
+	External calls:
+	- (None,failureMap) = IExecutor(address(dao())).execute(keccak256(bytes)(abi.encodePacked(COSTS:,offset,:,nowTs)),actions,allowFailureMap) (src/plugins/cost-registry/CostRegistryPlugin.sol#244-248)
+	Event emitted after the call(s):
+	- CostPaid(paidIds[k_scope_0],e_scope_1.payee,uint256(e_scope_1.costUsdc),uint64(nowTs)) (src/plugins/cost-registry/CostRegistryPlugin.sol#252)
+	- CostsProcessed(offset,count,failureMap) (src/plugins/cost-registry/CostRegistryPlugin.sol#254)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-4
+INFO:Detectors:
+Detector: timestamp
+CostRegistryPlugin._processDue(uint256,uint256) (src/plugins/cost-registry/CostRegistryPlugin.sol#200-255) uses timestamp for comparisons
+	Dangerous comparisons:
+	- offset >= len (src/plugins/cost-registry/CostRegistryPlugin.sol#205)
+	- end > len (src/plugins/cost-registry/CostRegistryPlugin.sol#207)
+	- i < end (src/plugins/cost-registry/CostRegistryPlugin.sol#216)
+	- nowTs < uint256(e.lastPaidAt) + uint256(e.frequencyDays) * 86400 (src/plugins/cost-registry/CostRegistryPlugin.sol#219)
+CostRegistryPlugin.getEntry(uint256) (src/plugins/cost-registry/CostRegistryPlugin.sol#275-278) uses timestamp for comparisons
+	Dangerous comparisons:
+	- id >= _entries.length (src/plugins/cost-registry/CostRegistryPlugin.sol#276)
+CostRegistryPlugin.getEntries(uint256,uint256) (src/plugins/cost-registry/CostRegistryPlugin.sol#281-297) uses timestamp for comparisons
+	Dangerous comparisons:
+	- offset >= total (src/plugins/cost-registry/CostRegistryPlugin.sol#287)
+	- end > total (src/plugins/cost-registry/CostRegistryPlugin.sol#291)
+	- i < n (src/plugins/cost-registry/CostRegistryPlugin.sol#294)
+CostRegistryPlugin.isDue(uint256) (src/plugins/cost-registry/CostRegistryPlugin.sol#300-305) uses timestamp for comparisons
+	Dangerous comparisons:
+	- id >= _entries.length (src/plugins/cost-registry/CostRegistryPlugin.sol#301)
+	- block.timestamp >= uint256(e.lastPaidAt) + uint256(e.frequencyDays) * 86400 (src/plugins/cost-registry/CostRegistryPlugin.sol#304)
+CostRegistryPlugin.nextPaymentAt(uint256) (src/plugins/cost-registry/CostRegistryPlugin.sol#308-312) uses timestamp for comparisons
+	Dangerous comparisons:
+	- id >= _entries.length (src/plugins/cost-registry/CostRegistryPlugin.sol#309)
+CostRegistryPlugin._activeEntry(uint256) (src/plugins/cost-registry/CostRegistryPlugin.sol#330-334) uses timestamp for comparisons
+	Dangerous comparisons:
+	- id >= _entries.length (src/plugins/cost-registry/CostRegistryPlugin.sol#331)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#block-timestamp
+INFO:Detectors:
+Detector: solc-version
+Version constraint 0.8.17 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)
+	- VerbatimInvalidDeduplication
+	- FullInlinerNonExpressionSplitArgumentEvaluationOrder
+	- MissingSideEffectsOnSelectorAccess.
+It is used by:
+	- 0.8.17 (src/plugins/cost-registry/CostRegistryPlugin.sol#2)
+	- 0.8.17 (src/plugins/cost-registry/CostRegistryPluginSetup.sol#2)
+	- 0.8.17 (src/plugins/cost-registry/ICostRegistryPlugin.sol#2)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#incorrect-versions-of-solidity
+INFO:Detectors:
+Detector: naming-convention
+Parameter CostRegistryPlugin.initialize(IDAO,IERC20)._dao (src/plugins/cost-registry/CostRegistryPlugin.sol#69) is not in mixedCase
+Function CostRegistryPlugin.MAX_ENTRIES() (src/plugins/cost-registry/CostRegistryPlugin.sol#270-272) is not in mixedCase
+Variable CostRegistryPlugin.__gap (src/plugins/cost-registry/CostRegistryPlugin.sol#64) is not in mixedCase
+Parameter CostRegistryPluginSetup.prepareInstallation(address,bytes)._dao (src/plugins/cost-registry/CostRegistryPluginSetup.sol#29) is not in mixedCase
+Parameter CostRegistryPluginSetup.prepareInstallation(address,bytes)._data (src/plugins/cost-registry/CostRegistryPluginSetup.sol#30) is not in mixedCase
+Parameter CostRegistryPluginSetup.prepareUninstallation(address,IPluginSetup.SetupPayload)._dao (src/plugins/cost-registry/CostRegistryPluginSetup.sol#92) is not in mixedCase
+Parameter CostRegistryPluginSetup.prepareUninstallation(address,IPluginSetup.SetupPayload)._payload (src/plugins/cost-registry/CostRegistryPluginSetup.sol#93) is not in mixedCase
+Function ICostRegistryPlugin.MAX_ENTRIES() (src/plugins/cost-registry/ICostRegistryPlugin.sol#151) is not in mixedCase
+Function ICostRegistryPlugin.MAX_ENTRIES_CEILING() (src/plugins/cost-registry/ICostRegistryPlugin.sol#155) is not in mixedCase
+Function ICostRegistryPlugin.MAX_PER_PAGE() (src/plugins/cost-registry/ICostRegistryPlugin.sol#158) is not in mixedCase
+Function ICostRegistryPlugin.MAX_COST_USDC() (src/plugins/cost-registry/ICostRegistryPlugin.sol#164) is not in mixedCase
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#conformance-to-solidity-naming-conventions
+INFO:Detectors:
+Detector: unused-state
+CostRegistryPlugin.__gap (src/plugins/cost-registry/CostRegistryPlugin.sol#64) is never used in CostRegistryPlugin (src/plugins/cost-registry/CostRegistryPlugin.sol#22-335)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-state-variable
+INFO:Slither:src/plugins/cost-registry analyzed (38 contracts with 96 detectors), 22 result(s) found

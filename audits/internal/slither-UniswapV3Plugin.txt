@@ -1,0 +1,80 @@
+'forge clean' running (wd: /Users/leonardoaraujo/work/cyberdyne_dao_contracts)
+'forge config --json' running
+'forge build --build-info src/plugins/uniswap-v3' running (wd: /Users/leonardoaraujo/work/cyberdyne_dao_contracts)
+INFO:Detectors:
+Detector: unused-return
+UniswapV3Plugin.previewIncreaseLiquidityActions(uint256,uint256,uint256,uint256,uint256,uint256) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#115-152) ignores return value by (None,None,token0,token1,None,None,None,None,None,None,None,None) = INonfungiblePositionManager(npm).positions(tokenId) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#126)
+UniswapV3Plugin.mint(IUniswapV3Plugin.MintParams) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#232-244) ignores return value by (results,None) = IExecutor(address(dao())).execute(_nextCallId(UNI_V3_MINT:),actions,0) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#234-238)
+UniswapV3Plugin.increaseLiquidity(uint256,uint256,uint256,uint256,uint256,uint256) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#247-273) ignores return value by (results,None) = IExecutor(address(dao())).execute(_nextCallId(UNI_V3_INCREASE:),actions,0) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#263-267)
+UniswapV3Plugin.decreaseLiquidity(uint256,uint128,uint256,uint256,uint256) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#278-294) ignores return value by IExecutor(address(dao())).execute(_nextCallId(UNI_V3_DECREASE:),actions,0) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#292)
+UniswapV3Plugin.collect(uint256,uint128,uint128) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#297-310) ignores return value by (results,None) = IExecutor(address(dao())).execute(_nextCallId(UNI_V3_COLLECT:),actions,0) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#303-307)
+UniswapV3Plugin.burn(uint256) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#313-317) ignores return value by IExecutor(address(dao())).execute(_nextCallId(UNI_V3_BURN:),actions,0) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#315)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-return
+INFO:Detectors:
+Detector: reentrancy-events
+Reentrancy in UniswapV3Plugin.burn(uint256) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#313-317):
+	External calls:
+	- IExecutor(address(dao())).execute(_nextCallId(UNI_V3_BURN:),actions,0) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#315)
+	Event emitted after the call(s):
+	- PositionBurned(tokenId) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#316)
+Reentrancy in UniswapV3Plugin.collect(uint256,uint128,uint128) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#297-310):
+	External calls:
+	- (results,None) = IExecutor(address(dao())).execute(_nextCallId(UNI_V3_COLLECT:),actions,0) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#303-307)
+	Event emitted after the call(s):
+	- FeesCollected(tokenId,amount0,amount1) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#309)
+Reentrancy in UniswapV3Plugin.decreaseLiquidity(uint256,uint128,uint256,uint256,uint256) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#278-294):
+	External calls:
+	- IExecutor(address(dao())).execute(_nextCallId(UNI_V3_DECREASE:),actions,0) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#292)
+	Event emitted after the call(s):
+	- LiquidityDecreased(tokenId,liquidity) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#293)
+Reentrancy in UniswapV3Plugin.increaseLiquidity(uint256,uint256,uint256,uint256,uint256,uint256) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#247-273):
+	External calls:
+	- (results,None) = IExecutor(address(dao())).execute(_nextCallId(UNI_V3_INCREASE:),actions,0) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#263-267)
+	Event emitted after the call(s):
+	- LiquidityIncreased(tokenId,liquidity,amount0,amount1) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#272)
+Reentrancy in UniswapV3Plugin.mint(IUniswapV3Plugin.MintParams) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#232-244):
+	External calls:
+	- (results,None) = IExecutor(address(dao())).execute(_nextCallId(UNI_V3_MINT:),actions,0) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#234-238)
+	Event emitted after the call(s):
+	- PositionMinted(tokenId,p.token0,p.token1,p.fee,liquidity,amount0,amount1) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#243)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-4
+INFO:Detectors:
+Detector: timestamp
+UniswapV3Plugin.previewMintActions(IUniswapV3Plugin.MintParams) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#75-112) uses timestamp for comparisons
+	Dangerous comparisons:
+	- block.timestamp > p.deadline (src/plugins/uniswap-v3/UniswapV3Plugin.sol#78)
+UniswapV3Plugin.previewIncreaseLiquidityActions(uint256,uint256,uint256,uint256,uint256,uint256) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#115-152) uses timestamp for comparisons
+	Dangerous comparisons:
+	- block.timestamp > deadline (src/plugins/uniswap-v3/UniswapV3Plugin.sol#123)
+UniswapV3Plugin.previewDecreaseLiquidityActions(uint256,uint128,uint256,uint256,uint256) (src/plugins/uniswap-v3/UniswapV3Plugin.sol#155-181) uses timestamp for comparisons
+	Dangerous comparisons:
+	- block.timestamp > deadline (src/plugins/uniswap-v3/UniswapV3Plugin.sol#162)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#block-timestamp
+INFO:Detectors:
+Detector: solc-version
+Version constraint 0.8.17 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)
+	- VerbatimInvalidDeduplication
+	- FullInlinerNonExpressionSplitArgumentEvaluationOrder
+	- MissingSideEffectsOnSelectorAccess.
+It is used by:
+	- 0.8.17 (src/plugins/uniswap-v3/INonfungiblePositionManager.sol#2)
+	- 0.8.17 (src/plugins/uniswap-v3/IUniswapV3Plugin.sol#2)
+	- 0.8.17 (src/plugins/uniswap-v3/UniswapV3Plugin.sol#2)
+	- 0.8.17 (src/plugins/uniswap-v3/UniswapV3PluginSetup.sol#2)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#incorrect-versions-of-solidity
+INFO:Detectors:
+Detector: naming-convention
+Parameter UniswapV3Plugin.initialize(IDAO,address,address[])._dao (src/plugins/uniswap-v3/UniswapV3Plugin.sol#52) is not in mixedCase
+Parameter UniswapV3Plugin.initialize(IDAO,address,address[])._positionManager (src/plugins/uniswap-v3/UniswapV3Plugin.sol#53) is not in mixedCase
+Parameter UniswapV3Plugin.initialize(IDAO,address,address[])._initialAllowlist (src/plugins/uniswap-v3/UniswapV3Plugin.sol#54) is not in mixedCase
+Variable UniswapV3Plugin.__gap (src/plugins/uniswap-v3/UniswapV3Plugin.sol#44) is not in mixedCase
+Parameter UniswapV3PluginSetup.prepareInstallation(address,bytes)._dao (src/plugins/uniswap-v3/UniswapV3PluginSetup.sol#28) is not in mixedCase
+Parameter UniswapV3PluginSetup.prepareInstallation(address,bytes)._data (src/plugins/uniswap-v3/UniswapV3PluginSetup.sol#29) is not in mixedCase
+Parameter UniswapV3PluginSetup.prepareUninstallation(address,IPluginSetup.SetupPayload)._dao (src/plugins/uniswap-v3/UniswapV3PluginSetup.sol#102) is not in mixedCase
+Parameter UniswapV3PluginSetup.prepareUninstallation(address,IPluginSetup.SetupPayload)._payload (src/plugins/uniswap-v3/UniswapV3PluginSetup.sol#103) is not in mixedCase
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#conformance-to-solidity-naming-conventions
+INFO:Detectors:
+Detector: unused-state
+UniswapV3Plugin.__gap (src/plugins/uniswap-v3/UniswapV3Plugin.sol#44) is never used in UniswapV3Plugin (src/plugins/uniswap-v3/UniswapV3Plugin.sol#28-373)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-state-variable
+INFO:Slither:src/plugins/uniswap-v3 analyzed (39 contracts with 96 detectors), 24 result(s) found

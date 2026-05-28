@@ -3,8 +3,9 @@
  * Coverage gate: fails (exit 1) if any of {lines, branches, functions, statements}
  * for files under an "enforced" plugin path falls below the threshold.
  *
- * Implemented one plugin at a time: P2 ships PayrollPlugin; P3 adds UniswapV4Plugin;
- * P4 adds AaveLendingPlugin. Add the path here when its phase merges.
+ * Phase order: P2 PayrollPlugin → P3 UniswapV4Plugin → P4 AaveLendingPlugin →
+ * P5 adds UniswapV3Plugin + CostRegistryPlugin. All five plugins are now
+ * enforced (P8 closeout).
  *
  * Reads coverage/coverage-summary.json produced by `npx hardhat coverage`.
  */
@@ -19,7 +20,9 @@ const SUMMARY = path.join(process.cwd(), "coverage", "coverage-summary.json");
 const ENFORCED = [
   path.join("src", "plugins", "payroll") + path.sep,
   path.join("src", "plugins", "uniswap-v4") + path.sep,
+  path.join("src", "plugins", "uniswap-v3") + path.sep,
   path.join("src", "plugins", "aave") + path.sep,
+  path.join("src", "plugins", "cost-registry") + path.sep,
 ];
 
 if (!fs.existsSync(SUMMARY)) {

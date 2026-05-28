@@ -147,6 +147,29 @@ describe("preview…Actions: governance-path action builders", () => {
       expect(brn.length).to.equal(1);
       expect(brn[0][0]).to.equal(npm);
     });
+
+    it("previewIncreaseLiquidityActions returns a 5-action batch (approve t0/t1 + NPM.increaseLiquidity + approve resets)", async () => {
+      const {plugin, npm} = await deployV3(signer);
+      // The wrapper approves both tokens to the NPM, dispatches the increase, then
+      // zero-resets both allowances. Mock NPM returns zero token0/token1 for an
+      // unminted tokenId — that's fine for this structural assertion (we're
+      // matching the action *shape*, not the encoded token addresses).
+      const actions = await plugin.previewIncreaseLiquidityActions(1, 100, 200, 0, 0, FUTURE);
+      expect(actions.length).to.equal(5);
+      expect(actions[2][0]).to.equal(npm); // NPM.increaseLiquidity(...)
+      // actions[3] and actions[4] are the approve resets to zero.
+      const erc20 = new ethers.utils.Interface(["function approve(address,uint256)"]);
+      expect(erc20.decodeFunctionData("approve", actions[3][2])[1]).to.equal(0);
+      expect(erc20.decodeFunctionData("approve", actions[4][2])[1]).to.equal(0);
+    });
+
+    it("previewIncreaseLiquidityActions reverts on expired deadline (same as wrapper)", async () => {
+      const {plugin} = await deployV3(signer);
+      await expect(plugin.previewIncreaseLiquidityActions(1, 100, 200, 0, 0, 1)).to.be.revertedWithCustomError(
+        plugin,
+        "DeadlineExpired"
+      );
+    });
   });
 
   describe("AaveLendingPlugin", () => {

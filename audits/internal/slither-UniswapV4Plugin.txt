@@ -1,0 +1,89 @@
+'forge clean' running (wd: /Users/leonardoaraujo/work/cyberdyne_dao_contracts)
+'forge config --json' running
+'forge build --build-info src/plugins/uniswap-v4' running (wd: /Users/leonardoaraujo/work/cyberdyne_dao_contracts)
+INFO:Detectors:
+Detector: uninitialized-local
+UniswapV4Plugin._buildLpActions(bytes,uint256,address[],uint256[]).k (src/plugins/uniswap-v4/UniswapV4Plugin.sol#384) is a local variable never initialized
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#uninitialized-local-variables
+INFO:Detectors:
+Detector: unused-return
+UniswapV4Plugin.swap(bytes,bytes[],uint256,address,uint256,address,uint256) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#103-140) ignores return value by IExecutor(daoAddr).execute(callId,actions,0) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#134)
+UniswapV4Plugin.modifyLiquidities(bytes,uint256,address[],uint256[],address[],uint256[]) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#237-272) ignores return value by IExecutor(address(dao())).execute(callId,actions,0) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#265)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-return
+INFO:Detectors:
+Detector: missing-zero-check
+UniswapV4Plugin.initialize(IDAO,address,address,address,address,address[])._universalRouter (src/plugins/uniswap-v4/UniswapV4Plugin.sol#73) lacks a zero-check on :
+		- universalRouter = _universalRouter (src/plugins/uniswap-v4/UniswapV4Plugin.sol#81)
+UniswapV4Plugin.initialize(IDAO,address,address,address,address,address[])._permit2 (src/plugins/uniswap-v4/UniswapV4Plugin.sol#74) lacks a zero-check on :
+		- permit2 = _permit2 (src/plugins/uniswap-v4/UniswapV4Plugin.sol#82)
+UniswapV4Plugin.initialize(IDAO,address,address,address,address,address[])._poolManager (src/plugins/uniswap-v4/UniswapV4Plugin.sol#75) lacks a zero-check on :
+		- poolManager = _poolManager (src/plugins/uniswap-v4/UniswapV4Plugin.sol#83)
+UniswapV4Plugin.initialize(IDAO,address,address,address,address,address[])._v4PositionManager (src/plugins/uniswap-v4/UniswapV4Plugin.sol#76) lacks a zero-check on :
+		- v4PositionManager = _v4PositionManager (src/plugins/uniswap-v4/UniswapV4Plugin.sol#84)
+UniswapV4Plugin.setUniversalRouter(address).newRouter (src/plugins/uniswap-v4/UniswapV4Plugin.sol#193) lacks a zero-check on :
+		- universalRouter = newRouter (src/plugins/uniswap-v4/UniswapV4Plugin.sol#196)
+UniswapV4Plugin.setV4PositionManager(address).newPositionManager (src/plugins/uniswap-v4/UniswapV4Plugin.sol#217) lacks a zero-check on :
+		- v4PositionManager = newPositionManager (src/plugins/uniswap-v4/UniswapV4Plugin.sol#220)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#missing-zero-address-validation
+INFO:Detectors:
+Detector: calls-loop
+UniswapV4Plugin._snapshotBalances(address[]) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#287-295) has external calls inside a loop: snap[i] = IERC20(currencies[i]).balanceOf(daoAddr) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#293)
+	Calls stack containing the loop:
+		UniswapV4Plugin.modifyLiquidities(bytes,uint256,address[],uint256[],address[],uint256[])
+UniswapV4Plugin._enforceOutputs(address[],uint256[],uint256[]) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#297-307) has external calls inside a loop: received = IERC20(currencies[i]).balanceOf(daoAddr) - before_[i] (src/plugins/uniswap-v4/UniswapV4Plugin.sol#304)
+	Calls stack containing the loop:
+		UniswapV4Plugin.modifyLiquidities(bytes,uint256,address[],uint256[],address[],uint256[])
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation/#calls-inside-a-loop
+INFO:Detectors:
+Detector: reentrancy-events
+Reentrancy in UniswapV4Plugin.modifyLiquidities(bytes,uint256,address[],uint256[],address[],uint256[]) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#237-272):
+	External calls:
+	- IExecutor(address(dao())).execute(callId,actions,0) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#265)
+	Event emitted after the call(s):
+	- LiquidityModified(lpNonce) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#271)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#reentrancy-vulnerabilities-4
+INFO:Detectors:
+Detector: timestamp
+UniswapV4Plugin.swap(bytes,bytes[],uint256,address,uint256,address,uint256) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#103-140) uses timestamp for comparisons
+	Dangerous comparisons:
+	- block.timestamp > deadline (src/plugins/uniswap-v4/UniswapV4Plugin.sol#112)
+UniswapV4Plugin.modifyLiquidities(bytes,uint256,address[],uint256[],address[],uint256[]) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#237-272) uses timestamp for comparisons
+	Dangerous comparisons:
+	- block.timestamp > deadline (src/plugins/uniswap-v4/UniswapV4Plugin.sol#245)
+UniswapV4Plugin.previewModifyLiquiditiesActions(bytes,uint256,address[],uint256[]) (src/plugins/uniswap-v4/UniswapV4Plugin.sol#314-330) uses timestamp for comparisons
+	Dangerous comparisons:
+	- block.timestamp > deadline (src/plugins/uniswap-v4/UniswapV4Plugin.sol#320)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#block-timestamp
+INFO:Detectors:
+Detector: solc-version
+Version constraint 0.8.17 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)
+	- VerbatimInvalidDeduplication
+	- FullInlinerNonExpressionSplitArgumentEvaluationOrder
+	- MissingSideEffectsOnSelectorAccess.
+It is used by:
+	- 0.8.17 (src/plugins/uniswap-v4/IPermit2.sol#2)
+	- 0.8.17 (src/plugins/uniswap-v4/IUniswapV4Plugin.sol#2)
+	- 0.8.17 (src/plugins/uniswap-v4/IUniversalRouter.sol#2)
+	- 0.8.17 (src/plugins/uniswap-v4/IV4PositionManager.sol#2)
+	- 0.8.17 (src/plugins/uniswap-v4/UniswapV4Plugin.sol#2)
+	- 0.8.17 (src/plugins/uniswap-v4/UniswapV4PluginSetup.sol#2)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#incorrect-versions-of-solidity
+INFO:Detectors:
+Detector: naming-convention
+Parameter UniswapV4Plugin.initialize(IDAO,address,address,address,address,address[])._dao (src/plugins/uniswap-v4/UniswapV4Plugin.sol#72) is not in mixedCase
+Parameter UniswapV4Plugin.initialize(IDAO,address,address,address,address,address[])._universalRouter (src/plugins/uniswap-v4/UniswapV4Plugin.sol#73) is not in mixedCase
+Parameter UniswapV4Plugin.initialize(IDAO,address,address,address,address,address[])._permit2 (src/plugins/uniswap-v4/UniswapV4Plugin.sol#74) is not in mixedCase
+Parameter UniswapV4Plugin.initialize(IDAO,address,address,address,address,address[])._poolManager (src/plugins/uniswap-v4/UniswapV4Plugin.sol#75) is not in mixedCase
+Parameter UniswapV4Plugin.initialize(IDAO,address,address,address,address,address[])._v4PositionManager (src/plugins/uniswap-v4/UniswapV4Plugin.sol#76) is not in mixedCase
+Parameter UniswapV4Plugin.initialize(IDAO,address,address,address,address,address[])._initialAllowlist (src/plugins/uniswap-v4/UniswapV4Plugin.sol#77) is not in mixedCase
+Variable UniswapV4Plugin.__gap (src/plugins/uniswap-v4/UniswapV4Plugin.sol#59) is not in mixedCase
+Parameter UniswapV4PluginSetup.prepareInstallation(address,bytes)._dao (src/plugins/uniswap-v4/UniswapV4PluginSetup.sol#32) is not in mixedCase
+Parameter UniswapV4PluginSetup.prepareInstallation(address,bytes)._data (src/plugins/uniswap-v4/UniswapV4PluginSetup.sol#33) is not in mixedCase
+Parameter UniswapV4PluginSetup.prepareUninstallation(address,IPluginSetup.SetupPayload)._dao (src/plugins/uniswap-v4/UniswapV4PluginSetup.sol#118) is not in mixedCase
+Parameter UniswapV4PluginSetup.prepareUninstallation(address,IPluginSetup.SetupPayload)._payload (src/plugins/uniswap-v4/UniswapV4PluginSetup.sol#119) is not in mixedCase
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#conformance-to-solidity-naming-conventions
+INFO:Detectors:
+Detector: unused-state
+UniswapV4Plugin.__gap (src/plugins/uniswap-v4/UniswapV4Plugin.sol#59) is never used in UniswapV4Plugin (src/plugins/uniswap-v4/UniswapV4Plugin.sol#25-415)
+Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-state-variable
+INFO:Slither:src/plugins/uniswap-v4 analyzed (42 contracts with 96 detectors), 28 result(s) found
