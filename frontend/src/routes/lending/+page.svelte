@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import {wallet} from "$lib/wallet";
+  import {chainConfig} from "$lib/chains";
   import {
     createLendingVM,
     fmtHealth,
@@ -13,10 +14,20 @@
   import {formatUnits, formatToken} from "$lib/format";
   import Skeleton from "$lib/components/Skeleton.svelte";
   import ProposeAction from "$lib/components/ProposeAction.svelte";
+  import TokenSelect from "$lib/components/TokenSelect.svelte";
 
   const vm = createLendingVM();
   const {loading, loadError, noDao, data, op, lAsset, lAmount, lDecimals, lRateMode, lendingAction} =
     vm;
+
+  $: cfg = $wallet.status === "connected" ? chainConfig($wallet.chainId) : undefined;
+
+  // Default the asset to USDC once cfg is known (instead of "Custom… 0x…").
+  let defaultsApplied = false;
+  $: if (cfg && !defaultsApplied) {
+    if (!$lAsset && cfg.external.USDC) $lAsset = cfg.external.USDC;
+    defaultsApplied = true;
+  }
 
   let lastKey = "";
   $: {
@@ -28,7 +39,13 @@
   }
 </script>
 
-<h1>Lending</h1>
+<div class="hero">
+  <h1>Lending</h1>
+  <p class="hero-sub">
+    Vote-gated AAVE v3 lending against the DAO's treasury. aTokens and debt
+    tokens are issued to the DAO; the plugin holds no funds.
+  </p>
+</div>
 
 {#if $wallet.status !== "connected"}
   <p class="muted">Connect to load lending positions.</p>
@@ -95,30 +112,47 @@
     {/if}
   {/if}
 
-  <h2>Propose: lending operation</h2>
-  <p class="muted">
-    Vote-gated. aTokens / debt are issued to the DAO. <code>rateMode</code> applies to
-    borrow/repay (2 = variable). Amounts are fixed at proposal time.
-  </p>
-  <div class="form">
-    <label>
-      Operation
-      <select bind:value={$op}>
-        <option value="supply">supply</option>
-        <option value="withdraw">withdraw</option>
-        <option value="borrow">borrow</option>
-        <option value="repay">repay</option>
-      </select>
-    </label>
-    <label>Asset <input bind:value={$lAsset} placeholder="0x... (token)" /></label>
-    <label>Amount <input bind:value={$lAmount} placeholder="100" /></label>
-    <label>Decimals <input bind:value={$lDecimals} style="min-width:70px" /></label>
-    {#if $op === "borrow" || $op === "repay"}
-      <label>Rate mode <input bind:value={$lRateMode} style="min-width:70px" /></label>
-    {/if}
-    <button on:click={vm.buildLending}>Build</button>
-  </div>
-  <ProposeAction action={$lendingAction} />
+  <section class="card-section">
+    <h2>Propose: lending operation</h2>
+    <p class="muted">
+      Vote-gated. aTokens / debt are issued to the DAO. <code>rateMode</code> applies to
+      borrow / repay. Amounts are fixed at proposal time.
+    </p>
+    <div class="form">
+      <label>
+        Operation
+        <select bind:value={$op}>
+          <option value="supply">supply</option>
+          <option value="withdraw">withdraw</option>
+          <option value="borrow">borrow</option>
+          <option value="repay">repay</option>
+        </select>
+      </label>
+      <label>Asset <TokenSelect bind:value={$lAsset} {cfg} placeholder="0x… custom asset" /></label>
+      <label>Amount <input bind:value={$lAmount} placeholder="100" /></label>
+      {#if $op === "borrow" || $op === "repay"}
+        <label>
+          Rate mode
+          <select bind:value={$lRateMode}>
+            <option value="2">Variable</option>
+            <option value="1">Stable</option>
+          </select>
+        </label>
+      {/if}
+      <button on:click={vm.buildLending}>Build</button>
+    </div>
+    <details class="adv">
+      <summary class="muted">Advanced (custom-asset decimals override)</summary>
+      <p class="muted small">
+        Only needed when "Asset" is a Custom address the chain config doesn't track
+        (USDC and WETH are auto-resolved).
+      </p>
+      <div class="form">
+        <label>Decimals <input bind:value={$lDecimals} style="min-width:80px" placeholder="18" /></label>
+      </div>
+    </details>
+    <ProposeAction action={$lendingAction} />
+  </section>
 {/if}
 
 <style>
@@ -173,5 +207,15 @@
     background: #f1f3f4;
     border-color: #c0c0c0;
     color: #555;
+  }
+  details.adv {
+    margin: 0.5rem 0 0.75rem;
+  }
+  details.adv summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .small {
+    font-size: 0.8rem;
   }
 </style>

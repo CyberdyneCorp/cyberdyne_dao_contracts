@@ -192,4 +192,42 @@
     max-width: 1160px;
     padding: 0.5rem 1.25rem 3rem;
   }
+  /* Section card — wraps an H2 + its content as a soft white panel so propose
+   * forms / status panels get clear visual rhythm. Pages opt in by wrapping
+   * with <section class="card-section">. The first <h2> inside loses its
+   * default top margin so it sits flush. */
+  :global(section.card-section) {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: 1rem 1.25rem 1.1rem;
+    margin: 1.25rem 0;
+  }
+  :global(section.card-section > h2:first-child) {
+    margin-top: 0;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--color-border);
+    margin-bottom: 0.9rem;
+  }
+  :global(section.card-section > h3:first-child) {
+    margin-top: 0;
+  }
+  /* Hero — page title + optional subtitle. Pages opt in by wrapping their
+   * <h1> + a sibling .hero-sub <p> with .hero. */
+  :global(.hero) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin: 0.75rem 0 0.5rem;
+  }
+  :global(.hero h1) {
+    margin: 0;
+  }
+  :global(.hero-sub) {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
 </style>

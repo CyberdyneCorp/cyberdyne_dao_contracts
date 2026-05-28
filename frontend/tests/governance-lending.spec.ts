@@ -18,20 +18,23 @@ test.afterEach(async () => {
 });
 
 function lendingForm(page: import("@playwright/test").Page) {
-  return page.locator("div.form").filter({has: page.getByPlaceholder("0x... (token)")});
+  // The propose-lending form is the only one with an "Operation" select.
+  return page.locator("div.form").filter({
+    has: page.locator('select').filter({has: page.locator('option[value="supply"]')}),
+  });
 }
 
 async function buildLending(
   page: import("@playwright/test").Page,
   op: "supply" | "withdraw" | "borrow" | "repay",
-  amount: string,
-  decimals = "6"
+  amount: string
 ): Promise<string> {
   const form = lendingForm(page);
-  await form.getByRole("combobox").selectOption(op);
-  await form.getByPlaceholder("0x... (token)").fill(USDC);
+  // Operation <select> (the first one in the form).
+  await form.locator('select').filter({has: page.locator('option[value="supply"]')}).selectOption(op);
+  // Asset is a TokenSelect — choose USDC by value.
+  await form.locator("label").filter({hasText: /^Asset/}).locator("select").selectOption(USDC);
   await form.getByPlaceholder("100").fill(amount);
-  await form.getByLabel("Decimals").fill(decimals);
   await form.getByRole("button", {name: "Build"}).click();
   return submitProposal(page);
 }

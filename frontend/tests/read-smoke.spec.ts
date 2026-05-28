@@ -16,7 +16,8 @@ test("Overview — treasury + plugin addresses", async ({page}) => {
   await page.goto("/");
   await connectWallet(page);
   await expect(page.getByRole("heading", {name: /DAO overview/i})).toBeVisible();
-  await expect(page.getByText(/Treasury/i)).toBeVisible();
+  // Scope to the heading — the hero-sub paragraph also mentions "treasury".
+  await expect(page.getByRole("heading", {name: /^Treasury$/})).toBeVisible();
   // Seeded treasury shows non-zero USDC.
   await expect(page.getByText(/USDC/).first()).toBeVisible();
   await page.screenshot({path: `${SHOTS}/01-overview.png`, fullPage: true});

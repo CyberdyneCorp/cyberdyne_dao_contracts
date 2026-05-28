@@ -48,7 +48,13 @@
   }
 </script>
 
-<h1>Operating costs</h1>
+<div class="hero">
+  <h1>Operating costs</h1>
+  <p class="hero-sub">
+    Recurring USDC bills (cloud, services, tooling) paid out of the treasury on a vote-gated
+    schedule. Anyone can run the permissionless crank when entries come due.
+  </p>
+</div>
 
 {#if $wallet.status !== "connected"}
   <p class="muted">Connect to load the cost registry.</p>
@@ -134,47 +140,55 @@
     </p>
   {/if}
 
-  <h2>Crank (permissionless)</h2>
-  <p class="muted">
-    <code>processDue(offset, limit)</code> pays every due entry in the index window. Idempotent per
-    entry — re-runs only pay entries that have since come due.
-  </p>
-  <div class="form">
-    <label>offset <input bind:value={$crankOffset} style="min-width:80px" /></label>
-    <label>limit <input bind:value={$crankLimit} style="min-width:80px" /></label>
-    <button on:click={vm.runCrank} disabled={$crankBusy}>
-      {$crankBusy ? "Submitting…" : "processDue"}
-    </button>
-  </div>
-  {#if $crankResult}<p>{$crankResult}</p>{/if}
+  <section class="card-section">
+    <h2>Crank (permissionless)</h2>
+    <p class="muted">
+      <code>processDue(offset, limit)</code> pays every due entry in the index window. Idempotent per
+      entry — re-runs only pay entries that have since come due.
+    </p>
+    <div class="form">
+      <label>offset <input bind:value={$crankOffset} style="min-width:80px" /></label>
+      <label>limit <input bind:value={$crankLimit} style="min-width:80px" /></label>
+      <button on:click={vm.runCrank} disabled={$crankBusy}>
+        {$crankBusy ? "Submitting…" : "processDue"}
+      </button>
+    </div>
+    {#if $crankResult}<p>{$crankResult}</p>{/if}
+  </section>
 
-  <h2>Propose: register / update entry</h2>
-  <p class="muted">Leave "id" blank to register a new entry; set it to update an existing one.</p>
-  <div class="form">
-    <label>id (update only) <input bind:value={$rId} placeholder="blank = new" style="min-width:110px" /></label>
-    <label>name <input bind:value={$rName} placeholder="AWS" /></label>
-    <label>description <input bind:value={$rDesc} placeholder="cloud bill" /></label>
-    <label>cost (USDC) <input bind:value={$rCost} placeholder="500" /></label>
-    <label>frequency (days) <input bind:value={$rFreq} placeholder="30" style="min-width:120px" /></label>
-    <label>payee <input bind:value={$rPayee} placeholder="0x..." /></label>
-    <button on:click={vm.buildRegisterOrUpdate}>Build</button>
-  </div>
-  <ProposeAction action={$regAction} />
+  <section class="card-section">
+    <h2>Propose: register / update entry</h2>
+    <p class="muted">Leave "id" blank to register a new entry; set it to update an existing one.</p>
+    <div class="form">
+      <label>id (update only) <input bind:value={$rId} placeholder="blank = new" style="min-width:110px" /></label>
+      <label>name <input bind:value={$rName} placeholder="AWS" /></label>
+      <label>description <input bind:value={$rDesc} placeholder="cloud bill" /></label>
+      <label>cost (USDC) <input bind:value={$rCost} placeholder="500" /></label>
+      <label>frequency (days) <input bind:value={$rFreq} placeholder="30" style="min-width:120px" /></label>
+      <label>payee <input bind:value={$rPayee} placeholder="0x..." /></label>
+      <button on:click={vm.buildRegisterOrUpdate}>Build</button>
+    </div>
+    <ProposeAction action={$regAction} />
+  </section>
 
-  <h2>Propose: remove entry</h2>
-  <div class="form">
-    <label>id <input bind:value={$removeId} placeholder="0" style="min-width:90px" /></label>
-    <button on:click={vm.buildRemove}>Build</button>
-  </div>
-  <ProposeAction action={$removeAction} />
+  <section class="card-section">
+    <h2>Propose: remove entry</h2>
+    <div class="form">
+      <label>id <input bind:value={$removeId} placeholder="0" style="min-width:90px" /></label>
+      <button on:click={vm.buildRemove}>Build</button>
+    </div>
+    <ProposeAction action={$removeAction} />
+  </section>
 
-  <h2>Propose: set max entries</h2>
-  <p class="muted">Raise or lower the entry-slot cap (≤ ceiling, ≥ current count). Vote-gated.</p>
-  <div class="form">
-    <label>New max <input bind:value={$maxEntries} placeholder="500" style="min-width:120px" /></label>
-    <button on:click={vm.buildSetMaxEntries}>Build</button>
-  </div>
-  <ProposeAction action={$setMaxEntriesAction} />
+  <section class="card-section">
+    <h2>Propose: set max entries</h2>
+    <p class="muted">Raise or lower the entry-slot cap (≤ ceiling, ≥ current count). Vote-gated.</p>
+    <div class="form">
+      <label>New max <input bind:value={$maxEntries} placeholder="500" style="min-width:120px" /></label>
+      <button on:click={vm.buildSetMaxEntries}>Build</button>
+    </div>
+    <ProposeAction action={$setMaxEntriesAction} />
+  </section>
 {/if}
 
 <style>

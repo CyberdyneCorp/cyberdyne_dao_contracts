@@ -22,7 +22,13 @@
   }
 </script>
 
-<h1>DAO overview</h1>
+<div class="hero">
+  <h1>DAO overview</h1>
+  <p class="hero-sub">
+    Live treasury balances and the on-chain addresses of every plugin + OSx
+    framework contract this DAO is wired to.
+  </p>
+</div>
 
 {#if $wallet.status !== "connected"}
   <p class="muted">Connect a wallet to load DAO state.</p>
@@ -36,43 +42,49 @@
   <Skeleton rows={6} />
 {:else}
   {@const d = $data}
-  <h2>Treasury</h2>
-  <div class="cards">
-    <div class="card">
-      <span class="card-label">ETH</span>
-      <span class="card-value">{formatUnits(d.ethBalance, 18)}</span>
-    </div>
-    {#each d.tokens as t}
+  <section class="card-section">
+    <h2>Treasury</h2>
+    <div class="cards">
       <div class="card">
-        <span class="card-label">{t.symbol}</span>
-        <span class="card-value">{formatUnits(t.balance, t.decimals)}</span>
+        <span class="card-label">ETH</span>
+        <span class="card-value">{formatUnits(d.ethBalance, 18)}</span>
       </div>
-    {/each}
-  </div>
+      {#each d.tokens as t}
+        <div class="card">
+          <span class="card-label">{t.symbol}</span>
+          <span class="card-value">{formatUnits(t.balance, t.decimals)}</span>
+        </div>
+      {/each}
+    </div>
+  </section>
 
-  <h2>Plugin addresses</h2>
-  <div class="addr-list">
-    <div class="addr-row"><span class="addr-key">DAO</span><AddressTag address={d.dao.dao} /></div>
-    <div class="addr-row"><span class="addr-key">Payroll</span><AddressTag address={d.dao.payroll} /></div>
-    <div class="addr-row"><span class="addr-key">Uniswap V4</span><AddressTag address={d.dao.uniswap} /></div>
-    <div class="addr-row"><span class="addr-key">AAVE</span><AddressTag address={d.dao.aave} /></div>
-    {#if d.dao.uniswapV3}
-      <div class="addr-row"><span class="addr-key">Uniswap V3</span><AddressTag address={d.dao.uniswapV3} /></div>
-    {/if}
-    {#if d.dao.costRegistry}
-      <div class="addr-row"><span class="addr-key">CostRegistry</span><AddressTag address={d.dao.costRegistry} /></div>
-    {/if}
-    {#if d.dao.governance}
-      <div class="addr-row"><span class="addr-key">TokenVoting</span><AddressTag address={d.dao.governance} /></div>
-    {/if}
-  </div>
+  <section class="card-section">
+    <h2>Plugin addresses</h2>
+    <div class="addr-list">
+      <div class="addr-row"><span class="addr-key">DAO</span><AddressTag address={d.dao.dao} /></div>
+      <div class="addr-row"><span class="addr-key">Payroll</span><AddressTag address={d.dao.payroll} /></div>
+      <div class="addr-row"><span class="addr-key">Uniswap V4</span><AddressTag address={d.dao.uniswap} /></div>
+      <div class="addr-row"><span class="addr-key">AAVE</span><AddressTag address={d.dao.aave} /></div>
+      {#if d.dao.uniswapV3}
+        <div class="addr-row"><span class="addr-key">Uniswap V3</span><AddressTag address={d.dao.uniswapV3} /></div>
+      {/if}
+      {#if d.dao.costRegistry}
+        <div class="addr-row"><span class="addr-key">CostRegistry</span><AddressTag address={d.dao.costRegistry} /></div>
+      {/if}
+      {#if d.dao.governance}
+        <div class="addr-row"><span class="addr-key">TokenVoting</span><AddressTag address={d.dao.governance} /></div>
+      {/if}
+    </div>
+  </section>
 
-  <h2>Framework</h2>
-  <div class="addr-list">
-    <div class="addr-row"><span class="addr-key">DAOFactory</span><AddressTag address={d.cfg.osx.daoFactory} /></div>
-    <div class="addr-row"><span class="addr-key">PluginRepoFactory</span><AddressTag address={d.cfg.osx.pluginRepoFactory} /></div>
-    <div class="addr-row"><span class="addr-key">PluginSetupProcessor</span><AddressTag address={d.cfg.osx.pluginSetupProcessor} /></div>
-  </div>
+  <section class="card-section">
+    <h2>Framework</h2>
+    <div class="addr-list">
+      <div class="addr-row"><span class="addr-key">DAOFactory</span><AddressTag address={d.cfg.osx.daoFactory} /></div>
+      <div class="addr-row"><span class="addr-key">PluginRepoFactory</span><AddressTag address={d.cfg.osx.pluginRepoFactory} /></div>
+      <div class="addr-row"><span class="addr-key">PluginSetupProcessor</span><AddressTag address={d.cfg.osx.pluginSetupProcessor} /></div>
+    </div>
+  </section>
 {/if}
 
 <style>

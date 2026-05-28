@@ -44,7 +44,13 @@
   }
 </script>
 
-<h1>Payroll</h1>
+<div class="hero">
+  <h1>Payroll</h1>
+  <p class="hero-sub">
+    Vote-gated monthly salaries. Anyone can run the permissionless crank when the
+    pay day comes — failures isolate per recipient, missed months are skipped.
+  </p>
+</div>
 
 {#if $wallet.status !== "connected"}
   <p class="muted">Connect to load payroll schedule.</p>
@@ -96,59 +102,69 @@
     </table>
   {/if}
 
-  <h2>Crank (permissionless)</h2>
-  <p class="muted">
-    <code>executePayroll()</code> pays the whole period in one batch (reverts if it exceeds
-    {d.perPage.toString()} recipients). For larger payrolls run pages with
-    <code>executePayrollPage(n)</code> until the period completes.
-  </p>
-  <div class="form">
-    <button on:click={() => vm.runCrank(true)} disabled={$crankBusy}>
-      {$crankBusy ? "Submitting…" : "executePayroll()"}
-    </button>
-    <label>Page size <input bind:value={$pageSize} placeholder="100" style="min-width:80px" /></label>
-    <button on:click={() => vm.runCrank(false)} disabled={$crankBusy}>Run page</button>
-  </div>
-  {#if $crankResult}<p>{$crankResult}</p>{/if}
+  <section class="card-section">
+    <h2>Crank (permissionless)</h2>
+    <p class="muted">
+      <code>executePayroll()</code> pays the whole period in one batch (reverts if it exceeds
+      {d.perPage.toString()} recipients). For larger payrolls run pages with
+      <code>executePayrollPage(n)</code> until the period completes.
+    </p>
+    <div class="form">
+      <button on:click={() => vm.runCrank(true)} disabled={$crankBusy}>
+        {$crankBusy ? "Submitting…" : "executePayroll()"}
+      </button>
+      <label>Page size <input bind:value={$pageSize} placeholder="100" style="min-width:80px" /></label>
+      <button on:click={() => vm.runCrank(false)} disabled={$crankBusy}>Run page</button>
+    </div>
+    {#if $crankResult}<p>{$crankResult}</p>{/if}
+  </section>
 
-  <h2>Propose: add recipient</h2>
-  <p class="muted">Vote-gated — builds an action the DAO executes after a vote passes.</p>
-  <div class="form">
-    <label>Payee <input bind:value={$newPayee} placeholder="0x..." /></label>
-    <label>Token <input bind:value={$newToken} placeholder="0x... (or 0x0 for ETH)" /></label>
-    <label>Amount (decimal) <input bind:value={$newAmount} placeholder="1000" /></label>
-    <button on:click={vm.buildAddRecipient}>Build</button>
-  </div>
-  <ProposeAction action={$addAction} />
+  <section class="card-section">
+    <h2>Propose: add recipient</h2>
+    <p class="muted">Vote-gated — builds an action the DAO executes after a vote passes.</p>
+    <div class="form">
+      <label>Payee <input bind:value={$newPayee} placeholder="0x..." /></label>
+      <label>Token <input bind:value={$newToken} placeholder="0x... (or 0x0 for ETH)" /></label>
+      <label>Amount (decimal) <input bind:value={$newAmount} placeholder="1000" /></label>
+      <button on:click={vm.buildAddRecipient}>Build</button>
+    </div>
+    <ProposeAction action={$addAction} />
+  </section>
 
-  <h2>Propose: set recipient amount</h2>
-  <div class="form">
-    <label>Payee <input bind:value={$setAmtPayee} placeholder="0x..." /></label>
-    <label>Token <input bind:value={$setAmtToken} placeholder="0x... (0x0 = ETH)" /></label>
-    <label>New amount (decimal) <input bind:value={$setAmtValue} placeholder="1500" /></label>
-    <button on:click={vm.buildSetAmount}>Build</button>
-  </div>
-  <ProposeAction action={$setAmountAction} />
+  <section class="card-section">
+    <h2>Propose: set recipient amount</h2>
+    <div class="form">
+      <label>Payee <input bind:value={$setAmtPayee} placeholder="0x..." /></label>
+      <label>Token <input bind:value={$setAmtToken} placeholder="0x... (0x0 = ETH)" /></label>
+      <label>New amount (decimal) <input bind:value={$setAmtValue} placeholder="1500" /></label>
+      <button on:click={vm.buildSetAmount}>Build</button>
+    </div>
+    <ProposeAction action={$setAmountAction} />
+  </section>
 
-  <h2>Propose: set max recipients</h2>
-  <p class="muted">Raise or lower the recipient-slot cap (≤ ceiling, ≥ current count). Vote-gated.</p>
-  <div class="form">
-    <label>New max <input bind:value={$maxRecip} placeholder="500" style="min-width:120px" /></label>
-    <button on:click={vm.buildSetMaxRecipients}>Build</button>
-  </div>
-  <ProposeAction action={$setMaxAction} />
+  <section class="card-section">
+    <h2>Propose: set max recipients</h2>
+    <p class="muted">Raise or lower the recipient-slot cap (≤ ceiling, ≥ current count). Vote-gated.</p>
+    <div class="form">
+      <label>New max <input bind:value={$maxRecip} placeholder="500" style="min-width:120px" /></label>
+      <button on:click={vm.buildSetMaxRecipients}>Build</button>
+    </div>
+    <ProposeAction action={$setMaxAction} />
+  </section>
 
-  <h2>Propose: force-pay a skipped period</h2>
-  <p class="muted">
-    Recovery for a month the crank skipped — pays every active recipient once. Only periods after
-    the last paid month and before now (≤ 12 months back) qualify. Vote-gated.
-  </p>
-  <div class="form">
-    <label>Year <input bind:value={$forceYear} placeholder="2027" style="min-width:90px" /></label>
-    <label>Month <input bind:value={$forceMonth} placeholder="2" style="min-width:80px" /></label>
-    <button on:click={vm.buildForcePay}>Build</button>
-  </div>
-  <ProposeAction action={$forceActions} />
+  <section class="card-section">
+    <h2>Propose: force-pay a skipped period</h2>
+    <p class="muted">
+      Recovery for a month the crank skipped — pays every active recipient once. Only periods after
+      the last paid month and before now (≤ 12 months back) qualify. Vote-gated.
+    </p>
+    <div class="form">
+      <label>Year <input bind:value={$forceYear} placeholder="2027" style="min-width:90px" /></label>
+      <label>Month <input bind:value={$forceMonth} placeholder="2" style="min-width:80px" /></label>
+      <button on:click={vm.buildForcePay}>Build</button>
+    </div>
+    <ProposeAction action={$forceActions} />
+  </section>
 {/if}
 
 <style>

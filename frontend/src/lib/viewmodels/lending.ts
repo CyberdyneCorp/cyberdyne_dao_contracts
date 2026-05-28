@@ -10,7 +10,7 @@ import * as actions from "$lib/actions";
 import type {ProposalAction} from "$lib/actions";
 import type {ChainConfig} from "$lib/types";
 import {toasts} from "$lib/stores/toasts";
-import {errorMessage} from "$lib/format";
+import {errorMessage, resolveToken} from "$lib/format";
 
 const POOL_ABI = [
   "function getUserAccountData(address user) view returns (uint256 totalCollateralBase, uint256 totalDebtBase, uint256 availableBorrowsBase, uint256 currentLiquidationThreshold, uint256 ltv, uint256 healthFactor)",
@@ -105,9 +105,15 @@ export function createLendingVM() {
       if (w.status !== "connected") throw new Error("Connect a wallet");
       const cfg = chainConfig(w.chainId);
       if (!cfg?.dao) throw new Error("No DAO configured");
-      const amount = ethers.utils.parseUnits(get(lAmount) || "0", parseInt(get(lDecimals), 10));
-      const mode = parseInt(get(lRateMode), 10);
       const asset = get(lAsset);
+      // Derive decimals from the token book; the manual `lDecimals` store is
+      // kept only as an escape hatch for custom assets the cfg doesn't know
+      // (resolveToken returns 18 for unknowns, override via lDecimals).
+      const fallbackDec = parseInt(get(lDecimals), 10);
+      const tok = resolveToken(cfg, asset);
+      const dec = tok.symbol === "USDC" || tok.symbol === "WETH" ? tok.decimals : fallbackDec || tok.decimals;
+      const amount = ethers.utils.parseUnits(get(lAmount) || "0", dec);
+      const mode = parseInt(get(lRateMode), 10);
       const o = get(op);
       const batch =
         o === "supply"

@@ -37,7 +37,13 @@
   }
 </script>
 
-<h1>Swap history</h1>
+<div class="hero">
+  <h1>Swap history</h1>
+  <p class="hero-sub">
+    DAO-initiated Uniswap V4 swaps. Every entry is a vote-gated swap proposal that
+    executed on-chain — the actual <code>amountOut</code> is read back from balances.
+  </p>
+</div>
 
 {#if $wallet.status !== "connected"}
   <p class="muted">Connect to load swap history.</p>
@@ -84,26 +90,28 @@
     {/if}
   {/if}
 
-  <h2>Propose: swap</h2>
-  <p class="muted">
-    Vote-gated. <code>commands</code>/<code>inputs</code> are raw Universal Router bytes (encode the
-    route with the Uniswap SDK off-chain). The slippage guard (<code>minAmountOut</code>) and
-    <code>deadline</code> are checked at execution — set the deadline well past your voting window
-    and <code>minAmountOut</code> conservatively.
-  </p>
-  <div class="form">
-    <label>commands (0x) <input bind:value={$sCommands} placeholder="0x..." /></label>
-    <label>inputs (JSON hex[]) <input bind:value={$sInputs} placeholder={'["0x..."]'} /></label>
-    <label>deadline (unix, blank = +7d) <input bind:value={$sDeadline} placeholder="auto" /></label>
-    <label>tokenIn <input bind:value={$sTokenIn} placeholder="0x..." /></label>
-    <label>amountIn <input bind:value={$sAmountIn} placeholder="1.0" /></label>
-    <label>decimals in <input bind:value={$sDecIn} style="min-width:70px" /></label>
-    <label>tokenOut <input bind:value={$sTokenOut} placeholder="0x..." /></label>
-    <label>minAmountOut <input bind:value={$sMinOut} placeholder="0.99" /></label>
-    <label>decimals out <input bind:value={$sDecOut} style="min-width:70px" /></label>
-    <button on:click={vm.buildSwap}>Build</button>
-  </div>
-  <ProposeAction action={$swapAction} />
+  <section class="card-section">
+    <h2>Propose: swap</h2>
+    <p class="muted">
+      Vote-gated. <code>commands</code> / <code>inputs</code> are raw Universal Router bytes (encode the
+      route with the Uniswap SDK off-chain). The slippage guard (<code>minAmountOut</code>) and
+      <code>deadline</code> are checked at execution — set the deadline well past your voting window
+      and <code>minAmountOut</code> conservatively.
+    </p>
+    <div class="form">
+      <label>commands (0x) <input bind:value={$sCommands} placeholder="0x..." /></label>
+      <label>inputs (JSON hex[]) <input bind:value={$sInputs} placeholder={'["0x..."]'} /></label>
+      <label>deadline (unix, blank = +7d) <input bind:value={$sDeadline} placeholder="auto" /></label>
+      <label>tokenIn <input bind:value={$sTokenIn} placeholder="0x..." /></label>
+      <label>amountIn <input bind:value={$sAmountIn} placeholder="1.0" /></label>
+      <label>decimals in <input bind:value={$sDecIn} style="min-width:70px" /></label>
+      <label>tokenOut <input bind:value={$sTokenOut} placeholder="0x..." /></label>
+      <label>minAmountOut <input bind:value={$sMinOut} placeholder="0.99" /></label>
+      <label>decimals out <input bind:value={$sDecOut} style="min-width:70px" /></label>
+      <button on:click={vm.buildSwap}>Build</button>
+    </div>
+    <ProposeAction action={$swapAction} />
+  </section>
 {/if}
 
 <style>
