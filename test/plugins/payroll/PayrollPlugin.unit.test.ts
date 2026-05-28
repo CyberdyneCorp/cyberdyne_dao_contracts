@@ -199,14 +199,14 @@ describe("PayrollPlugin", () => {
         ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`);
       // Lower to 2 (no slots yet), fill it, then the 3rd add trips the cap.
       await plugin.connect(voter).setMaxRecipients(2);
-      await plugin.connect(voter).addRecipient(a(0), token.address, 100);
-      await plugin.connect(voter).addRecipient(a(1), token.address, 100);
-      await expect(plugin.connect(voter).addRecipient(a(2), token.address, 100))
+      await plugin.connect(voter).addRecipient(a(0, ""), token.address, 100, "");
+      await plugin.connect(voter).addRecipient(a(1, ""), token.address, 100, "");
+      await expect(plugin.connect(voter).addRecipient(a(2, ""), token.address, 100, ""))
         .to.be.revertedWithCustomError(plugin, "RecipientLimitExceeded")
         .withArgs(2);
       // Raise to 3 and the previously-blocked add now succeeds.
       await plugin.connect(voter).setMaxRecipients(3);
-      await expect(plugin.connect(voter).addRecipient(a(2), token.address, 100)).to.emit(
+      await expect(plugin.connect(voter).addRecipient(a(2, ""), token.address, 100, "")).to.emit(
         plugin,
         "RecipientAdded"
       );
@@ -221,8 +221,8 @@ describe("PayrollPlugin", () => {
     it("reverts below the current slot count", async () => {
       const a = (i: number) =>
         ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`);
-      await plugin.connect(voter).addRecipient(a(0), token.address, 100);
-      await plugin.connect(voter).addRecipient(a(1), token.address, 100);
+      await plugin.connect(voter).addRecipient(a(0, ""), token.address, 100, "");
+      await plugin.connect(voter).addRecipient(a(1, ""), token.address, 100, "");
       await expect(plugin.connect(voter).setMaxRecipients(1))
         .to.be.revertedWithCustomError(plugin, "MaxRecipientsOutOfRange")
         .withArgs(1, 2, 1000);
@@ -234,13 +234,17 @@ describe("PayrollPlugin", () => {
   });
 
   describe("addRecipient", () => {
-    it("adds and emits RecipientAdded", async () => {
+    it("adds and emits RecipientAdded (incl. description)", async () => {
       const addr = await alice.getAddress();
-      await expect(plugin.connect(voter).addRecipient(addr, token.address, 1000))
+      await expect(
+        plugin.connect(voter).addRecipient(addr, token.address, 1000, "Senior dev monthly salary")
+      )
         .to.emit(plugin, "RecipientAdded")
-        .withArgs(addr, token.address, 1000);
+        .withArgs(addr, token.address, 1000, "Senior dev monthly salary");
       expect(await plugin.recipientCount()).to.equal(1);
       expect(await plugin.indexOfPayee(addr)).to.equal(1);
+      const stored = await plugin.getRecipientAt(0);
+      expect(stored.description).to.equal("Senior dev monthly salary");
 
       const r = await plugin.getRecipientAt(0);
       expect(r.payee).to.equal(addr);
@@ -251,18 +255,18 @@ describe("PayrollPlugin", () => {
 
     it("rejects duplicate payee", async () => {
       const addr = await alice.getAddress();
-      await plugin.connect(voter).addRecipient(addr, token.address, 1000);
-      await expect(plugin.connect(voter).addRecipient(addr, token.address, 5000))
+      await plugin.connect(voter).addRecipient(addr, token.address, 1000, "");
+      await expect(plugin.connect(voter).addRecipient(addr, token.address, 5000, ""))
         .to.be.revertedWithCustomError(plugin, "RecipientAlreadyExists")
         .withArgs(addr);
     });
 
     it("rejects zero payee or zero amount", async () => {
       await expect(
-        plugin.connect(voter).addRecipient(ethers.constants.AddressZero, token.address, 100)
+        plugin.connect(voter).addRecipient(ethers.constants.AddressZero, token.address, 100, "")
       ).to.be.revertedWithCustomError(plugin, "ZeroAddress");
       await expect(
-        plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 0)
+        plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 0, "")
       ).to.be.revertedWithCustomError(plugin, "ZeroAmount");
     });
 
@@ -276,18 +280,19 @@ describe("PayrollPlugin", () => {
           .addRecipient(
             ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`),
             token.address,
-            100
+            100,
+            ""
           );
       }
       const oneMore = ethers.utils.getAddress(`0x${(cap + 1).toString(16).padStart(40, "0")}`);
-      await expect(plugin.connect(voter).addRecipient(oneMore, token.address, 100))
+      await expect(plugin.connect(voter).addRecipient(oneMore, token.address, 100, ""))
         .to.be.revertedWithCustomError(plugin, "RecipientLimitExceeded")
         .withArgs(cap);
     }).timeout(180_000);
 
     it("reverts when caller lacks MANAGE_PAYROLL", async () => {
       await expect(
-        plugin.connect(stranger).addRecipient(await alice.getAddress(), token.address, 100)
+        plugin.connect(stranger).addRecipient(await alice.getAddress(), token.address, 100, "")
       ).to.be.reverted;
     });
   });
@@ -295,7 +300,7 @@ describe("PayrollPlugin", () => {
   describe("removeRecipient (soft delete)", () => {
     it("flips active=false but keeps the slot for history", async () => {
       const addr = await alice.getAddress();
-      await plugin.connect(voter).addRecipient(addr, token.address, 1000);
+      await plugin.connect(voter).addRecipient(addr, token.address, 1000, "");
       await expect(plugin.connect(voter).removeRecipient(addr))
         .to.emit(plugin, "RecipientRemoved")
         .withArgs(addr);
@@ -314,7 +319,7 @@ describe("PayrollPlugin", () => {
         plugin.connect(voter).removeRecipient(await alice.getAddress())
       ).to.be.revertedWithCustomError(plugin, "RecipientNotFound");
 
-      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 1);
+      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 1, "");
       await plugin.connect(voter).removeRecipient(await alice.getAddress());
       await expect(
         plugin.connect(voter).removeRecipient(await alice.getAddress())
@@ -322,7 +327,7 @@ describe("PayrollPlugin", () => {
     });
 
     it("reverts when caller lacks MANAGE_PAYROLL", async () => {
-      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 1);
+      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 1, "");
       await expect(plugin.connect(stranger).removeRecipient(await alice.getAddress())).to.be
         .reverted;
     });
@@ -331,7 +336,7 @@ describe("PayrollPlugin", () => {
   describe("setAmount", () => {
     it("updates amount and emits", async () => {
       const addr = await alice.getAddress();
-      await plugin.connect(voter).addRecipient(addr, token.address, 1000);
+      await plugin.connect(voter).addRecipient(addr, token.address, 1000, "");
       await expect(plugin.connect(voter).setAmount(addr, 2500))
         .to.emit(plugin, "RecipientAmountUpdated")
         .withArgs(addr, 1000, 2500);
@@ -340,7 +345,7 @@ describe("PayrollPlugin", () => {
 
     it("rejects zero amount", async () => {
       const addr = await alice.getAddress();
-      await plugin.connect(voter).addRecipient(addr, token.address, 1000);
+      await plugin.connect(voter).addRecipient(addr, token.address, 1000, "");
       await expect(plugin.connect(voter).setAmount(addr, 0)).to.be.revertedWithCustomError(
         plugin,
         "ZeroAmount"
@@ -352,11 +357,54 @@ describe("PayrollPlugin", () => {
         plugin.connect(voter).setAmount(await alice.getAddress(), 100)
       ).to.be.revertedWithCustomError(plugin, "RecipientNotFound");
 
-      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 1);
+      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 1, "");
       await plugin.connect(voter).removeRecipient(await alice.getAddress());
       await expect(
         plugin.connect(voter).setAmount(await alice.getAddress(), 50)
       ).to.be.revertedWithCustomError(plugin, "RecipientNotFound");
+    });
+  });
+
+  describe("setRecipientDescription", () => {
+    it("updates description and emits RecipientDescriptionSet with old + new", async () => {
+      const addr = await alice.getAddress();
+      await plugin.connect(voter).addRecipient(addr, token.address, 100, "old label");
+      await expect(
+        plugin.connect(voter).setRecipientDescription(addr, "Senior dev monthly salary")
+      )
+        .to.emit(plugin, "RecipientDescriptionSet")
+        .withArgs(addr, "old label", "Senior dev monthly salary");
+      const r = await plugin.getRecipientAt(0);
+      expect(r.description).to.equal("Senior dev monthly salary");
+    });
+
+    it("accepts the empty string (clearing the label)", async () => {
+      const addr = await alice.getAddress();
+      await plugin.connect(voter).addRecipient(addr, token.address, 100, "Senior dev");
+      await plugin.connect(voter).setRecipientDescription(addr, "");
+      expect((await plugin.getRecipientAt(0)).description).to.equal("");
+    });
+
+    it("reverts RecipientNotFound for an unknown payee", async () => {
+      await expect(
+        plugin.connect(voter).setRecipientDescription(await alice.getAddress(), "nope")
+      ).to.be.revertedWithCustomError(plugin, "RecipientNotFound");
+    });
+
+    it("still works on a soft-deleted recipient (lets the DAO correct history)", async () => {
+      const addr = await alice.getAddress();
+      await plugin.connect(voter).addRecipient(addr, token.address, 100, "before");
+      await plugin.connect(voter).removeRecipient(addr);
+      await expect(plugin.connect(voter).setRecipientDescription(addr, "after"))
+        .to.emit(plugin, "RecipientDescriptionSet")
+        .withArgs(addr, "before", "after");
+      expect((await plugin.getRecipientAt(0)).description).to.equal("after");
+    });
+
+    it("gated on MANAGE_PAYROLL", async () => {
+      const addr = await alice.getAddress();
+      await plugin.connect(voter).addRecipient(addr, token.address, 100, "");
+      await expect(plugin.connect(stranger).setRecipientDescription(addr, "nope")).to.be.reverted;
     });
   });
 
@@ -365,9 +413,9 @@ describe("PayrollPlugin", () => {
       const a = await alice.getAddress();
       const b = await bob.getAddress();
       const c = await stranger.getAddress();
-      await plugin.connect(voter).addRecipient(a, token.address, 100);
-      await plugin.connect(voter).addRecipient(b, token.address, 200);
-      await plugin.connect(voter).addRecipient(c, token.address, 300);
+      await plugin.connect(voter).addRecipient(a, token.address, 100, "");
+      await plugin.connect(voter).addRecipient(b, token.address, 200, "");
+      await plugin.connect(voter).addRecipient(c, token.address, 300, "");
       await plugin.connect(voter).removeRecipient(b);
 
       const active = await plugin.allActiveRecipients();
@@ -379,7 +427,7 @@ describe("PayrollPlugin", () => {
 
   describe("executePayroll: revert paths", () => {
     it("reverts NotYetDueThisMonth when called before payDayOfMonth", async () => {
-      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 100);
+      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 100, "");
       await token.mint(dao.address, ethers.utils.parseUnits("1000", 6));
 
       // Day 10 of some month — before pay day 15.
@@ -390,7 +438,7 @@ describe("PayrollPlugin", () => {
     });
 
     it("reverts AlreadyPaidThisPeriod on the second crank within a month", async () => {
-      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 100);
+      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 100, "");
       await token.mint(dao.address, ethers.utils.parseUnits("1000", 6));
 
       await time.setNextBlockTimestamp(payDayTs(2027, 1));
@@ -405,7 +453,7 @@ describe("PayrollPlugin", () => {
     });
 
     it("reverts NoActiveRecipients when all are soft-deleted", async () => {
-      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 100);
+      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 100, "");
       await plugin.connect(voter).removeRecipient(await alice.getAddress());
 
       await time.setNextBlockTimestamp(payDayTs(2027, 1));
@@ -421,7 +469,7 @@ describe("PayrollPlugin", () => {
       const aAddr = await alice.getAddress();
       await plugin
         .connect(voter)
-        .addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6));
+        .addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6), "");
       await token.mint(dao.address, ethers.utils.parseUnits("10000", 6));
 
       await time.setNextBlockTimestamp(payDayTs(2027, 3));
@@ -441,8 +489,8 @@ describe("PayrollPlugin", () => {
       const ethAmt = ethers.utils.parseEther("1");
       const tokAmt = ethers.utils.parseUnits("250", 6);
 
-      await plugin.connect(voter).addRecipient(aAddr, ethers.constants.AddressZero, ethAmt);
-      await plugin.connect(voter).addRecipient(bAddr, token.address, tokAmt);
+      await plugin.connect(voter).addRecipient(aAddr, ethers.constants.AddressZero, ethAmt, "");
+      await plugin.connect(voter).addRecipient(bAddr, token.address, tokAmt, "");
 
       await fundDaoEth(dao, ethers.utils.parseEther("100"));
       await token.mint(dao.address, ethers.utils.parseUnits("10000", 6));
@@ -462,7 +510,7 @@ describe("PayrollPlugin", () => {
     it("skips missed months — no back-pay", async () => {
       const aAddr = await alice.getAddress();
       const monthly = ethers.utils.parseUnits("100", 6);
-      await plugin.connect(voter).addRecipient(aAddr, token.address, monthly);
+      await plugin.connect(voter).addRecipient(aAddr, token.address, monthly, "");
       await token.mint(dao.address, ethers.utils.parseUnits("10000", 6));
 
       // Month 1 (Jan 2028) — pay.
@@ -481,7 +529,7 @@ describe("PayrollPlugin", () => {
     });
 
     it("allows anyone to call the crank (permissionless)", async () => {
-      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 100);
+      await plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 100, "");
       await token.mint(dao.address, 10_000);
 
       await time.setNextBlockTimestamp(payDayTs(2027, 5));
@@ -496,7 +544,7 @@ describe("PayrollPlugin", () => {
       const addrs: string[] = [];
       for (let i = 0; i < n; i++) {
         const addr = ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`);
-        await plugin.connect(voter).addRecipient(addr, token.address, amount);
+        await plugin.connect(voter).addRecipient(addr, token.address, amount, "");
         addrs.push(addr);
       }
       return addrs;
@@ -616,11 +664,11 @@ describe("PayrollPlugin", () => {
         .addRecipient(
           reverting.address,
           ethers.constants.AddressZero,
-          ethers.utils.parseEther("1")
+          ethers.utils.parseEther("1"), ""
         );
       await plugin
         .connect(voter)
-        .addRecipient(good, ethers.constants.AddressZero, ethers.utils.parseEther("2"));
+        .addRecipient(good, ethers.constants.AddressZero, ethers.utils.parseEther("2"), "");
       await fundDaoEth(dao, ethers.utils.parseEther("100"));
 
       const before = await ethers.provider.getBalance(good);
@@ -673,7 +721,7 @@ describe("PayrollPlugin", () => {
           .addRecipient(
             ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`),
             token.address,
-            10
+            10, ""
           );
       }
       await token.mint(dao.address, 10_000_000);
@@ -706,11 +754,11 @@ describe("PayrollPlugin", () => {
         .addRecipient(
           reverting.address,
           ethers.constants.AddressZero,
-          ethers.utils.parseEther("1")
+          ethers.utils.parseEther("1"), ""
         );
       await plugin
         .connect(voter)
-        .addRecipient(goodAddr, ethers.constants.AddressZero, ethers.utils.parseEther("2"));
+        .addRecipient(goodAddr, ethers.constants.AddressZero, ethers.utils.parseEther("2"), "");
 
       await fundDaoEth(dao, ethers.utils.parseEther("100"));
 
@@ -765,7 +813,7 @@ describe("PayrollPlugin", () => {
       const aAddr = await alice.getAddress();
       await plugin
         .connect(voter)
-        .addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6));
+        .addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6), "");
       await token.mint(dao.address, ethers.utils.parseUnits("10000", 6));
       const bounty = ethers.utils.parseEther("0.01");
       await grantBountyPermissionAndConfigure(ethers.constants.AddressZero, bounty, bounty.mul(10));
@@ -789,7 +837,7 @@ describe("PayrollPlugin", () => {
 
     it("pays an ERC20 bounty on a successful crank", async () => {
       const aAddr = await alice.getAddress();
-      await plugin.connect(voter).addRecipient(aAddr, token.address, 100);
+      await plugin.connect(voter).addRecipient(aAddr, token.address, 100, "");
       await token.mint(dao.address, 1_000_000);
       const bounty = 7000;
       await grantBountyPermissionAndConfigure(token.address, bounty, bounty * 10);
@@ -805,8 +853,8 @@ describe("PayrollPlugin", () => {
       // Need a paginated payroll so two cranks land in the same period.
       const a = ethers.utils.getAddress(`0x${"01".padStart(40, "0")}`);
       const b = ethers.utils.getAddress(`0x${"02".padStart(40, "0")}`);
-      await plugin.connect(voter).addRecipient(a, token.address, 100);
-      await plugin.connect(voter).addRecipient(b, token.address, 100);
+      await plugin.connect(voter).addRecipient(a, token.address, 100, "");
+      await plugin.connect(voter).addRecipient(b, token.address, 100, "");
       await token.mint(dao.address, 1_000_000);
       const bounty = 10_000;
       // Cap = 1.5x — second crank's bounty gets clipped to half.
@@ -826,7 +874,7 @@ describe("PayrollPlugin", () => {
 
     it("cap resets on a new period", async () => {
       const a = ethers.utils.getAddress(`0x${"01".padStart(40, "0")}`);
-      await plugin.connect(voter).addRecipient(a, token.address, 100);
+      await plugin.connect(voter).addRecipient(a, token.address, 100, "");
       await token.mint(dao.address, 1_000_000);
       const bounty = 1000;
       await grantBountyPermissionAndConfigure(token.address, bounty, bounty);
@@ -845,7 +893,7 @@ describe("PayrollPlugin", () => {
 
     it("disabled bounty (perCrank=0 or cap=0) emits no KeeperBountyPaid", async () => {
       const aAddr = await alice.getAddress();
-      await plugin.connect(voter).addRecipient(aAddr, token.address, 100);
+      await plugin.connect(voter).addRecipient(aAddr, token.address, 100, "");
       await token.mint(dao.address, 1_000_000);
       // perCrank=0 → no bounty.
       await grantBountyPermissionAndConfigure(token.address, 0, 1000);
@@ -869,7 +917,7 @@ describe("PayrollPlugin", () => {
 
     async function setupPaidJan(): Promise<string> {
       const aAddr = await alice.getAddress();
-      await plugin.connect(voter).addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6));
+      await plugin.connect(voter).addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6), "");
       await token.mint(dao.address, ethers.utils.parseUnits("100000", 6));
       // Regular run for Jan 2027 → lastPayoutPeriod = 2027*12+1.
       await time.setNextBlockTimestamp(payDayTs(2027, 1));

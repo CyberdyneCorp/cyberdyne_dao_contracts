@@ -103,7 +103,7 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       // Seed DAO with USDC from a real holder on the fork.
       await fundFromWhale(usdcAddress, WHALES[chainKey()], dao.address, salary.mul(2));
 
-      await plugin.connect(voter).addRecipient(aAddr, usdcAddress, salary);
+      await plugin.connect(voter).addRecipient(aAddr, usdcAddress, salary, "");
 
       await time.setNextBlockTimestamp(utcTimestamp(2027, 6, PAY_DAY, 12));
       await plugin.executePayroll();
@@ -120,7 +120,7 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       // Enough for 3 months even though month 2 won't be drawn.
       await fundFromWhale(usdcAddress, WHALES[chainKey()], dao.address, salary.mul(5));
 
-      await plugin.connect(voter).addRecipient(aAddr, usdcAddress, salary);
+      await plugin.connect(voter).addRecipient(aAddr, usdcAddress, salary, "");
 
       // Month 1 — Jan 2028.
       await time.setNextBlockTimestamp(utcTimestamp(2028, 1, PAY_DAY, 12));
@@ -153,8 +153,8 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       // Bad recipient first → bit 0 will be set in failureMap.
       await plugin
         .connect(voter)
-        .addRecipient(reverting.address, ethers.constants.AddressZero, ethSalary);
-      await plugin.connect(voter).addRecipient(bAddr, ethers.constants.AddressZero, ethSalary);
+        .addRecipient(reverting.address, ethers.constants.AddressZero, ethSalary, "");
+      await plugin.connect(voter).addRecipient(bAddr, ethers.constants.AddressZero, ethSalary, "");
 
       const bBefore = await ethers.provider.getBalance(bAddr);
 
@@ -184,7 +184,7 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       const aAddr = await alice.getAddress();
       const salary = ethers.utils.parseUnits("1000", 6);
       await fundFromWhale(usdcAddress, WHALES[chainKey()], dao.address, salary.mul(5));
-      await plugin.connect(voter).addRecipient(aAddr, usdcAddress, salary);
+      await plugin.connect(voter).addRecipient(aAddr, usdcAddress, salary, "");
 
       // Pay January 2030 → lastPayoutPeriod = 2030*12+1.
       await time.setNextBlockTimestamp(utcTimestamp(2030, 1, PAY_DAY, 12));

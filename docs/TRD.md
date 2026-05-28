@@ -369,14 +369,17 @@ uint256 public payoutGracePeriod;       // seconds after payDay during which cra
 
 Vote-gated (admin):
 ```solidity
-function addRecipient(address payee, address token, uint256 amount)
-    external auth(MANAGE_PAYROLL_PERMISSION_ID);
+function addRecipient(address payee, address token, uint256 amount, string calldata description)
+    external auth(MANAGE_PAYROLL_PERMISSION_ID);  // description is a free-form human label
 
 function removeRecipient(address payee)
     external auth(MANAGE_PAYROLL_PERMISSION_ID);
 
 function setAmount(address payee, uint256 newAmount)
     external auth(MANAGE_PAYROLL_PERMISSION_ID);
+
+function setRecipientDescription(address payee, string calldata description)
+    external auth(MANAGE_PAYROLL_PERMISSION_ID);  // edit the label after creation
 
 function setPayDayOfMonth(uint8 day)
     external auth(MANAGE_PAYROLL_PERMISSION_ID);  // require 1 <= day <= 28

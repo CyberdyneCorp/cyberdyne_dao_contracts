@@ -22,11 +22,15 @@
     newPayee,
     newToken,
     newAmount,
+    newDescription,
     addAction,
     setAmtPayee,
     setAmtToken,
     setAmtValue,
     setAmountAction,
+    setDescPayee,
+    setDescValue,
+    setDescAction,
     maxRecip,
     setMaxAction,
     forceYear,
@@ -89,12 +93,15 @@
   {:else}
     <table>
       <thead>
-        <tr><th>Payee</th><th>Token</th><th>Amount</th></tr>
+        <tr><th>Payee</th><th>Description</th><th>Token</th><th>Amount</th></tr>
       </thead>
       <tbody>
         {#each d.recipients as r}
           <tr>
             <td><AddressTag address={r.payee} /></td>
+            <td title={r.description || ""}>
+              {#if r.description}{r.description}{:else}<span class="muted">—</span>{/if}
+            </td>
             <td>{resolveToken(d.cfg, r.token).symbol}</td>
             <td>{formatToken(r.amount, resolveToken(d.cfg, r.token))}</td>
           </tr>
@@ -127,6 +134,7 @@
       <label>Payee <input bind:value={$newPayee} placeholder="0x..." /></label>
       <label>Token <input bind:value={$newToken} placeholder="0x... (or 0x0 for ETH)" /></label>
       <label>Amount (decimal) <input bind:value={$newAmount} placeholder="1000" /></label>
+      <label>Description <input bind:value={$newDescription} placeholder="Senior dev monthly salary" /></label>
       <button on:click={vm.buildAddRecipient}>Build</button>
     </div>
     <ProposeAction action={$addAction} />
@@ -141,6 +149,17 @@
       <button on:click={vm.buildSetAmount}>Build</button>
     </div>
     <ProposeAction action={$setAmountAction} />
+  </section>
+
+  <section class="card-section">
+    <h2>Propose: relabel recipient (description)</h2>
+    <p class="muted">Update or clear a recipient's free-form description.</p>
+    <div class="form">
+      <label>Payee <input bind:value={$setDescPayee} placeholder="0x..." /></label>
+      <label>New description <input bind:value={$setDescValue} placeholder="Senior dev monthly salary" /></label>
+      <button on:click={vm.buildSetRecipientDescription}>Build</button>
+    </div>
+    <ProposeAction action={$setDescAction} />
   </section>
 
   <section class="card-section">

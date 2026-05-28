@@ -1,6 +1,6 @@
 # Slither per-plugin sweep
 
-Date: 2026-05-28T10:06Z · Slither 0.11.5
+Date: 2026-05-28T17:10Z · Slither 0.11.5
 Command: `slither <path> --filter-paths "lib/|node_modules/|test/" --json -`
 
 | Plugin | High | Medium | Low | Info | Optim. |

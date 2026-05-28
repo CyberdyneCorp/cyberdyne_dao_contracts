@@ -9,18 +9,35 @@ import {Action} from "@aragon/osx-commons-contracts/src/executors/IExecutor.sol"
 interface IPayrollPlugin {
     /// @notice On-chain recipient record. `active = false` is a soft delete so
     ///         payout history (subgraph + UI) stays intact across removals.
+    ///         `description` is a free-form human label ("Senior dev monthly
+    ///         salary", "DevOps retainer", …) the DAO can read in the UI and
+    ///         indexers can carry into the subgraph.
     struct Recipient {
         address payee;
         address token; // address(0) = native ETH
         uint256 amount;
         bool active;
+        string description;
     }
 
     // --- Events ---
 
-    event RecipientAdded(address indexed payee, address indexed token, uint256 amount);
+    event RecipientAdded(
+        address indexed payee,
+        address indexed token,
+        uint256 amount,
+        string description
+    );
     event RecipientRemoved(address indexed payee);
     event RecipientAmountUpdated(address indexed payee, uint256 oldAmount, uint256 newAmount);
+    /// @notice The free-form `description` for `payee` was changed (added,
+    ///         updated, or cleared). Indexers should treat this as the
+    ///         authoritative source for the current description.
+    event RecipientDescriptionSet(
+        address indexed payee,
+        string oldDescription,
+        string newDescription
+    );
     event PayDayUpdated(uint8 oldDay, uint8 newDay);
     /// @notice The settable recipient-slot cap (`MAX_RECIPIENTS()`) was changed.
     event MaxRecipientsUpdated(uint256 oldMax, uint256 newMax);
@@ -85,11 +102,30 @@ interface IPayrollPlugin {
 
     // --- Vote-gated mutators ---
 
-    function addRecipient(address payee, address token, uint256 amount) external;
+    /// @notice Add a new payroll recipient.
+    /// @param payee       EOA / contract that receives the recurring payment.
+    /// @param token       ERC-20 paid; `address(0)` = native ETH.
+    /// @param amount      Atomic amount per period.
+    /// @param description Free-form human label ("Senior dev monthly salary",
+    ///                    …). May be empty; updateable later via
+    ///                    `setRecipientDescription`.
+    function addRecipient(
+        address payee,
+        address token,
+        uint256 amount,
+        string calldata description
+    ) external;
 
     function removeRecipient(address payee) external;
 
     function setAmount(address payee, uint256 newAmount) external;
+
+    /// @notice Update the free-form description for an existing recipient.
+    ///         Vote-gated (`MANAGE_PAYROLL`); reverts `RecipientNotFound` if
+    ///         the payee was never added (soft-deleted slots are still
+    ///         editable so historic records can be corrected). Pass an empty
+    ///         string to clear.
+    function setRecipientDescription(address payee, string calldata description) external;
 
     /// @notice Set the day-of-month the crank may run. Restricted to 1..28 to avoid
     ///         February / 30/31 calendar edge cases.

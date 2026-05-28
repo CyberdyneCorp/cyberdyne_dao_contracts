@@ -85,11 +85,18 @@ export function payrollAddRecipient(
   cfg: ChainConfig,
   payee: string,
   token: string,
-  amount: ethers.BigNumber
+  amount: ethers.BigNumber,
+  description = ""
 ): ProposalAction {
   const dao = requireDao(cfg);
-  return action(dao.payroll, ifaceFor("PayrollPlugin"), "addRecipient", [payee, token, amount],
-    `Payroll: add ${payee} (${token === ethers.constants.AddressZero ? "ETH" : token}) amount ${amount.toString()}`);
+  const label = description ? ` — "${description}"` : "";
+  return action(
+    dao.payroll,
+    ifaceFor("PayrollPlugin"),
+    "addRecipient",
+    [payee, token, amount, description],
+    `Payroll: add ${payee} (${token === ethers.constants.AddressZero ? "ETH" : token}) amount ${amount.toString()}${label}`
+  );
 }
 
 export function payrollRemoveRecipient(cfg: ChainConfig, payee: string): ProposalAction {
@@ -102,6 +109,21 @@ export function payrollSetAmount(cfg: ChainConfig, payee: string, newAmount: eth
   const dao = requireDao(cfg);
   return action(dao.payroll, ifaceFor("PayrollPlugin"), "setAmount", [payee, newAmount],
     `Payroll: set ${payee} amount → ${newAmount.toString()}`);
+}
+
+export function payrollSetRecipientDescription(
+  cfg: ChainConfig,
+  payee: string,
+  description: string
+): ProposalAction {
+  const dao = requireDao(cfg);
+  return action(
+    dao.payroll,
+    ifaceFor("PayrollPlugin"),
+    "setRecipientDescription",
+    [payee, description],
+    `Payroll: relabel ${payee} → "${description}"`
+  );
 }
 
 export function payrollSetPayDay(cfg: ChainConfig, day: number): ProposalAction {

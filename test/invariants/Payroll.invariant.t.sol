@@ -44,7 +44,7 @@ contract PayrollHandler is Test {
             uint160(uint256(keccak256(abi.encode(seed, payees.length, block.number))) | 1)
         );
         if (payee == address(0)) return;
-        try plugin.addRecipient(payee, address(token), amount) {
+        try plugin.addRecipient(payee, address(token), amount, "") {
             payees.push(payee);
         } catch {}
     }

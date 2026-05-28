@@ -4,8 +4,8 @@ Per-plugin: every external function and every event must appear in at least one 
 
 ## PayrollPlugin
 
-- Plugin-specific functions: **32** (32 referenced)
-- Plugin-specific events: **9** (9 referenced)
+- Plugin-specific functions: **33** (33 referenced)
+- Plugin-specific events: **10** (10 referenced)
 - ✓ every plugin-specific external function and event is referenced.
 
 ## UniswapV4Plugin
@@ -16,13 +16,9 @@ Per-plugin: every external function and every event must appear in at least one 
 
 ## UniswapV3Plugin
 
-- Plugin-specific functions: **22** (20 referenced)
-- Plugin-specific events: **7** (6 referenced)
-- ⚠ Unreferenced functions:
-  - `allowedToken`
-  - `previewIncreaseLiquidityActions`
-- ⚠ Unreferenced events:
-  - `AllowedTokenSet`
+- Plugin-specific functions: **22** (22 referenced)
+- Plugin-specific events: **7** (7 referenced)
+- ✓ every plugin-specific external function and event is referenced.
 
 ## AaveLendingPlugin
 
@@ -35,17 +31,3 @@ Per-plugin: every external function and every event must appear in at least one 
 - Plugin-specific functions: **23** (23 referenced)
 - Plugin-specific events: **7** (7 referenced)
 - ✓ every plugin-specific external function and event is referenced.
-
----
-
-## Findings to surface in P8 Phase B reviews
-
-### UniswapV3Plugin (3 items)
-
-| # | Item | Type | Severity | Action |
-|---|---|---|---|---|
-| 1 | `previewIncreaseLiquidityActions` not exercised by any test | Function | Low — view helper, no on-chain side effects, but the checklist requires every external function to have a test | Add a `previewIncreaseLiquidityActions` case to `test/plugins/PreviewActions.unit.test.ts` (mirror the existing `previewMintActions` / `previewDecreaseLiquidityActions` pattern) |
-| 2 | `allowedToken(address) view` not asserted by V3 tests | Function (getter) | Low | Assert `allowedToken(addr)` returns expected `true`/`false` after `setAllowedToken` in V3's `setAllowedToken` test |
-| 3 | `AllowedTokenSet` event not asserted in V3 | Event | Low | Add `.to.emit(plugin, "AllowedTokenSet")` to V3's `setAllowedToken` test (V4 already does this) |
-
-All three are small additions (<10 lines each) and close out the checklist's §6.Tests bullets for the V3 review.

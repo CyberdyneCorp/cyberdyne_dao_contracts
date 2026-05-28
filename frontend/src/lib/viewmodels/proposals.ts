@@ -41,20 +41,29 @@ export type Kind =
   | "aave-setAllowedAsset"
   | "payroll-removeRecipient"
   | "payroll-setAmount"
-  | "payroll-setPayDayOfMonth";
+  | "payroll-setPayDayOfMonth"
+  | "payroll-setRecipientDescription";
 
 export const needsArgB = new Set<Kind>([
   "uniswap-setAllowedToken",
   "uniswapV3-setAllowedToken",
   "aave-setAllowedAsset",
   "payroll-setAmount",
+  "payroll-setRecipientDescription",
   "raw",
 ]);
 
 /** Field spec per kind so the View renders only the inputs each action needs,
  *  with proper labels (no more generic "Arg A"). The build() switch maps these
  *  field stores back to concrete ProposalAction values. */
-export type FieldType = "address" | "uint" | "decimal" | "bool" | "bytes" | "token-select";
+export type FieldType =
+  | "address"
+  | "uint"
+  | "decimal"
+  | "bool"
+  | "bytes"
+  | "string"
+  | "token-select";
 export type FieldSpec = {store: "a" | "b" | "c"; label: string; type: FieldType; placeholder?: string};
 export type KindMeta = {label: string; group: string; fields: FieldSpec[]};
 
@@ -146,6 +155,14 @@ export const KIND_META: Record<Kind, KindMeta> = {
     label: "Payroll.setPayDayOfMonth(1..28)",
     group: "Payroll",
     fields: [{store: "a", label: "Day of month (1..28)", type: "uint", placeholder: "1"}],
+  },
+  "payroll-setRecipientDescription": {
+    label: "Payroll.setRecipientDescription(payee, description)",
+    group: "Payroll",
+    fields: [
+      {store: "a", label: "Payee (address)", type: "address", placeholder: "0x…"},
+      {store: "b", label: "New description", type: "string", placeholder: "Senior dev monthly salary"},
+    ],
   },
 };
 
@@ -268,6 +285,9 @@ export function createProposalsVM() {
           break;
         case "payroll-setPayDayOfMonth":
           result = actions.payrollSetPayDay(cfg, parseInt(a, 10));
+          break;
+        case "payroll-setRecipientDescription":
+          result = actions.payrollSetRecipientDescription(cfg, a, b);
           break;
       }
       built.set(result!);

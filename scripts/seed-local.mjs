@@ -73,12 +73,16 @@ async function main() {
   await (await usdcW.transfer(d.dao, u(80000))).wait();
   await (await wethW.transfer(d.dao, e(8))).wait();
 
-  const payroll = new ethers.Contract(d.payroll, ["function addRecipient(address,address,uint256)"], dao);
+  const payroll = new ethers.Contract(
+    d.payroll,
+    ["function addRecipient(address,address,uint256,string)"],
+    dao
+  );
   console.log("· payroll: 4 recipients");
-  await (await payroll.addRecipient(A1, USDC, u(5000))).wait();
-  await (await payroll.addRecipient(A2, USDC, u(3500))).wait();
-  await (await payroll.addRecipient(A3, ZERO, e(1.5))).wait();
-  await (await payroll.addRecipient(A4, WETH, e(0.8))).wait();
+  await (await payroll.addRecipient(A1, USDC, u(5000), "Senior dev monthly salary")).wait();
+  await (await payroll.addRecipient(A2, USDC, u(3500), "Frontend dev monthly salary")).wait();
+  await (await payroll.addRecipient(A3, ZERO, e(1.5), "DevOps retainer (ETH)")).wait();
+  await (await payroll.addRecipient(A4, WETH, e(0.8), "Security audit retainer (WETH)")).wait();
 
   const cost = new ethers.Contract(d.costRegistry, ["function registerEntry(string,string,uint256,uint32,address)"], dao);
   console.log("· cost registry: 5 entries");

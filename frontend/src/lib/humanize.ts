@@ -38,18 +38,25 @@ type Recipe = (call: DecodedCall, cfg: ChainConfig | undefined) => string;
 
 const RECIPES: Record<string, Recipe> = {
   // --- PayrollPlugin --------------------------------------------------------
-  "addRecipient(address,address,uint256)": (c, cfg) => {
-    const [payee, token, amount] = c.args!;
+  "addRecipient(address,address,uint256,string)": (c, cfg) => {
+    const [payee, token, amount, description] = c.args!;
+    const label = description.value ? ` — "${description.value}"` : "";
     return `Payroll: add ${addrLabel(cfg, payee.value)} as monthly recipient, ${tokenAmount(
       cfg,
       token.value,
       amount.value
-    )}`;
+    )}${label}`;
   },
   "removeRecipient(address)": (c, cfg) =>
     `Payroll: remove ${addrLabel(cfg, c.args![0].value)} from monthly recipients`,
   "setAmount(address,uint256)": (c, cfg) =>
     `Payroll: update ${addrLabel(cfg, c.args![0].value)}'s salary → ${c.args![1].value} atomic units`,
+  "setRecipientDescription(address,string)": (c, cfg) => {
+    const [payee, description] = c.args!;
+    return description.value
+      ? `Payroll: relabel ${addrLabel(cfg, payee.value)} → "${description.value}"`
+      : `Payroll: clear ${addrLabel(cfg, payee.value)}'s description`;
+  },
   "setPayDayOfMonth(uint8)": (c) => {
     const day = parseInt(c.args![0].value, 10);
     return `Payroll: move monthly pay day → ${ordinal(day)} of the month`;

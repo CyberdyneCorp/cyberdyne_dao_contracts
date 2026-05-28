@@ -70,9 +70,10 @@ Signatures freeze at **P1**. Any change after P5 (bootstrap) is breaking for the
 
 | Event | Signature | Indexed | Subgraph entity | UI surface |
 |---|---|---|---|---|
-| `RecipientAdded` | `(address payee, address token, uint256 amount)` | `payee`, `token` | `PayrollRecipient` (created) | Payroll schedule screen |
+| `RecipientAdded` | `(address payee, address token, uint256 amount, string description)` | `payee`, `token` | `PayrollRecipient` (created, incl. initial `description`) | Payroll schedule screen |
 | `RecipientRemoved` | `(address payee)` | `payee` | `PayrollRecipient` (active=false) | Payroll schedule screen |
 | `RecipientAmountUpdated` | `(address payee, uint256 oldAmount, uint256 newAmount)` | `payee` | `PayrollRecipient` (amount updated) + `RecipientAmountChange` history | Payroll schedule screen + per-recipient history drawer |
+| `RecipientDescriptionSet` | `(address payee, string oldDescription, string newDescription)` | `payee` | `PayrollRecipient` (description updated) | Payroll schedule screen — recipient label column |
 | `PayDayUpdated` | `(uint8 oldDay, uint8 newDay)` | — | `PayrollConfig` (mutable singleton) | Payroll schedule screen — next-payout countdown |
 | `MaxRecipientsUpdated` | `(uint256 oldMax, uint256 newMax)` | — | `PayrollConfig` (`maxRecipients` field) | Payroll admin: recipient-cap config |
 | `PayrollExecuted` | `(uint256 period, uint256 recipientCount, uint256 failureMap)` | `period` | `PayrollPayout` (per batch) + N×`PayrollPayoutItem` (one per recipient, `failed` derived from `failureMap`) | Payroll schedule screen → per-month execution log |

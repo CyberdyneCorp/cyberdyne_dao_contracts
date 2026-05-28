@@ -474,7 +474,7 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork", "localFork"], () => {
       const payee = ethers.Wallet.createRandom().address;
       const payroll = PayrollPlugin__factory.connect(payrollAddress, voter);
       const salary = ethers.utils.parseEther("0.1");
-      await (await payroll.addRecipient(payee, ethers.constants.AddressZero, salary)).wait();
+      await (await payroll.addRecipient(payee, ethers.constants.AddressZero, salary, "")).wait();
 
       // Time-travel to pay day + run crank.
       const payeeBefore = await ethers.provider.getBalance(payee);

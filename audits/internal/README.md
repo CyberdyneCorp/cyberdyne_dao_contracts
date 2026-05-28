@@ -2,7 +2,9 @@
 
 This folder holds the artifacts produced by the P8 closeout pre-work — every check that can be run against the code without human judgment. Phase B (per-plugin signed review checklists under `docs/reviews/`) builds on top of these.
 
-Generated against commit `7944e1e` on 2026-05-28.
+Generated against HEAD on 2026-05-28 (Payroll's `description` extension —
+`setRecipientDescription` + `RecipientDescriptionSet` event refreshed in
+this run).
 
 ## Artifacts
 

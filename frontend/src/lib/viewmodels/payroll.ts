@@ -15,7 +15,13 @@ import {errorMessage} from "$lib/format";
 
 const ZERO = ethers.constants.AddressZero;
 
-export type Recipient = {payee: string; token: string; amount: ethers.BigNumber; active: boolean};
+export type Recipient = {
+  payee: string;
+  token: string;
+  amount: ethers.BigNumber;
+  active: boolean;
+  description: string;
+};
 export type PayrollData = {
   cfg: ChainConfig;
   recipients: Recipient[];
@@ -39,12 +45,17 @@ export function createPayrollVM() {
   const newPayee = writable("");
   const newToken = writable(ZERO);
   const newAmount = writable("");
+  const newDescription = writable("");
   const addAction = writable<ProposalAction | null>(null);
 
   const setAmtPayee = writable("");
   const setAmtToken = writable(ZERO);
   const setAmtValue = writable("");
   const setAmountAction = writable<ProposalAction | null>(null);
+
+  const setDescPayee = writable("");
+  const setDescValue = writable("");
+  const setDescAction = writable<ProposalAction | null>(null);
 
   const maxRecip = writable("");
   const setMaxAction = writable<ProposalAction | null>(null);
@@ -132,7 +143,17 @@ export function createPayrollVM() {
       const token = get(newToken);
       const decimals = token === ZERO ? 18 : 6;
       const amount = ethers.utils.parseUnits(get(newAmount) || "0", decimals);
-      addAction.set(actions.payrollAddRecipient(cfg, get(newPayee), token, amount));
+      addAction.set(
+        actions.payrollAddRecipient(cfg, get(newPayee), token, amount, get(newDescription) || "")
+      );
+    });
+  }
+
+  function buildSetRecipientDescription(): void {
+    guardedBuild(setDescAction, (cfg) => {
+      setDescAction.set(
+        actions.payrollSetRecipientDescription(cfg, get(setDescPayee), get(setDescValue))
+      );
     });
   }
 
@@ -176,11 +197,15 @@ export function createPayrollVM() {
     newPayee,
     newToken,
     newAmount,
+    newDescription,
     addAction,
     setAmtPayee,
     setAmtToken,
     setAmtValue,
     setAmountAction,
+    setDescPayee,
+    setDescValue,
+    setDescAction,
     maxRecip,
     setMaxAction,
     forceYear,
@@ -190,6 +215,7 @@ export function createPayrollVM() {
     runCrank,
     buildAddRecipient,
     buildSetAmount,
+    buildSetRecipientDescription,
     buildSetMaxRecipients,
     buildForcePay,
   };

@@ -86,12 +86,18 @@ For payrolls larger than one batch can hold, `executePayrollPage(uint256 maxCoun
 
 | Event | Trigger | Indexed |
 |---|---|---|
-| `RecipientAdded(payee, token, amount)` | `addRecipient` | `payee`, `token` |
+| `RecipientAdded(payee, token, amount, description)` | `addRecipient` | `payee`, `token` |
 | `RecipientRemoved(payee)` | `removeRecipient` | `payee` |
 | `RecipientAmountUpdated(payee, old, new)` | `setAmount` | `payee` |
+| `RecipientDescriptionSet(payee, oldDescription, newDescription)` | `setRecipientDescription`, and once per `addRecipient` with a non-empty description? — *no, see note*; this event covers post-creation edits | `payee` |
 | `PayDayUpdated(old, new)` | `setPayDayOfMonth` | — |
 | `PayrollExecuted(period, count, failureMap)` | `executePayroll` / `executePayrollPage` (once per batch/page) | `period` |
 | `PayrollPeriodCompleted(period)` | final page of a period (period locks) | `period` |
+
+> The recipient's free-form `description` is set at creation (carried in
+> `RecipientAdded`) and edited later via `setRecipientDescription` (which
+> emits `RecipientDescriptionSet(payee, oldDescription, newDescription)`).
+> Indexers should treat the most recent of these two as the current label.
 
 ## 8. Storage layout (UUPS upgrade safety)
 

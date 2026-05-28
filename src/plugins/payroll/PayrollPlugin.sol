@@ -113,7 +113,8 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
     function addRecipient(
         address payee,
         address token,
-        uint256 amount
+        uint256 amount,
+        string calldata description
     ) external override auth(MANAGE_PAYROLL_PERMISSION_ID) {
         if (payee == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
@@ -122,10 +123,33 @@ contract PayrollPlugin is PluginUUPSUpgradeable, IPayrollPlugin {
             revert RecipientLimitExceeded(_maxRecipients);
         }
 
-        _recipients.push(Recipient({payee: payee, token: token, amount: amount, active: true}));
+        _recipients.push(
+            Recipient({
+                payee: payee,
+                token: token,
+                amount: amount,
+                active: true,
+                description: description
+            })
+        );
         indexOfPayee[payee] = _recipients.length; // 1-based
 
-        emit RecipientAdded(payee, token, amount);
+        emit RecipientAdded(payee, token, amount, description);
+    }
+
+    /// @inheritdoc IPayrollPlugin
+    function setRecipientDescription(
+        address payee,
+        string calldata description
+    ) external override auth(MANAGE_PAYROLL_PERMISSION_ID) {
+        uint256 idx = indexOfPayee[payee];
+        if (idx == 0) revert RecipientNotFound(payee);
+
+        Recipient storage r = _recipients[idx - 1];
+        string memory oldDescription = r.description;
+        r.description = description;
+
+        emit RecipientDescriptionSet(payee, oldDescription, description);
     }
 
     /// @inheritdoc IPayrollPlugin
