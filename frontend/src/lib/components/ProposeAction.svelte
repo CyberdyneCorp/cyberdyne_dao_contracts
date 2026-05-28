@@ -22,6 +22,7 @@
   import {governanceConfigured, proposeActions, simulateProposalExecution} from "$lib/governance";
   import type {ProposalAction} from "$lib/actions";
   import {decodeCall, targetDisplay} from "$lib/decode";
+  import {humanize, humanizeBatch} from "$lib/humanize";
   import {errorMessage} from "$lib/format";
 
   export let action: ProposalAction | ProposalAction[] | null = null;
@@ -96,6 +97,7 @@
 
 {#if actions.length > 0}
   <div class="built">
+    <div class="humanized">{humanizeBatch(decoded, cfg)}</div>
     <div class="built-summary">
       {summary}
       {#if actions.length > 1}
@@ -106,7 +108,9 @@
     {#each actions as a, i}
       {@const d = decoded[i]}
       <div class="act">
-        {#if actions.length > 1}<div class="act-head">action {i + 1} / {actions.length}</div>{/if}
+        {#if actions.length > 1}
+          <div class="act-head">action {i + 1} / {actions.length} — <span class="act-human">{humanize(d, cfg)}</span></div>
+        {/if}
         <table class="decode">
           <tbody>
             <tr>
@@ -198,9 +202,23 @@
     margin: 0.5rem 0 1.25rem;
     background: #fbfcfe;
   }
-  .built-summary {
+  .humanized {
+    font-size: 1rem;
     font-weight: 600;
+    color: #1a3f7f;
+    margin-bottom: 0.35rem;
+    line-height: 1.35;
+  }
+  .built-summary {
+    font-size: 0.78rem;
+    color: #5a6b8a;
     margin-bottom: 0.6rem;
+  }
+  .act-human {
+    color: #1a3f7f;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 0.85rem;
   }
   .act + .act {
     margin-top: 0.75rem;

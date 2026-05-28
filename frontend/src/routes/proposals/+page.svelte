@@ -7,8 +7,17 @@
   import {wallet} from "$lib/wallet";
   import {chainConfig} from "$lib/chains";
   import {governanceConfigured, VoteOption} from "$lib/governance";
-  import {createProposalsVM, voteLabel, tsLabel, needsArgB} from "$lib/viewmodels/proposals";
+  import {
+    createProposalsVM,
+    voteLabel,
+    tsLabel,
+    KIND_META,
+    KIND_GROUPS,
+    type Kind,
+  } from "$lib/viewmodels/proposals";
   import {decodeCall, targetDisplay} from "$lib/decode";
+  import {humanize} from "$lib/humanize";
+  import TokenSelect from "$lib/components/TokenSelect.svelte";
 
   const vm = createProposalsVM();
   const {kind, argA, argB, argC, built, buildSim, submitMsg, submitting, proposals, loading, rowBusy, simResults} =
@@ -16,6 +25,17 @@
   const {exAddress, exAbi, exLoading, exError, exPaste, exFn, exArgs, exValue} = vm;
 
   let showPaste = false;
+
+  // Per-kind field spec for the typed form; resolves which stores (a/b/c) are
+  // active for the selected action and how to label them.
+  $: spec = KIND_META[$kind];
+  // Group the kinds for the action picker's <optgroups>.
+  $: groupedKinds = KIND_GROUPS.map((g) => ({
+    group: g,
+    kinds: (Object.entries(KIND_META) as Array<[Kind, (typeof KIND_META)[Kind]]>)
+      .filter(([, m]) => m.group === g)
+      .map(([k, m]) => ({kind: k, label: m.label})),
+  })).filter((g) => g.kinds.length > 0);
 
   // Live human-readable decode of whatever the user has Built.
   $: decoded = $built ? decodeCall(cfg, $built.to, $built.data) : null;
@@ -55,32 +75,34 @@
     <label>
       Action
       <select bind:value={$kind}>
-        <option value="raw">Raw call (any contract) — to, data, value</option>
-        <option value="uniswap-setRouter">Uniswap.setUniversalRouter(address)</option>
-        <option value="uniswap-setAllowedToken">UniswapV4.setAllowedToken(address, bool)</option>
-        <option value="uniswap-setV4PositionManager">UniswapV4.setV4PositionManager(address)</option>
-        <option value="uniswapV3-setPositionManager">UniswapV3.setPositionManager(address)</option>
-        <option value="uniswapV3-setAllowedToken">UniswapV3.setAllowedToken(address, bool)</option>
-        <option value="aave-setAdapter">AAVE.setAdapter(address)</option>
-        <option value="aave-setAllowedAsset">AAVE.setAllowedAsset(address, bool)</option>
-        <option value="payroll-removeRecipient">Payroll.removeRecipient(address)</option>
-        <option value="payroll-setAmount">Payroll.setAmount(payee, newAmount)</option>
-        <option value="payroll-setPayDayOfMonth">Payroll.setPayDayOfMonth(1..28)</option>
+        {#each groupedKinds as g}
+          <optgroup label={g.group}>
+            {#each g.kinds as k}
+              <option value={k.kind}>{k.label}</option>
+            {/each}
+          </optgroup>
+        {/each}
       </select>
     </label>
-    <label>
-      {$kind === "raw" ? "to (address)" : "Arg A"}
-      <input bind:value={$argA} placeholder="address / number" />
-    </label>
-    {#if needsArgB.has($kind)}
+    {#each spec.fields as f (f.label)}
       <label>
-        {$kind === "raw" ? "data (0x…)" : "Arg B"}
-        <input bind:value={$argB} placeholder={$kind === "raw" ? "0x…" : "value / true|false"} />
+        {f.label}
+        {#if f.type === "token-select"}
+          <TokenSelect bind:value={$argA} {cfg} placeholder="0x… token" />
+        {:else if f.type === "bool"}
+          <select bind:value={$argB}>
+            <option value="true">true</option>
+            <option value="false">false</option>
+          </select>
+        {:else if f.store === "a"}
+          <input bind:value={$argA} placeholder={f.placeholder ?? ""} />
+        {:else if f.store === "b"}
+          <input bind:value={$argB} placeholder={f.placeholder ?? ""} />
+        {:else}
+          <input bind:value={$argC} placeholder={f.placeholder ?? ""} />
+        {/if}
       </label>
-    {/if}
-    {#if $kind === "raw"}
-      <label>value (wei) <input bind:value={$argC} placeholder="0" /></label>
-    {/if}
+    {/each}
     <button on:click={vm.build}>Build</button>
   </div>
 
@@ -159,6 +181,9 @@
 
   {#if $built}
     <div class="built">
+      {#if decoded}
+        <div class="humanized">{humanize(decoded, cfg)}</div>
+      {/if}
       <div class="built-summary">{$built.summary}</div>
       {#if decoded}
         <table class="decode">
@@ -246,21 +271,23 @@
             <tr>
               <td>{p.id}</td>
               <td title={p.summary}>
-                {p.summary.slice(0, 48)}{p.summary.length > 48 ? "…" : ""}
                 {#if p.actions.length}
+                  {@const firstDc = decodeCall(cfg, p.actions[0].to, p.actions[0].data)}
+                  <span class="row-human">{humanize(firstDc, cfg)}{p.actions.length > 1 ? `  (+${p.actions.length - 1} more)` : ""}</span>
                   <details class="row-decode">
                     <summary class="muted">{p.actions.length} action(s)</summary>
                     <ol>
                       {#each p.actions as a}
                         {@const dc = decodeCall(cfg, a.to, a.data)}
                         <li>
-                          <span class="muted">{targetDisplay(dc)}</span>
-                          {#if dc.signature}<code>{dc.fn}()</code>{:else}<span class="warn">raw {dc.selector}</span>{/if}
+                          <span>{humanize(dc, cfg)}</span>
+                          <br /><span class="muted small-sub">{targetDisplay(dc)} · {#if dc.signature}<code>{dc.fn}()</code>{:else}raw {dc.selector}{/if}</span>
                         </li>
                       {/each}
                     </ol>
                   </details>
                 {:else}
+                  {p.summary.slice(0, 48)}{p.summary.length > 48 ? "…" : ""}
                   <br /><span class="muted">0 action(s)</span>
                 {/if}
               </td>
@@ -360,9 +387,26 @@
     margin: 0.5rem 0 1.25rem;
     background: #fbfcfe;
   }
-  .built-summary {
+  .humanized {
+    font-size: 1rem;
     font-weight: 600;
+    color: #1a3f7f;
+    margin-bottom: 0.35rem;
+    line-height: 1.35;
+  }
+  .built-summary {
+    font-size: 0.78rem;
+    color: #5a6b8a;
     margin-bottom: 0.6rem;
+  }
+  .row-human {
+    font-weight: 500;
+    color: #1a3f7f;
+    display: inline-block;
+    line-height: 1.3;
+  }
+  .small-sub {
+    font-size: 0.72rem;
   }
   table.decode {
     border-collapse: collapse;

@@ -9,7 +9,7 @@ import * as actions from "$lib/actions";
 import type {ProposalAction} from "$lib/actions";
 import type {ChainConfig} from "$lib/types";
 import {toasts} from "$lib/stores/toasts";
-import {errorMessage} from "$lib/format";
+import {errorMessage, resolveToken, shortAddress} from "$lib/format";
 import {
   bundledAbiFor,
   sourcifyAbi,
@@ -30,6 +30,8 @@ import {
 
 export type Kind =
   | "raw"
+  | "treasury-erc20-transfer"
+  | "treasury-eth-transfer"
   | "uniswap-setRouter"
   | "uniswap-setAllowedToken"
   | "uniswap-setV4PositionManager"
@@ -48,6 +50,107 @@ export const needsArgB = new Set<Kind>([
   "payroll-setAmount",
   "raw",
 ]);
+
+/** Field spec per kind so the View renders only the inputs each action needs,
+ *  with proper labels (no more generic "Arg A"). The build() switch maps these
+ *  field stores back to concrete ProposalAction values. */
+export type FieldType = "address" | "uint" | "decimal" | "bool" | "bytes" | "token-select";
+export type FieldSpec = {store: "a" | "b" | "c"; label: string; type: FieldType; placeholder?: string};
+export type KindMeta = {label: string; group: string; fields: FieldSpec[]};
+
+export const KIND_META: Record<Kind, KindMeta> = {
+  "raw": {
+    label: "Raw call (any contract)",
+    group: "Raw",
+    fields: [
+      {store: "a", label: "to (address)", type: "address", placeholder: "0x…"},
+      {store: "b", label: "data (0x…)", type: "bytes", placeholder: "0x"},
+      {store: "c", label: "value (wei)", type: "uint", placeholder: "0"},
+    ],
+  },
+  "treasury-erc20-transfer": {
+    label: "Transfer ERC-20 from DAO treasury",
+    group: "Treasury",
+    fields: [
+      {store: "a", label: "Token", type: "token-select"},
+      {store: "b", label: "Recipient (address)", type: "address", placeholder: "0x…"},
+      {store: "c", label: "Amount (decimal)", type: "decimal", placeholder: "1000"},
+    ],
+  },
+  "treasury-eth-transfer": {
+    label: "Transfer native ETH from DAO treasury",
+    group: "Treasury",
+    fields: [
+      {store: "a", label: "Recipient (address)", type: "address", placeholder: "0x…"},
+      {store: "b", label: "Amount (ETH)", type: "decimal", placeholder: "0.1"},
+    ],
+  },
+  "uniswap-setRouter": {
+    label: "UniswapV4.setUniversalRouter(address)",
+    group: "Uniswap V4",
+    fields: [{store: "a", label: "New Universal Router (address)", type: "address", placeholder: "0x…"}],
+  },
+  "uniswap-setAllowedToken": {
+    label: "UniswapV4.setAllowedToken(address, bool)",
+    group: "Uniswap V4",
+    fields: [
+      {store: "a", label: "Token (address)", type: "address", placeholder: "0x…"},
+      {store: "b", label: "Allowed (true / false)", type: "bool"},
+    ],
+  },
+  "uniswap-setV4PositionManager": {
+    label: "UniswapV4.setV4PositionManager(address)",
+    group: "Uniswap V4",
+    fields: [{store: "a", label: "New V4 PositionManager (address)", type: "address", placeholder: "0x…"}],
+  },
+  "uniswapV3-setPositionManager": {
+    label: "UniswapV3.setPositionManager(address)",
+    group: "Uniswap V3",
+    fields: [{store: "a", label: "New NPM (address)", type: "address", placeholder: "0x…"}],
+  },
+  "uniswapV3-setAllowedToken": {
+    label: "UniswapV3.setAllowedToken(address, bool)",
+    group: "Uniswap V3",
+    fields: [
+      {store: "a", label: "Token (address)", type: "address", placeholder: "0x…"},
+      {store: "b", label: "Allowed (true / false)", type: "bool"},
+    ],
+  },
+  "aave-setAdapter": {
+    label: "AAVE.setAdapter(address)",
+    group: "AAVE",
+    fields: [{store: "a", label: "New adapter (address)", type: "address", placeholder: "0x…"}],
+  },
+  "aave-setAllowedAsset": {
+    label: "AAVE.setAllowedAsset(address, bool)",
+    group: "AAVE",
+    fields: [
+      {store: "a", label: "Asset (address)", type: "address", placeholder: "0x…"},
+      {store: "b", label: "Allowed (true / false)", type: "bool"},
+    ],
+  },
+  "payroll-removeRecipient": {
+    label: "Payroll.removeRecipient(address)",
+    group: "Payroll",
+    fields: [{store: "a", label: "Payee (address)", type: "address", placeholder: "0x…"}],
+  },
+  "payroll-setAmount": {
+    label: "Payroll.setAmount(payee, newAmount)",
+    group: "Payroll",
+    fields: [
+      {store: "a", label: "Payee (address)", type: "address", placeholder: "0x…"},
+      {store: "b", label: "New amount (atomic uint)", type: "uint", placeholder: "1000000000"},
+    ],
+  },
+  "payroll-setPayDayOfMonth": {
+    label: "Payroll.setPayDayOfMonth(1..28)",
+    group: "Payroll",
+    fields: [{store: "a", label: "Day of month (1..28)", type: "uint", placeholder: "1"}],
+  },
+};
+
+/** Ordered group names for the action picker's optgroups. */
+export const KIND_GROUPS = ["Treasury", "Payroll", "Uniswap V4", "Uniswap V3", "AAVE", "Raw"] as const;
 
 export type SimResult = "loading" | {ok: true} | {ok: false; reason: string};
 
@@ -108,6 +211,34 @@ export function createProposalsVM() {
             summary: `Raw call to ${a} (value ${get(argC) || "0"} wei)`,
           };
           break;
+        case "treasury-erc20-transfer": {
+          // a = token addr, b = recipient addr, c = amount in human units
+          const token = ethers.utils.getAddress(a);
+          const recipient = ethers.utils.getAddress(b);
+          const dec = resolveToken(cfg, token).decimals;
+          const sym = resolveToken(cfg, token).symbol;
+          const amtAtomic = ethers.utils.parseUnits((get(argC) || "0").trim(), dec);
+          const iface = new ethers.utils.Interface(["function transfer(address to, uint256 amount)"]);
+          result = {
+            to: token,
+            value: "0",
+            data: iface.encodeFunctionData("transfer", [recipient, amtAtomic]),
+            summary: `Treasury: send ${get(argC)} ${sym} → ${shortAddress(recipient)}`,
+          };
+          break;
+        }
+        case "treasury-eth-transfer": {
+          // a = recipient addr, b = amount in ETH (decimal)
+          const recipient = ethers.utils.getAddress(a);
+          const amountWei = ethers.utils.parseEther((b || "0").trim());
+          result = {
+            to: recipient,
+            value: amountWei.toString(),
+            data: "0x",
+            summary: `Treasury: send ${b} ETH → ${shortAddress(recipient)}`,
+          };
+          break;
+        }
         case "uniswap-setRouter":
           result = actions.uniSetRouter(cfg, a);
           break;

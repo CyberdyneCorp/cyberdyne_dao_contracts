@@ -638,6 +638,86 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork", "localFork"], () => {
       expect(await usdc.balanceOf(aaveAddress)).to.equal(0);
     });
 
+    // Plain treasury transfer — the "send tokens from the DAO" capability that
+    // doesn't go through any plugin. Vote-gated like every other treasury op,
+    // but the action is a single raw `IERC20.transfer(...)` carried straight to
+    // DAO.execute. Proves Aragon OSx core supports this natively (no extra
+    // plugin needed) and gives the toy frontend's "Treasury transfer" preset a
+    // first-class regression test.
+    it("governance moves treasury: ERC-20 transfer to an external address via vote → execute", async function () {
+      if (!TOKEN_VOTING_REPO || !tokenVotingAddress) {
+        this.skip();
+        return;
+      }
+      this.timeout(600_000);
+
+      const externals = EXTERNAL[chainKey()];
+      const usdc = new ethers.Contract(externals.USDC, ERC20_ABI, ethers.provider);
+      const fundAmount = ethers.utils.parseUnits("1000", 6); // seed the DAO
+      const sendAmount = ethers.utils.parseUnits("500", 6); // send half
+
+      // Fund the DAO treasury with USDC from a whale.
+      const whale = USDC_WHALE[chainKey()];
+      await ethers.provider.send("hardhat_impersonateAccount", [whale]);
+      await ethers.provider.send("hardhat_setBalance", [
+        whale,
+        ethers.utils.hexValue(ethers.utils.parseEther("10")),
+      ]);
+      const whaleSigner = await ethers.getSigner(whale);
+      await (await usdc.connect(whaleSigner).transfer(daoAddress, fundAmount)).wait();
+
+      const recipient = await alice.getAddress();
+      const daoBefore = await usdc.balanceOf(daoAddress);
+      const aliceBefore = await usdc.balanceOf(recipient);
+
+      // The action is a plain ERC-20 transfer issued by the DAO. No plugin
+      // address appears anywhere — DAO.execute calls USDC.transfer directly.
+      const erc20 = new ethers.utils.Interface(["function transfer(address to, uint256 amount)"]);
+      const actions = [
+        {
+          to: externals.USDC,
+          value: 0,
+          data: erc20.encodeFunctionData("transfer", [recipient, sendAmount]),
+        },
+      ];
+
+      const tv = new ethers.Contract(tokenVotingAddress, TOKEN_VOTING_ABI, deployer);
+      const createTx = await tv.createProposal(
+        ethers.utils.toUtf8Bytes("ipfs://e2e-treasury-transfer"),
+        actions,
+        0,
+        0,
+        0,
+        VOTE_YES,
+        true
+      );
+      const receipt = await createTx.wait();
+      const created = receipt.logs.find(
+        (l: {topics: string[]}) =>
+          l.topics[0] ===
+          ethers.utils.id(
+            "ProposalCreated(uint256,address,uint64,uint64,bytes,(address,uint256,bytes)[],uint256)"
+          )
+      );
+      const proposalId = created
+        ? ethers.BigNumber.from(created.topics[1])
+        : ethers.BigNumber.from(0);
+
+      let proposal = await tv.getProposal(proposalId);
+      if (!proposal.executed) {
+        await time.increase(3600 + 1);
+        await (await tv.execute(proposalId)).wait();
+        proposal = await tv.getProposal(proposalId);
+      }
+      expect(proposal.executed).to.equal(true);
+
+      // Treasury moved exactly the proposal's amount.
+      const daoAfter = await usdc.balanceOf(daoAddress);
+      const aliceAfter = await usdc.balanceOf(recipient);
+      expect(daoBefore.sub(daoAfter)).to.equal(sendAmount);
+      expect(aliceAfter.sub(aliceBefore)).to.equal(sendAmount);
+    });
+
     // The v1.1 cap setters are auth-gated by MANAGE_PAYROLL / MANAGE_COSTS,
     // which the bootstrap grants to the DAO. This proves they actually move
     // through real governance (create → vote → execute), exercising the

@@ -1,10 +1,12 @@
 import {test, expect} from "@playwright/test";
+import {ethers} from "ethers";
 import {injectAnvilProvider, connectWallet} from "./fixtures/inject-provider";
 import {
   submitProposal,
   voteExecute,
   buildAdminAction,
   onchain,
+  rpcProvider,
   evmSnapshot,
   evmRevert,
 } from "./fixtures/governance";
@@ -94,6 +96,38 @@ test("Simulate button reports a valid proposal as ok", async ({page}) => {
   // The Simulate feature kicks off (… loading) and resolves to a verdict
   // (✓ ok for a valid setPayDayOfMonth, or ✗ with a reason).
   await expect(row.getByText(/…|✓ ok|✗/)).toBeVisible({timeout: 30_000});
+});
+
+test("Treasury ERC-20 transfer: build → vote → execute moves USDC out of the DAO", async ({page}) => {
+  const DAO = process.env.E2E_DAO!;
+  const recipient = "0x0000000000000000000000000000000000C0FFEE";
+  const usdc = new ethers.Contract(USDC, ["function balanceOf(address) view returns (uint256)"], rpcProvider());
+  const usdcBefore = (await usdc.balanceOf(DAO)) as ethers.BigNumber;
+
+  // Build the proposal via the Treasury preset.
+  await page.goto("/proposals");
+  await connectWallet(page);
+  const actionSelect = page.locator("select").filter({has: page.locator('option[value="raw"]')});
+  await actionSelect.selectOption("treasury-erc20-transfer");
+
+  // Typed form: Token (TokenSelect → pick USDC), Recipient, Amount.
+  const form = page.locator("div.form").filter({has: actionSelect});
+  const fieldLabels = form.locator("label").filter({hasNotText: /^\s*Action\b/});
+  await fieldLabels.nth(0).locator("select").selectOption(USDC);
+  await fieldLabels.nth(1).locator("input").fill(recipient);
+  await fieldLabels.nth(2).locator("input").fill("100"); // 100 USDC
+
+  await page.getByRole("button", {name: /^Build$/}).click();
+  // Decoded preview should show USDC as the target + transfer signature.
+  await expect(page.locator(".decode").getByText("USDC", {exact: true})).toBeVisible();
+  await expect(page.locator(".decode").getByText("transfer(address,uint256)")).toBeVisible();
+
+  const id = await submitProposal(page);
+  await voteExecute(page, id);
+
+  // The DAO's USDC balance should have dropped by exactly 100e6 (100 USDC).
+  const usdcAfter = (await usdc.balanceOf(DAO)) as ethers.BigNumber;
+  expect(usdcBefore.sub(usdcAfter).toString()).toBe("100000000");
 });
 
 test("ABI explorer: load bundled ABI → pick function → build encoded call", async ({page}) => {
