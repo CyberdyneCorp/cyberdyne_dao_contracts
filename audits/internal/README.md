@@ -16,8 +16,9 @@ this run).
 | 2 | [`02c-proposed-waiver-additions.md`](./02c-proposed-waiver-additions.md) | Proposed rows to add to each plugin's waiver table to close the drift. |
 | 2 | `slither-<plugin>.{txt,json}` | Raw Slither output per plugin (5 plugins × 2 formats). |
 | 3 | [`03-coverage.md`](./03-coverage.md) | Per-plugin coverage breakdown from `npx hardhat coverage` against the 90 % gate. |
-| 4 | [`04-test-quality.md`](./04-test-quality.md) | Scan for `vm.skip` / `.only` / `.skip` / commented-out tests / `TODO|FIXME|XXX`. |
+| 4 | [`04-test-quality.md`](./04-test-quality.md) | Scan for `vm.skip` / `.only` / `.skip` / commented-out tests / `TODO\|FIXME\|XXX`. |
 | 5 | [`05-functions-events.md`](./05-functions-events.md) | Every external function + event in each plugin's ABI cross-referenced against test files. |
+| 6 | [`06-dao-plugin-security-verification.md`](./06-dao-plugin-security-verification.md) | Auditor pass over all five DAO plugins at commit `342a9cb8`; records local verification commands, plugin-by-plugin verdicts, and open findings. |
 
 ## Headline results
 
