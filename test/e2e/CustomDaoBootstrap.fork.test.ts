@@ -738,16 +738,18 @@ onlyOn(["mainnetFork", "baseFork", "sepoliaFork", "localFork"], () => {
         {
           to: payrollAddress,
           value: 0,
-          data: PayrollPlugin__factory.createInterface().encodeFunctionData("setMaxRecipients", [
-            500,
-          ]),
+          data: PayrollPlugin__factory.createInterface().encodeFunctionData(
+            "setMaxRecipients",
+            [500]
+          ),
         },
         {
           to: costRegistryAddress,
           value: 0,
-          data: CostRegistryPlugin__factory.createInterface().encodeFunctionData("setMaxEntries", [
-            750,
-          ]),
+          data: CostRegistryPlugin__factory.createInterface().encodeFunctionData(
+            "setMaxEntries",
+            [750]
+          ),
         },
       ];
 

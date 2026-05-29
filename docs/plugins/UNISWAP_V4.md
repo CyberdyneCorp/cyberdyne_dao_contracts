@@ -85,9 +85,9 @@ The whole batch is sent through `IExecutor.execute(callId, actions, allowFailure
 
 ### `previewModifyLiquiditiesActions(...) view returns (Action[])`
 
-Every fund-moving entry point on this plugin (`swap`, `modifyLiquidities`) ships a sibling `view` helper that returns the exact `Action[]` the wrapper would forward to `IExecutor.execute`. Governance proposals call that helper, then submit the returned batch as a TokenVoting proposal so the outer `dao.execute` runs the action batch directly — no nested `dao.execute`, no reentrancy guard collision. See [TRD §9a — Governance-path action builders](../TRD.md#9a-governance-path-action-builders-previewactions) for the full pattern and rationale.
+The LP entry point (`modifyLiquidities`) ships a sibling `view` helper that returns the exact `Action[]` the wrapper would forward to `IExecutor.execute`. Governance proposals call that helper, then submit the returned batch as a TokenVoting proposal so the outer `dao.execute` runs the action batch directly — no nested `dao.execute`, no reentrancy guard collision. See [TRD §9a — Governance-path action builders](../TRD.md#9a-governance-path-action-builders-previewactions) for the full pattern and rationale.
 
-Helpers exposed: `previewSwapActions`, `previewModifyLiquiditiesActions`. Admin ops (`setUniversalRouter`, `setV4PositionManager`, `setAllowedToken`) don't need preview helpers — they're single-call mutators on the plugin itself, callable as a one-action proposal directly.
+Helper exposed: `previewModifyLiquiditiesActions`. Swaps do **not** have a separate `previewSwapActions` helper — the `swap` wrapper assembles its own `Action[]` (approve → Permit2 → router.execute), and the governance path submits that batch. Admin ops (`setUniversalRouter`, `setV4PositionManager`, `setAllowedToken`) don't need preview helpers either — they're single-call mutators on the plugin itself, callable as a one-action proposal directly.
 
 ## 4. Allowance lifecycle (TRD §11 security note)
 

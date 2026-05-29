@@ -41,7 +41,7 @@ jobs:
 
       - name: Verify artifact shape
         run: |
-          test -f index.js
+          test -f index.mjs
           test -f addresses.json
           test -d frontend-abi
           test "$(ls -1 frontend-abi/*.json | wc -l)" -ge 10

@@ -39,7 +39,14 @@ contract MockAaveForHealthCondition {
     function getUserAccountData(
         address
     ) external view returns (uint256, uint256, uint256, uint256, uint256, uint256) {
-        return (totalCollateralBase, totalDebtBase, 0, currentLiquidationThreshold, 0, healthFactor);
+        return (
+            totalCollateralBase,
+            totalDebtBase,
+            0,
+            currentLiquidationThreshold,
+            0,
+            healthFactor
+        );
     }
 
     function ADDRESSES_PROVIDER() external view returns (address) {

@@ -165,10 +165,9 @@ describe("preview…Actions: governance-path action builders", () => {
 
     it("previewIncreaseLiquidityActions reverts on expired deadline (same as wrapper)", async () => {
       const {plugin} = await deployV3(signer);
-      await expect(plugin.previewIncreaseLiquidityActions(1, 100, 200, 0, 0, 1)).to.be.revertedWithCustomError(
-        plugin,
-        "DeadlineExpired"
-      );
+      await expect(
+        plugin.previewIncreaseLiquidityActions(1, 100, 200, 0, 0, 1)
+      ).to.be.revertedWithCustomError(plugin, "DeadlineExpired");
     });
   });
 

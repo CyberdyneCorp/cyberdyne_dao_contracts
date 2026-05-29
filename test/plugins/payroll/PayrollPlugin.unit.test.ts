@@ -369,9 +369,7 @@ describe("PayrollPlugin", () => {
     it("updates description and emits RecipientDescriptionSet with old + new", async () => {
       const addr = await alice.getAddress();
       await plugin.connect(voter).addRecipient(addr, token.address, 100, "old label");
-      await expect(
-        plugin.connect(voter).setRecipientDescription(addr, "Senior dev monthly salary")
-      )
+      await expect(plugin.connect(voter).setRecipientDescription(addr, "Senior dev monthly salary"))
         .to.emit(plugin, "RecipientDescriptionSet")
         .withArgs(addr, "old label", "Senior dev monthly salary");
       const r = await plugin.getRecipientAt(0);
@@ -664,7 +662,8 @@ describe("PayrollPlugin", () => {
         .addRecipient(
           reverting.address,
           ethers.constants.AddressZero,
-          ethers.utils.parseEther("1"), ""
+          ethers.utils.parseEther("1"),
+          ""
         );
       await plugin
         .connect(voter)
@@ -721,7 +720,8 @@ describe("PayrollPlugin", () => {
           .addRecipient(
             ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`),
             token.address,
-            10, ""
+            10,
+            ""
           );
       }
       await token.mint(dao.address, 10_000_000);
@@ -754,7 +754,8 @@ describe("PayrollPlugin", () => {
         .addRecipient(
           reverting.address,
           ethers.constants.AddressZero,
-          ethers.utils.parseEther("1"), ""
+          ethers.utils.parseEther("1"),
+          ""
         );
       await plugin
         .connect(voter)
@@ -917,7 +918,9 @@ describe("PayrollPlugin", () => {
 
     async function setupPaidJan(): Promise<string> {
       const aAddr = await alice.getAddress();
-      await plugin.connect(voter).addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6), "");
+      await plugin
+        .connect(voter)
+        .addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6), "");
       await token.mint(dao.address, ethers.utils.parseUnits("100000", 6));
       // Regular run for Jan 2027 → lastPayoutPeriod = 2027*12+1.
       await time.setNextBlockTimestamp(payDayTs(2027, 1));
@@ -981,9 +984,10 @@ describe("PayrollPlugin", () => {
     it("reverts NoActiveRecipients when none are active", async () => {
       // Never ran a regular crank (lastPayoutPeriod = 0); no recipients.
       await time.increaseTo(payDayTs(2027, 4));
-      await expect(
-        plugin.previewForcePayPeriodActions(P(2027, 3))
-      ).to.be.revertedWithCustomError(plugin, "NoActiveRecipients");
+      await expect(plugin.previewForcePayPeriodActions(P(2027, 3))).to.be.revertedWithCustomError(
+        plugin,
+        "NoActiveRecipients"
+      );
     });
   });
 });

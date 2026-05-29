@@ -112,6 +112,8 @@ Building a DAO from scratch means rebuilding (and re-auditing) treasury custody,
 
 ## Plugin overview
 
+> **For a capability-first tour — every feature, real-world use cases, and per-plugin flow diagrams — see [`docs/plugins/FEATURES.md`](docs/plugins/FEATURES.md).** The sections below are the architectural summary; the spec files in [`docs/plugins/`](docs/plugins/) carry exact signatures, storage layouts, and slither waivers.
+
 ### 1. Uniswap V4 Plugin (swaps + LP)
 
 **Swap — governance path** (the `preview…Actions` pattern, see [TRD §9a](docs/TRD.md#9a-governance-path-action-builders-previewactions)):
@@ -435,7 +437,7 @@ npm install --legacy-peer-deps
 just build-package         # forge + hardhat compile + ABIs + addresses.json
 
 # Test (every command below has a `just` recipe; see `just --list`)
-just test                  # 173 unit tests
+just test                  # full Hardhat suite (222 unit + 40 fork specs)
 just invariants            # 25 Foundry invariants, 50k sequences (CI profile)
 
 # Fork tests: start a fork in one terminal, run the *.fork suites in another.
@@ -529,9 +531,14 @@ The contracts in this repo are responsible for:
 | [docs/PROPOSAL_METADATA.md](docs/PROPOSAL_METADATA.md)                 | IPFS proposal-metadata schema + pinning recipe.                                                                                                  |
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)                           | Asset enumeration, trust boundaries, 20-vector mitigation table.                                                                                 |
 | [docs/INTERNAL_REVIEW_CHECKLIST.md](docs/INTERNAL_REVIEW_CHECKLIST.md) | Per-plugin signoff template (≥2 contributors per plugin before external audit).                                                                  |
+| [docs/reviews/](docs/reviews/)                                         | P8 internal review sign-off records (two independent approvals per plugin) gating the external audit.                                            |
+| [audits/external/SCOPE.md](audits/external/SCOPE.md)                   | **External audit scope letter** (Phase 9): in-scope files, out-of-scope deps, trust model, accepted risks, pinned to `v0.9.0-rc1`.               |
+| [docs/plugins/FEATURES.md](docs/plugins/FEATURES.md)                   | **Plugin features & use cases** — per-plugin capability tour, real-world scenarios, and mermaid flows for all 5 plugins. Start here.             |
 | [docs/plugins/PAYROLL.md](docs/plugins/PAYROLL.md)                     | PayrollPlugin spec + slither waivers + storage layout.                                                                                           |
 | [docs/plugins/UNISWAP_V4.md](docs/plugins/UNISWAP_V4.md)               | UniswapV4Plugin spec + slither waivers + storage layout.                                                                                         |
+| [docs/plugins/UNISWAP_V3.md](docs/plugins/UNISWAP_V3.md)               | UniswapV3Plugin spec + slither waivers + storage layout.                                                                                         |
 | [docs/plugins/AAVE.md](docs/plugins/AAVE.md)                           | AaveLendingPlugin spec + slither waivers + storage layout.                                                                                       |
+| [docs/plugins/COST_REGISTRY.md](docs/plugins/COST_REGISTRY.md)         | CostRegistryPlugin spec + slither waivers + storage layout.                                                                                      |
 | [docs/storage-layouts/](docs/storage-layouts/)                         | `forge inspect` storage-layout snapshots per release for upgrade-safety diffing.                                                                 |
 | [docs/TRD.md](docs/TRD.md)                                             | Full Technical Requirements Document. Source of truth for every design decision, permission grant, address, deployment phase, and open question. |
 | [docs/ROADMAP.md](docs/ROADMAP.md)                                     | End-to-end project roadmap: 13 phases with deliverables, exit criteria, and the project-wide quality bars.                                       |

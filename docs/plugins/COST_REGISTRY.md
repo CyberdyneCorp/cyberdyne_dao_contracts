@@ -113,7 +113,7 @@ after the inherited gap chain:
 ```
 slot 301: _token (IERC20)
 slot 302: _entries (CostEntry[])
-slot 303..350: __gap[48]
+slot 303..349: __gap[47]
 ```
 
 `CostEntry` packs `payee(20)+costUsdc(uint96,12)` into one slot and
