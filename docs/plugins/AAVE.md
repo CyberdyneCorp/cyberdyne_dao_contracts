@@ -168,11 +168,15 @@ Helpers: `previewSupplyActions`, `previewWithdrawActions`,
 
 ## 4. Allowance lifecycle
 
-Each `supply` and `repay` builds a 2-action batch:
+`supply` builds a 2-action batch; `repay` builds a 3-action batch (the trailing action resets the allowance to 0 in case the pool pulled less than `amount`):
 
 ```
-Action[0]: IERC20(asset).approve(adapter.poolAddress(), amount)
-Action[1]: adapter.supply / adapter.repay (...)
+supply:  Action[0]: IERC20(asset).approve(pool, amount)
+         Action[1]: adapter.supply(...)
+
+repay:   Action[0]: IERC20(asset).approve(pool, amount)
+         Action[1]: adapter.repay(...)
+         Action[2]: IERC20(asset).approve(pool, 0)   // reset dust allowance
 ```
 
 The approval is for **exact-amount** (not `type(uint256).max`) and is

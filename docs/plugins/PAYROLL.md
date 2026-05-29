@@ -9,7 +9,7 @@ Per-plugin spec for the Cyberdyne DAO PayrollPlugin (TRD §6.3, ROADMAP P2).
 | Base | `PluginUUPSUpgradeable` (OSx commons v1.4) |
 | Permission ID | `MANAGE_PAYROLL_PERMISSION = keccak256("MANAGE_PAYROLL_PERMISSION")` |
 | Date library | `lib/BokkyPooBahsDateTimeLibrary.sol` (vendored, MIT) |
-| Max recipients | 100 (`MAX_RECIPIENTS`) |
+| Max recipients | 300 default (`MAX_RECIPIENTS()`), settable up to 1000 (`MAX_RECIPIENTS_CEILING`); 100 paid per crank page (`MAX_RECIPIENTS_PER_PAGE`) |
 
 ## 1. What it does
 

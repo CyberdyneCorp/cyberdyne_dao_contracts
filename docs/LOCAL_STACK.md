@@ -59,7 +59,7 @@ just build-package
 Sanity-check:
 
 ```bash
-just test                                          # 173 unit tests + 25 invariants
+just test                                          # full Hardhat suite (222 unit + 40 fork) + 25 Foundry invariants via `just invariants`
 ls frontend-abi/ addresses.json                    # artifacts exist
 ```
 
