@@ -157,9 +157,7 @@ interface IPayrollPlugin {
     ///         hit. `period` must be strictly between `lastPayoutPeriod` and the
     ///         current period and ≤ `MAX_FORCE_BACK_MONTHS` back; the active set
     ///         must fit one page. Reverts otherwise (surfaced at build/sim time).
-    function previewForcePayPeriodActions(
-        uint256 period
-    ) external view returns (Action[] memory);
+    function previewForcePayPeriodActions(uint256 period) external view returns (Action[] memory);
 
     // --- Permissionless crank ---
 

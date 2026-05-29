@@ -45,7 +45,11 @@ function chainKey(): ExternalChain {
   throw new Error(`Unsupported fork network: ${network.name}`);
 }
 
-async function deployPlugin(signer: Signer, dao: string, adapter: string): Promise<AaveLendingPlugin> {
+async function deployPlugin(
+  signer: Signer,
+  dao: string,
+  adapter: string
+): Promise<AaveLendingPlugin> {
   const impl = await new AaveLendingPlugin__factory(signer).deploy();
   await impl.deployed();
   const initData = impl.interface.encodeFunctionData("initialize", [dao, adapter, []]);
@@ -111,7 +115,11 @@ onlyOn(["mainnetFork", "baseFork"], () => {
 
     it("projection matches AAVE's own post-borrow health factor", async () => {
       const amount = ethers.utils.parseUnits("2000", 6); // 2000 USDC
-      const projected = await cond.projectedHealthFactorAfterBorrow(dao.address, usdcAddress, amount);
+      const projected = await cond.projectedHealthFactorAfterBorrow(
+        dao.address,
+        usdcAddress,
+        amount
+      );
 
       await plugin.connect(voter).borrow(usdcAddress, amount, VARIABLE_RATE);
       const actual = (await pool.getUserAccountData(dao.address)).healthFactor;
@@ -131,8 +139,9 @@ onlyOn(["mainnetFork", "baseFork"], () => {
         small,
         VARIABLE_RATE,
       ]);
-      expect(await cond.isGranted(plugin.address, dao.address, TRIGGER_LENDING_PERMISSION_ID, data))
-        .to.equal(true);
+      expect(
+        await cond.isGranted(plugin.address, dao.address, TRIGGER_LENDING_PERMISSION_ID, data)
+      ).to.equal(true);
     });
 
     it("isGranted denies an over-borrow that breaches the floor", async () => {
@@ -147,8 +156,9 @@ onlyOn(["mainnetFork", "baseFork"], () => {
         overBorrow,
         VARIABLE_RATE,
       ]);
-      expect(await cond.isGranted(plugin.address, dao.address, TRIGGER_LENDING_PERMISSION_ID, data))
-        .to.equal(false);
+      expect(
+        await cond.isGranted(plugin.address, dao.address, TRIGGER_LENDING_PERMISSION_ID, data)
+      ).to.equal(false);
     });
 
     it("assertHealthFactor passes with no debt, reverts after a real over-leveraged borrow", async () => {
@@ -179,15 +189,16 @@ onlyOn(["mainnetFork", "baseFork"], () => {
         VARIABLE_RATE,
       ]);
       // Conservative borrow passes at the 1.5 floor.
-      expect(await cond.isGranted(plugin.address, dao.address, TRIGGER_LENDING_PERMISSION_ID, data))
-        .to.equal(true);
+      expect(
+        await cond.isGranted(plugin.address, dao.address, TRIGGER_LENDING_PERMISSION_ID, data)
+      ).to.equal(true);
 
       // Governor (the DAO in prod) raises the floor sky-high → same borrow now
       // denied; the projection is recomputed against the live position.
       await cond.connect(deployer).setMinHealthFactor(ethers.utils.parseEther("1000000"));
-      expect(await cond.isGranted(plugin.address, dao.address, TRIGGER_LENDING_PERMISSION_ID, data))
-        .to.equal(false);
+      expect(
+        await cond.isGranted(plugin.address, dao.address, TRIGGER_LENDING_PERMISSION_ID, data)
+      ).to.equal(false);
     });
   });
 });
-

@@ -142,14 +142,16 @@ describe("BorrowHealthCondition", () => {
   describe("isGranted (direct borrow path)", () => {
     it("allows a borrow that stays at/above the floor", async () => {
       // borrow $1000 → projected HF 1.6e18 ≥ 1.5e18
-      expect(await cond.isGranted(asset.address, dao, PERM, borrowData(asset.address, amt(1000)))).to
-        .equal(true);
+      expect(
+        await cond.isGranted(asset.address, dao, PERM, borrowData(asset.address, amt(1000)))
+      ).to.equal(true);
     });
 
     it("denies a borrow that would breach the floor", async () => {
       // borrow $1100 → 2000·0.8/1100 = 1.4545e18 < 1.5e18
-      expect(await cond.isGranted(asset.address, dao, PERM, borrowData(asset.address, amt(1100)))).to
-        .equal(false);
+      expect(
+        await cond.isGranted(asset.address, dao, PERM, borrowData(asset.address, amt(1100)))
+      ).to.equal(false);
     });
 
     it("allows the exact-floor borrow boundary", async () => {
@@ -157,8 +159,9 @@ describe("BorrowHealthCondition", () => {
       // borrow that yields HF just ≥ floor passes; just-over-debt fails (covered above).
       // collateral·LT / floor = 2000e8·8000 / (1e4·1.5e18/1e18) = exact-debt boundary.
       // Use $1066 → HF = 1600/1066 = 1.5009e18 ≥ floor.
-      expect(await cond.isGranted(asset.address, dao, PERM, borrowData(asset.address, amt(1066)))).to
-        .equal(true);
+      expect(
+        await cond.isGranted(asset.address, dao, PERM, borrowData(asset.address, amt(1066)))
+      ).to.equal(true);
     });
 
     it("ignores non-borrow selectors (supply/withdraw/repay/etc.)", async () => {
@@ -176,8 +179,8 @@ describe("BorrowHealthCondition", () => {
 
     it("fails closed if the oracle reverts", async () => {
       await mock.setOracleReverts(true);
-      await expect(cond.isGranted(asset.address, dao, PERM, borrowData(asset.address, amt(1)))).to.be
-        .reverted;
+      await expect(cond.isGranted(asset.address, dao, PERM, borrowData(asset.address, amt(1)))).to
+        .be.reverted;
     });
   });
 
