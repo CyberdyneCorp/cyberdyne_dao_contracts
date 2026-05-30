@@ -56,6 +56,13 @@ interface IUniswapV4Plugin {
     ///         installed before the LP feature; call `setV4PositionManager` first).
     error PositionManagerUnset();
 
+    /// @notice A required external endpoint was given / set to the zero address
+    ///         (I-01). `universalRouter` / `permit2` / `poolManager` must be
+    ///         non-zero at init; `setUniversalRouter` / `setV4PositionManager`
+    ///         reject zero. (`v4PositionManager` may be zero at init only, to
+    ///         defer LP activation.)
+    error ZeroAddress();
+
     /// @notice Reverts when a placeholder function has not yet been implemented.
     error NotImplemented();
 

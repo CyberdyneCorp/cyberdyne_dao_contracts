@@ -68,11 +68,25 @@ interface ICostRegistryPlugin {
     /// @notice `setMaxEntries` was called with a value below the current slot
     ///         count or above `MAX_ENTRIES_CEILING`.
     error MaxEntriesOutOfRange(uint256 requested, uint256 minimum, uint256 ceiling);
+    /// @notice `processAllDue()` was called on a registry with more than
+    ///         `MAX_PER_PAGE` slots, where a single page cannot cover everything.
+    ///         Use `processDue` / `processDueFromCursor` to paginate (CR-L-02).
+    error RegistryExceedsSinglePage(uint256 maxPerPage);
+    /// @notice `setPaymentToken` was called with a token whose `decimals()`
+    ///         differs from the current token's. Migrating across decimals would
+    ///         silently re-price every entry, so it is rejected (CR-M-02).
+    error PaymentTokenDecimalsMismatch(uint8 oldDecimals, uint8 newDecimals);
 
     // --- Vote-gated mutators ---
 
     /// @notice Register a new recurring cost. First payment becomes due
     ///         `frequencyDays` after registration.
+    /// @dev CR-I-02: duplicate `(payee, name)` pairs are intentionally allowed.
+    ///      A vendor commonly bills several recurring lines (e.g. two AWS
+    ///      accounts, or one-off retainers on the same name), so a uniqueness
+    ///      guard would block legitimate registrations. Each entry has its own
+    ///      independent `id` and payment clock; governance review is the control
+    ///      against accidental duplicates.
     /// @return id The new entry's index.
     function registerEntry(
         string calldata name,
@@ -117,15 +131,30 @@ interface ICostRegistryPlugin {
     ///         due. Missed periods are skipped (no back-pay / no stacking).
     function processDue(uint256 offset, uint256 limit) external;
 
-    /// @notice Convenience crank: pay the first `MAX_PER_PAGE` due entries from
-    ///         index 0 without the caller tracking an offset. Equivalent to
-    ///         `processDue(0, MAX_PER_PAGE)`. For registries larger than one
-    ///         page, paginate with `processDue` to reach later entries.
+    /// @notice Convenience crank: pay every due entry from index 0 in one page.
+    ///         Reverts `RegistryExceedsSinglePage` if the registry has more than
+    ///         `MAX_PER_PAGE` slots, so a partial first-page run can never be
+    ///         mistaken for a full sweep. Larger registries must paginate with
+    ///         `processDue` or `processDueFromCursor`.
     function processAllDue() external;
+
+    /// @notice Round-robin crank: process the page beginning at the persistent
+    ///         due-cursor, then advance the cursor by `limit` (wrapping at the
+    ///         end). Repeated permissionless calls cover every entry of a
+    ///         multi-page registry without keepers coordinating offsets.
+    ///         `limit` is clamped to `MAX_PER_PAGE`.
+    function processDueFromCursor(uint256 limit) external;
 
     // --- Views ---
 
     function paymentToken() external view returns (address);
+
+    /// @notice The per-instance SafeERC20 shim the crank routes payments through
+    ///         (see `SafeTransferHelper`). Deployed at install.
+    function transferHelper() external view returns (address);
+
+    /// @notice Current page offset `processDueFromCursor` will resume from.
+    function dueCursor() external view returns (uint256);
 
     function entryCount() external view returns (uint256);
 

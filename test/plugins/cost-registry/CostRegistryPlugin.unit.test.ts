@@ -8,6 +8,7 @@ import {
   CostRegistryPlugin__factory,
   TestERC20,
   TestERC20__factory,
+  FalseReturningERC20__factory,
 } from "../../../typechain-types";
 import {takeSnapshot, time} from "../../helpers/time";
 import type {SnapshotRestorer} from "@nomicfoundation/hardhat-network-helpers";
@@ -446,21 +447,28 @@ describe("CostRegistryPlugin", () => {
       expect(await token.balanceOf(aws)).to.equal(usdc(500)); // one payment, not three
     });
 
-    it("isolates a failing transfer via the failure map", async () => {
-      // Two due entries; fund the DAO for only one. The first transfer drains
-      // the balance, the second reverts (insufficient balance) but is tolerated.
+    // H-03 regression: a transfer that fails must NOT advance any entry's clock
+    // nor emit CostPaid. Pre-fix this "isolated" the failure via the allow-all
+    // failure map and marked BOTH entries paid; now the whole batch reverts.
+    it("H-03: an underfunded batch reverts entirely — nothing marked paid", async () => {
       await plugin.connect(voter).registerEntry("AWS", "", usdc(500), 10, aws);
       await plugin.connect(voter).registerEntry("OpenAI", "", usdc(500), 10, openai);
-      await fundDao(usdc(500)); // covers exactly one
+      await fundDao(usdc(500)); // covers only the first transfer
       await time.increase(11 * DAY);
 
-      await expect(plugin.processDue(0, 50)).to.emit(plugin, "CostsProcessed").withArgs(0, 2, 2); // count=2, failureMap bit1 set (second entry failed)
+      await expect(plugin.processDue(0, 50)).to.be.reverted;
 
-      expect(await token.balanceOf(aws)).to.equal(usdc(500));
+      // No funds moved, both entries still due, no clocks advanced.
+      expect(await token.balanceOf(aws)).to.equal(0);
       expect(await token.balanceOf(openai)).to.equal(0);
-      // Both clocks advanced (failed one waits a period — documented).
-      expect(await plugin.isDue(0)).to.equal(false);
-      expect(await plugin.isDue(1)).to.equal(false);
+      expect(await plugin.isDue(0)).to.equal(true);
+      expect(await plugin.isDue(1)).to.equal(true);
+
+      // After the DAO is fully funded, the same crank settles everything.
+      await fundDao(usdc(500));
+      await expect(plugin.processDue(0, 50)).to.emit(plugin, "CostsProcessed").withArgs(0, 2, 0);
+      expect(await token.balanceOf(aws)).to.equal(usdc(500));
+      expect(await token.balanceOf(openai)).to.equal(usdc(500));
     });
 
     it("respects the index window", async () => {
@@ -483,6 +491,117 @@ describe("CostRegistryPlugin", () => {
       await fundDao(usdc(10_000));
       await plugin.processDue(99, 10); // offset past end → no-op, no revert
       expect(await token.balanceOf(aws)).to.equal(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // External-audit remediation regressions (issue #3). Each test pins a finding
+  // and fails if the vulnerable behavior is reintroduced.
+  // ---------------------------------------------------------------------------
+  describe("external audit regressions", () => {
+    async function fundDao(amount: BigNumber): Promise<void> {
+      await token.mint(dao.address, amount);
+    }
+
+    it("deploys a SafeERC20 transfer helper at install", async () => {
+      const helper = await plugin.transferHelper();
+      expect(helper).to.not.equal(ethers.constants.AddressZero);
+    });
+
+    it("CR-M-01/M-06: a false-returning token reverts the batch, nothing paid", async () => {
+      // Stand up a fresh registry whose payment token returns false on transfer.
+      const falseToken = await new FalseReturningERC20__factory(deployer).deploy(6);
+      await falseToken.deployed();
+      const p = await deployProxied(deployer, dao.address, falseToken.address);
+      await dao.grant(p.address, await voter.getAddress(), MANAGE_COSTS_PERMISSION_ID);
+      await dao.grant(dao.address, p.address, EXECUTE_PERMISSION_ID);
+
+      await p.connect(voter).registerEntry("AWS", "", usdc(500), 10, aws);
+      await falseToken.mint(dao.address, usdc(10_000));
+      await time.increase(11 * DAY);
+
+      // SafeERC20 rejects the false return → batch reverts → entry still due.
+      await expect(p.processDue(0, 50)).to.be.reverted;
+      expect(await p.isDue(0)).to.equal(true);
+    });
+
+    it("CR-M-02/M-07: setPaymentToken rejects a token with different decimals", async () => {
+      const token18 = await new TestERC20__factory(deployer).deploy("DAI", "DAI", 18);
+      await token18.deployed();
+      await dao.grant(plugin.address, await voter.getAddress(), UPDATE_PAYMENT_TOKEN_PERMISSION_ID);
+
+      await expect(plugin.connect(voter).setPaymentToken(token18.address))
+        .to.be.revertedWithCustomError(plugin, "PaymentTokenDecimalsMismatch")
+        .withArgs(6, 18);
+
+      // A same-decimals migration is still allowed.
+      const usdc2 = await new TestERC20__factory(deployer).deploy("USD2", "USD2", 6);
+      await usdc2.deployed();
+      await expect(plugin.connect(voter).setPaymentToken(usdc2.address)).to.emit(
+        plugin,
+        "PaymentTokenUpdated"
+      );
+    });
+
+    it("CR-L-02/L-05: processAllDue reverts when the registry exceeds one page", async () => {
+      await plugin.connect(voter).setMaxEntries(1000);
+      // 101 slots > MAX_PER_PAGE(100): a single page cannot cover everything.
+      for (let i = 0; i < 101; i++) {
+        await plugin.connect(voter).registerEntry(`c${i}`, "", usdc(1), 10, aws);
+      }
+      await expect(plugin.processAllDue()).to.be.revertedWithCustomError(
+        plugin,
+        "RegistryExceedsSinglePage"
+      );
+      // Paginated processing still works.
+      await fundDao(usdc(10_000));
+      await time.increase(11 * DAY);
+      await plugin.processDue(0, 100);
+      await plugin.processDue(100, 100);
+      expect(await token.balanceOf(aws)).to.equal(usdc(101));
+    });
+
+    it("CR-L-03/L-06: processDueFromCursor round-robins across pages", async () => {
+      await plugin.connect(voter).setMaxEntries(1000);
+      for (let i = 0; i < 150; i++) {
+        await plugin.connect(voter).registerEntry(`c${i}`, "", usdc(1), 10, aws);
+      }
+      await fundDao(usdc(10_000));
+      await time.increase(11 * DAY);
+
+      expect(await plugin.dueCursor()).to.equal(0);
+      await plugin.processDueFromCursor(100); // entries [0,100)
+      expect(await plugin.dueCursor()).to.equal(100);
+      expect(await token.balanceOf(aws)).to.equal(usdc(100));
+
+      await plugin.processDueFromCursor(100); // entries [100,150) then wraps
+      expect(await plugin.dueCursor()).to.equal(0); // wrapped past the end
+      expect(await token.balanceOf(aws)).to.equal(usdc(150)); // all 150 covered
+
+      await expect(plugin.processDueFromCursor(0)).to.be.revertedWithCustomError(
+        plugin,
+        "PageSizeZero"
+      );
+    });
+
+    it("CR-I-01: initializeV3 is permissionless but idempotent (no-op when set)", async () => {
+      // Helper is already set by initialize. A stranger may call the migration,
+      // but it cannot change the already-set helper and cannot run twice.
+      const helper = await plugin.transferHelper();
+      await plugin.connect(stranger).initializeV3(); // succeeds, no-op
+      expect(await plugin.transferHelper()).to.equal(helper);
+      await expect(plugin.connect(stranger).initializeV3()).to.be.reverted; // v3 consumed
+    });
+
+    it("CR-I-02: duplicate (payee, name) entries are intentionally allowed", async () => {
+      await plugin.connect(voter).registerEntry("AWS", "acct-1", usdc(100), 10, aws);
+      await plugin.connect(voter).registerEntry("AWS", "acct-2", usdc(200), 10, aws);
+      expect(await plugin.entryCount()).to.equal(2);
+      const e0 = await plugin.getEntry(0);
+      const e1 = await plugin.getEntry(1);
+      expect(e0.payee).to.equal(aws);
+      expect(e1.payee).to.equal(aws);
+      expect(e0.costUsdc).to.not.equal(e1.costUsdc);
     });
   });
 });
