@@ -9,6 +9,7 @@ import {
   RevertingRecipient__factory,
   TestERC20,
   TestERC20__factory,
+  FalseReturningERC20__factory,
 } from "../../../typechain-types";
 import {takeSnapshot, time, utcTimestamp} from "../../helpers/time";
 import type {SnapshotRestorer} from "@nomicfoundation/hardhat-network-helpers";
@@ -612,7 +613,7 @@ describe("PayrollPlugin", () => {
       for (const a of addrs) expect(await token.balanceOf(a)).to.equal(200);
     });
 
-    it("completes a period whose tail is all soft-deleted", async () => {
+    it("L-03: a single page whose tail is all soft-deleted completes the period", async () => {
       const addrs = await addManyRecipients(3, 100);
       await token.mint(dao.address, 1_000_000);
       // Remove the last two — only recipient 0 is active.
@@ -622,38 +623,48 @@ describe("PayrollPlugin", () => {
       await time.setNextBlockTimestamp(payDayTs(2028, 3));
       const period = 2028 * 12 + 3;
 
-      // Page size 1: page 1 pays recipient 0 and stops at cursor 1 (not end).
+      // Page size 1: collects recipient 0, then the L-03 tail scan sees no
+      // further active recipient and completes the period in this one call —
+      // no spurious second page, no PayrollExceedsSinglePage.
       const tx1 = await plugin.executePayrollPage(1);
       expect((await readPayrollExecuted(tx1)).recipientCount).to.equal(1);
-      expect(await plugin.lastPayoutPeriod()).to.equal(0);
-      expect(await plugin.payoutCursor()).to.equal(1);
-
-      // Page 2: scans the inactive tail, finds nothing, completes with no batch.
-      const tx2 = await plugin.executePayrollPage(1);
-      await expect(tx2).to.emit(plugin, "PayrollPeriodCompleted").withArgs(period);
-      await expect(tx2).to.not.emit(plugin, "PayrollExecuted");
+      await expect(tx1).to.emit(plugin, "PayrollPeriodCompleted").withArgs(period);
       expect(await plugin.lastPayoutPeriod()).to.equal(period);
+      expect(await plugin.payoutCursor()).to.equal(0);
       expect(await token.balanceOf(addrs[0])).to.equal(100);
     });
 
-    it("skips recipients removed mid-period before they are paid", async () => {
+    it("M-03: recipient mutations are frozen mid-pagination", async () => {
       const addrs = await addManyRecipients(3, 100);
       await token.mint(dao.address, 1_000_000);
 
       await time.setNextBlockTimestamp(payDayTs(2028, 4));
-      await plugin.executePayrollPage(1); // pays addrs[0], cursor=1
+      await plugin.executePayrollPage(1); // pays addrs[0], cursor=1 (mid-period)
 
-      // Remove addrs[1] before it is reached.
-      await plugin.connect(voter).removeRecipient(addrs[1]);
+      // Mutating the recipient set mid-pagination would pay a period against an
+      // inconsistent set — now blocked.
+      await expect(plugin.connect(voter).removeRecipient(addrs[1])).to.be.revertedWithCustomError(
+        plugin,
+        "PayrollMidPagination"
+      );
+      await expect(plugin.connect(voter).setAmount(addrs[1], 999)).to.be.revertedWithCustomError(
+        plugin,
+        "PayrollMidPagination"
+      );
+      await expect(
+        plugin.connect(voter).addRecipient(await alice.getAddress(), token.address, 1, "")
+      ).to.be.revertedWithCustomError(plugin, "PayrollMidPagination");
 
-      await plugin.executePayrollPage(10); // pays only addrs[2], completes
+      // Finishing the period lifts the freeze.
+      await plugin.executePayrollPage(10); // pays addrs[1], addrs[2], completes
       expect(await plugin.lastPayoutPeriod()).to.equal(2028 * 12 + 4);
-      expect(await token.balanceOf(addrs[0])).to.equal(100);
-      expect(await token.balanceOf(addrs[1])).to.equal(0); // removed, never paid
-      expect(await token.balanceOf(addrs[2])).to.equal(100);
+      await expect(plugin.connect(voter).removeRecipient(addrs[1])).to.emit(
+        plugin,
+        "RecipientRemoved"
+      );
     });
 
-    it("isolates a reverting recipient within a page", async () => {
+    it("H-01: a reverting recipient reverts the whole page — nothing paid", async () => {
       const good = await alice.getAddress();
       const reverting = await new RevertingRecipient__factory(deployer).deploy();
       await reverting.deployed();
@@ -672,15 +683,14 @@ describe("PayrollPlugin", () => {
 
       const before = await ethers.provider.getBalance(good);
       await time.setNextBlockTimestamp(payDayTs(2028, 5));
-      const tx = await plugin.executePayrollPage(10);
-      const evt = await readPayrollExecuted(tx);
+      // Salary transfers are mandatory: the reverting payee aborts the batch.
+      await expect(plugin.executePayrollPage(10)).to.be.reverted;
 
-      expect(evt.failureMap).to.equal(1); // bit 0 = reverting recipient
-      expect(evt.recipientCount).to.equal(2);
-      expect(await ethers.provider.getBalance(good)).to.equal(
-        before.add(ethers.utils.parseEther("2"))
-      );
-      expect(await plugin.lastPayoutPeriod()).to.equal(2028 * 12 + 5);
+      // Nobody paid, period NOT locked → the crank can retry after the cause is
+      // fixed (e.g. recipient corrected by governance).
+      expect(await ethers.provider.getBalance(good)).to.equal(before);
+      expect(await plugin.lastPayoutPeriod()).to.equal(0);
+      expect(await plugin.cursorPeriod()).to.equal(0);
     });
 
     it("reverts PageSizeZero on executePayrollPage(0)", async () => {
@@ -712,19 +722,24 @@ describe("PayrollPlugin", () => {
 
   describe("executePayroll: single-pass guard", () => {
     it("reverts PayrollExceedsSinglePage when active set exceeds one page", async () => {
-      // One more than a full page of active recipients.
+      // One more than a full page of active recipients. Use native-ETH legs (one
+      // action each) so a full 100-recipient page stays under the test node's
+      // block gas cap — ERC20 legs are now 2 actions each (SafeERC20 helper).
       const perPage = (await plugin.MAX_RECIPIENTS_PER_PAGE()).toNumber();
+      // Base offset keeps these clear of the 0x01..0x09 precompiles (a value
+      // transfer to a precompile reverts).
+      const base = ethers.BigNumber.from("0x1000000000000000000000000000000000000000");
       for (let i = 0; i < perPage + 1; i++) {
         await plugin
           .connect(voter)
           .addRecipient(
-            ethers.utils.getAddress(`0x${(i + 1).toString(16).padStart(40, "0")}`),
-            token.address,
+            ethers.utils.getAddress(base.add(i).toHexString()),
+            ethers.constants.AddressZero,
             10,
             ""
           );
       }
-      await token.mint(dao.address, 10_000_000);
+      await fundDaoEth(dao, ethers.utils.parseEther("1"));
 
       await time.setNextBlockTimestamp(payDayTs(2029, 1));
       await expect(plugin.executePayroll())
@@ -738,17 +753,17 @@ describe("PayrollPlugin", () => {
       const tx2 = await plugin.executePayrollPage(perPage);
       expect((await readPayrollExecuted(tx2)).recipientCount).to.equal(1);
       expect(await plugin.lastPayoutPeriod()).to.equal(2029 * 12 + 1);
-    }).timeout(120_000);
+      // 101 sequential addRecipient txs run slow under solidity-coverage.
+    }).timeout(300_000);
   });
 
-  describe("executePayroll: per-recipient failure tolerance", () => {
-    it("pays the good recipients and surfaces the bad ones via failureMap", async () => {
+  describe("executePayroll: salary transfers are mandatory (H-01)", () => {
+    it("H-01: one failing salary reverts the whole crank — no partial settlement", async () => {
       const goodAddr = await alice.getAddress();
       const reverting = await new RevertingRecipient__factory(deployer).deploy();
       await reverting.deployed();
 
-      // Recipient 0 = ETH to a reverting contract (this one fails).
-      // Recipient 1 = ETH to alice (this one succeeds).
+      // Recipient 0 = ETH to a reverting contract; recipient 1 = ETH to alice.
       await plugin
         .connect(voter)
         .addRecipient(
@@ -762,24 +777,31 @@ describe("PayrollPlugin", () => {
         .addRecipient(goodAddr, ethers.constants.AddressZero, ethers.utils.parseEther("2"), "");
 
       await fundDaoEth(dao, ethers.utils.parseEther("100"));
-
       const aliceBefore = await ethers.provider.getBalance(goodAddr);
 
       await time.setNextBlockTimestamp(payDayTs(2027, 6));
-      const tx = await plugin.executePayroll();
-      const evt = await readPayrollExecuted(tx);
+      // Pre-fix this "tolerated" the reverting payee and locked the period with
+      // a non-zero failureMap. Now salaries are mandatory: the batch reverts.
+      await expect(plugin.executePayroll()).to.be.reverted;
 
-      // Bit 0 = recipient 0 failed.
-      expect(evt.failureMap).to.equal(1);
-      expect(evt.recipientCount).to.equal(2);
-      // Good recipient still received their pay.
-      expect(await ethers.provider.getBalance(goodAddr)).to.equal(
-        aliceBefore.add(ethers.utils.parseEther("2"))
-      );
-      // Reverting contract received nothing.
+      // No partial payment, period NOT locked → retryable.
+      expect(await ethers.provider.getBalance(goodAddr)).to.equal(aliceBefore);
       expect(await ethers.provider.getBalance(reverting.address)).to.equal(0);
-      // Period still locked.
-      expect(await plugin.lastPayoutPeriod()).to.equal(2027 * 12 + 6);
+      expect(await plugin.lastPayoutPeriod()).to.equal(0);
+    });
+
+    it("M-04: a false-returning ERC20 reverts the crank instead of booking a no-op", async () => {
+      const falseToken = await new FalseReturningERC20__factory(deployer).deploy(6);
+      await falseToken.deployed();
+      await falseToken.mint(dao.address, ethers.utils.parseUnits("1000", 6));
+      await plugin
+        .connect(voter)
+        .addRecipient(await alice.getAddress(), falseToken.address, 100, "");
+
+      await time.setNextBlockTimestamp(payDayTs(2027, 6));
+      // SafeERC20 rejects the false return → mandatory salary fails → revert.
+      await expect(plugin.executePayroll()).to.be.reverted;
+      expect(await plugin.lastPayoutPeriod()).to.equal(0);
     });
   });
 
@@ -850,27 +872,43 @@ describe("PayrollPlugin", () => {
       expect(await token.balanceOf(keeperAddr)).to.equal(bounty);
     });
 
-    it("rolling per-period cap clips additional payouts within the same period", async () => {
-      // Need a paginated payroll so two cranks land in the same period.
+    it("L-01: a small (non-full, non-final) page earns no bounty; the final page pays", async () => {
+      // Two recipients, page size 1. Pre-fix a keeper could farm one bounty per
+      // 1-recipient crank. Now only a full page (MAX_RECIPIENTS_PER_PAGE) or the
+      // period's final page is bounty-eligible.
       const a = ethers.utils.getAddress(`0x${"01".padStart(40, "0")}`);
       const b = ethers.utils.getAddress(`0x${"02".padStart(40, "0")}`);
       await plugin.connect(voter).addRecipient(a, token.address, 100, "");
       await plugin.connect(voter).addRecipient(b, token.address, 100, "");
       await token.mint(dao.address, 1_000_000);
       const bounty = 10_000;
-      // Cap = 1.5x — second crank's bounty gets clipped to half.
-      const cap = 15_000;
-      await grantBountyPermissionAndConfigure(token.address, bounty, cap);
+      await grantBountyPermissionAndConfigure(token.address, bounty, bounty * 10);
 
       const keeperAddr = await stranger.getAddress();
       await time.setNextBlockTimestamp(payDayTs(2027, 9));
-      // Page 1 → full bounty.
+
+      // Page 1 (1 of 2, not full, not final) → NO bounty.
+      await plugin.connect(stranger).executePayrollPage(1);
+      expect(await token.balanceOf(keeperAddr)).to.equal(0);
+      expect(await plugin.bountyPaidThisPeriod()).to.equal(0);
+
+      // Page 2 (final) → exactly one bounty.
       await plugin.connect(stranger).executePayrollPage(1);
       expect(await token.balanceOf(keeperAddr)).to.equal(bounty);
-      // Page 2 → clipped to remainder (cap - first payout = 5000).
-      await plugin.connect(stranger).executePayrollPage(1);
-      expect(await token.balanceOf(keeperAddr)).to.equal(cap);
-      expect(await plugin.bountyPaidThisPeriod()).to.equal(cap);
+      expect(await plugin.bountyPaidThisPeriod()).to.equal(bounty);
+    });
+
+    it("L-04: setKeeperBounty rejects an enabled config the cap can't fund", async () => {
+      await dao.grant(plugin.address, await voter.getAddress(), UPDATE_BOUNTY_PERMISSION_ID);
+      // perCrank > maxPerPeriod can never pay a full crank → rejected.
+      await expect(plugin.connect(voter).setKeeperBounty(token.address, 10_000, 5_000))
+        .to.be.revertedWithCustomError(plugin, "InvalidBountyConfig")
+        .withArgs(10_000, 5_000);
+      // perCrank == 0 (disabled) is always accepted, regardless of cap.
+      await expect(plugin.connect(voter).setKeeperBounty(token.address, 0, 0)).to.emit(
+        plugin,
+        "KeeperBountyConfigured"
+      );
     });
 
     it("cap resets on a new period", async () => {
@@ -934,9 +972,13 @@ describe("PayrollPlugin", () => {
       // Now it's April; Feb + Mar were skipped. Preview Feb recovery.
       await time.increaseTo(payDayTs(2027, 4));
       const actions = await plugin.previewForcePayPeriodActions(P(2027, 2));
-      expect(actions.length).to.equal(1);
-      expect(actions[0].to).to.equal(token.address);
+      // ERC20 leg is now a SafeERC20 pair: approve(helper) + helper.safeTransfer.
+      const helper = await plugin.transferHelper();
+      expect(actions.length).to.equal(2);
+      expect(actions[0].to).to.equal(token.address); // approve(helper, amount)
       expect(actions[0].value).to.equal(0);
+      expect(actions[1].to).to.equal(helper); // helper.safeTransfer(token, payee, amount)
+      expect(actions[1].value).to.equal(0);
 
       // Governance carries these actions and runs them at the top level via
       // DAO.execute — no nested execute. Simulate that here.
@@ -988,6 +1030,94 @@ describe("PayrollPlugin", () => {
         plugin,
         "NoActiveRecipients"
       );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // External-audit remediation regressions (issue #3).
+  // ---------------------------------------------------------------------------
+  describe("external audit regressions", () => {
+    const P = (y: number, m: number) => y * 12 + m;
+
+    it("deploys a SafeERC20 transfer helper at install", async () => {
+      expect(await plugin.transferHelper()).to.not.equal(ethers.constants.AddressZero);
+    });
+
+    it("M-02: executeForcePayPeriod settles a skipped month exactly once", async () => {
+      const aAddr = await alice.getAddress();
+      await plugin
+        .connect(voter)
+        .addRecipient(aAddr, token.address, ethers.utils.parseUnits("500", 6), "");
+      await token.mint(dao.address, ethers.utils.parseUnits("100000", 6));
+      // Regular run for Jan 2027 → lastPayoutPeriod = Jan.
+      await time.setNextBlockTimestamp(payDayTs(2027, 1));
+      await plugin.executePayroll();
+
+      // Now April; Feb was skipped. Force-pay Feb.
+      await time.increaseTo(payDayTs(2027, 4));
+      const before = await token.balanceOf(aAddr);
+      await expect(plugin.connect(voter).executeForcePayPeriod(P(2027, 2)))
+        .to.emit(plugin, "ForcePeriodPaid")
+        .withArgs(P(2027, 2));
+      expect(await token.balanceOf(aAddr)).to.equal(before.add(ethers.utils.parseUnits("500", 6)));
+      expect(await plugin.forcePaidPeriod(P(2027, 2))).to.equal(true);
+
+      // Second force-pay of the same period is blocked (no double-pay).
+      await expect(
+        plugin.connect(voter).executeForcePayPeriod(P(2027, 2))
+      ).to.be.revertedWithCustomError(plugin, "ForcePeriodAlreadySettled");
+      // The preview view also reflects the guard.
+      await expect(plugin.previewForcePayPeriodActions(P(2027, 2))).to.be.revertedWithCustomError(
+        plugin,
+        "ForcePeriodAlreadySettled"
+      );
+
+      expect(await token.balanceOf(aAddr)).to.equal(before.add(ethers.utils.parseUnits("500", 6)));
+    });
+
+    it("M-02: executeForcePayPeriod is gated on MANAGE_PAYROLL", async () => {
+      await time.increaseTo(payDayTs(2027, 4));
+      await expect(plugin.connect(stranger).executeForcePayPeriod(P(2027, 2))).to.be.reverted;
+    });
+
+    it("L-02: a removed recipient can be reactivated and is paid again", async () => {
+      const aAddr = await alice.getAddress();
+      await plugin.connect(voter).addRecipient(aAddr, token.address, 100, "dev");
+      await plugin.connect(voter).removeRecipient(aAddr);
+
+      // Pre-fix: re-adding reverted RecipientAlreadyExists forever.
+      await expect(
+        plugin.connect(voter).addRecipient(aAddr, token.address, 100, "dev")
+      ).to.be.revertedWithCustomError(plugin, "RecipientAlreadyExists");
+
+      // Reactivation reuses the slot with fresh fields.
+      await expect(plugin.connect(voter).reactivateRecipient(aAddr, token.address, 250, "dev v2"))
+        .to.emit(plugin, "RecipientAdded")
+        .withArgs(aAddr, token.address, 250, "dev v2");
+
+      await token.mint(dao.address, 1_000_000);
+      await time.setNextBlockTimestamp(payDayTs(2027, 5));
+      await plugin.executePayroll();
+      expect(await token.balanceOf(aAddr)).to.equal(250);
+    });
+
+    it("L-02: reactivateRecipient rejects unknown and already-active payees", async () => {
+      const aAddr = await alice.getAddress();
+      await expect(
+        plugin.connect(voter).reactivateRecipient(aAddr, token.address, 100, "")
+      ).to.be.revertedWithCustomError(plugin, "RecipientNotFound");
+
+      await plugin.connect(voter).addRecipient(aAddr, token.address, 100, "");
+      await expect(
+        plugin.connect(voter).reactivateRecipient(aAddr, token.address, 100, "")
+      ).to.be.revertedWithCustomError(plugin, "RecipientAlreadyExists");
+    });
+
+    it("initializeV3 is permissionless but idempotent (no-op when set)", async () => {
+      const helper = await plugin.transferHelper();
+      await plugin.connect(stranger).initializeV3(); // succeeds, no-op
+      expect(await plugin.transferHelper()).to.equal(helper);
+      await expect(plugin.connect(stranger).initializeV3()).to.be.reverted; // v3 consumed
     });
   });
 });

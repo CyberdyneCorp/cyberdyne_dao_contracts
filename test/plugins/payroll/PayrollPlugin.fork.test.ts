@@ -3,8 +3,8 @@
  *
  * Runs against a forked chain (mainnetFork or baseFork) so the DAO holds
  * REAL USDC seeded from a whale via hardhat_impersonateAccount. Validates
- * the calendar-math + per-recipient failure tolerance against real token
- * transfers + real timestamps.
+ * the calendar-math + mandatory-salary semantics (audit H-01) against real
+ * token transfers + real timestamps.
  *
  * Scope deviation from ROADMAP P2: we use the MinimalDAO mock rather than
  * the live DAOFactory. End-to-end bootstrap via DAOFactory belongs to P5's
@@ -17,7 +17,7 @@
  */
 import {expect} from "chai";
 import {ethers, network} from "hardhat";
-import type {BigNumber, Signer} from "ethers";
+import type {Signer} from "ethers";
 import {
   MinimalDAO,
   MinimalDAO__factory,
@@ -137,47 +137,30 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       expect(await plugin.lastPayoutPeriod()).to.equal(2028 * 12 + 3);
     });
 
-    it("one reverting payee does not block the others (real ETH transfers)", async () => {
+    // H-01 regression on a real fork: salary transfers are mandatory, so one
+    // reverting payee aborts the WHOLE crank — nobody is paid and the period is
+    // not locked (retryable once the bad payee is corrected). Pre-fix the batch
+    // "tolerated" the reverting payee and locked the period.
+    it("H-01: one reverting payee reverts the whole crank (real ETH)", async () => {
       const reverting = await new RevertingRecipient__factory(deployer).deploy();
       await reverting.deployed();
-      // Use a FRESH zero-balance address as the good payee. A node-prefunded
-      // account (anvil's default signers) reads its genesis balance oddly on a
-      // fork after receiving ETH; a fresh address makes the +salary assertion
-      // unambiguous.
       const bAddr = ethers.Wallet.createRandom().address;
-
       const ethSalary = ethers.utils.parseEther("0.5");
 
       await setEthBalance(dao.address, ethers.utils.parseEther("10"));
 
-      // Bad recipient first → bit 0 will be set in failureMap.
       await plugin
         .connect(voter)
         .addRecipient(reverting.address, ethers.constants.AddressZero, ethSalary, "");
       await plugin.connect(voter).addRecipient(bAddr, ethers.constants.AddressZero, ethSalary, "");
 
-      const bBefore = await ethers.provider.getBalance(bAddr);
-
       await time.setNextBlockTimestamp(utcTimestamp(2027, 9, PAY_DAY, 12));
-      const tx = await plugin.executePayroll();
-      const receipt = await tx.wait();
+      await expect(plugin.executePayroll()).to.be.reverted;
 
-      const iface = new ethers.utils.Interface([
-        "event PayrollExecuted(uint256 indexed period, uint256 recipientCount, uint256 failureMap)",
-      ]);
-      let failureMap: BigNumber | undefined;
-      for (const log of receipt.logs) {
-        try {
-          const parsed = iface.parseLog(log);
-          if (parsed.name === "PayrollExecuted") failureMap = parsed.args.failureMap;
-        } catch {
-          /* not our event */
-        }
-      }
-      expect(failureMap).to.not.be.undefined;
-      expect(failureMap!).to.equal(1); // bit 0 = bad recipient failed
-      expect(await ethers.provider.getBalance(bAddr)).to.equal(bBefore.add(ethSalary));
+      // Neither payee received anything; the period stayed open.
+      expect(await ethers.provider.getBalance(bAddr)).to.equal(0);
       expect(await ethers.provider.getBalance(reverting.address)).to.equal(0);
+      expect(await plugin.lastPayoutPeriod()).to.equal(0);
     });
 
     it("previewForcePayPeriodActions recovers a skipped month with real USDC", async () => {
@@ -197,12 +180,61 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       const period = 2030 * 12 + 2; // Feb 2030
       const raw = await plugin.previewForcePayPeriodActions(period);
       const actions = raw.map((a) => ({to: a.to, value: a.value, data: a.data}));
-      expect(actions.length).to.equal(1);
+      // M-04: the ERC20 leg is now a SafeERC20 pair (approve + helper.safeTransfer).
+      expect(actions.length).to.equal(2);
 
-      // Governance carries the batch; the DAO runs it top-level via execute
-      // (no nested dao.execute — the actions are raw DAO→payee transfers).
+      // Governance carries the batch; the DAO runs it top-level via execute.
       await dao.execute(ethers.utils.id("force-2030-02"), actions, 0);
       expect(await usdc.balanceOf(aAddr)).to.equal(salary.mul(2)); // Jan + recovered Feb
+    });
+
+    // Gas benchmark for the SafeERC20-helper change (M-04): a full page of ERC20
+    // recipients is now 2 actions each (approve + helper.safeTransfer) = 200
+    // actions, vs. 1 each (100) for native ETH. This measures a worst-case
+    // first-ever payroll to 100 fresh payees (all cold balance writes) on real
+    // USDC and asserts it stays well under the mainnet block gas limit (~30M)
+    // and the OSx 256-action cap. Tune-down signal if this ever creeps up.
+    it("gas: full 100-recipient ERC20 page stays within block limits", async function () {
+      this.timeout(300_000);
+      const PAGE = (await plugin.MAX_RECIPIENTS_PER_PAGE()).toNumber(); // 100
+      const salary = ethers.utils.parseUnits("10", 6);
+      const base = ethers.BigNumber.from("0x1000000000000000000000000000000000000000");
+
+      // Fund the DAO for the whole page from a real USDC whale.
+      await fundFromWhale(usdcAddress, WHALES[chainKey()], dao.address, salary.mul(PAGE));
+
+      // 100 fresh ERC20 payees → cold balance writes (worst case).
+      for (let i = 0; i < PAGE; i++) {
+        await plugin
+          .connect(voter)
+          .addRecipient(
+            ethers.utils.getAddress(base.add(i).toHexString()),
+            usdcAddress,
+            salary,
+            ""
+          );
+      }
+
+      await time.setNextBlockTimestamp(utcTimestamp(2031, 1, PAY_DAY, 12));
+      const tx = await plugin.connect(voter).executePayrollPage(PAGE);
+      const rcpt = await tx.wait();
+      const gas = rcpt.gasUsed;
+
+      // eslint-disable-next-line no-console
+      console.log(
+        `\n      [gas] executePayrollPage(${PAGE}) ERC20, 200 actions: ${gas.toString()} ` +
+          `(~${gas.div(PAGE).toString()}/recipient)`
+      );
+
+      // Period settled and the DAO paid out its entire funded balance (it was
+      // funded with exactly salary*PAGE), proving all 100 transfers landed —
+      // robust against fresh payees that already hold dust on the real fork.
+      expect(await plugin.lastPayoutPeriod()).to.equal(2031 * 12 + 1);
+      expect(await usdc.balanceOf(dao.address)).to.equal(0);
+
+      // Regression guard: comfortably under a 30M mainnet block (and far under
+      // the 256-action OSx cap, which 200 actions already satisfies).
+      expect(gas.lt(ethers.BigNumber.from("28000000"))).to.equal(true);
     });
   });
 });

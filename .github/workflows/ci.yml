@@ -182,7 +182,13 @@ jobs:
         with:
           version: stable
       - run: npm ci --legacy-peer-deps
+        # solidity-coverage instruments every contract and holds the full trace
+        # set in memory; the grown test suite exceeds the runner's default ~4 GB
+        # node heap, so raise it (the gate itself passes at >=90% — see
+        # scripts/check-coverage.js).
       - run: npx hardhat coverage
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
       - run: node scripts/check-coverage.js
       - uses: actions/upload-artifact@v4
         with:

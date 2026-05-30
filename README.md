@@ -62,8 +62,8 @@ graph TB
     D -.->|"governance batch:<br/>approve + NPM"| NPM
     D -.->|"governance batch:<br/>approve + router / PM"| UR
     D -.->|"governance batch:<br/>approve + supply/borrow"| AP
-    PAY -->|"dao.execute(transfers, allowFailureMap)"| REC
-    COST -->|"dao.execute(transfers, allowFailureMap)"| REC
+    PAY -->|"dao.execute(salary transfers, allowFailureMap=0)"| REC
+    COST -->|"dao.execute(USDC transfers, allowFailureMap=0)"| REC
 
     classDef audited fill:#d4edda,stroke:#155724,color:#155724
     classDef new fill:#fff3cd,stroke:#856404,color:#856404
@@ -227,14 +227,14 @@ sequenceDiagram
         Note over K,PAY: Monthly payout — PERMISSIONLESS
         K->>PAY: executePayroll()
         PAY->>PAY: check day ≥ payDayOfMonth AND month not paid
-        PAY->>D: execute(transfers, allowFailureMap=all)
+        PAY->>D: execute(salary transfers, allowFailureMap=0)
         D-->>K: PayrollExecuted(period, count, failureMap)
     end
 ```
 
-- **Vote required** for: adding / removing recipients, changing amounts, changing the pay day.
+- **Vote required** for: adding / removing / reactivating recipients, changing amounts, changing the pay day.
 - **No vote required** for the monthly payout itself — anyone can call `executePayroll()` on or after `payDayOfMonth` once per month.
-- Failed individual transfers don't block the rest (per-action `allowFailureMap`).
+- Salary transfers are **mandatory** (`allowFailureMap = 0`): a failing transfer reverts the whole crank and leaves the period open to retry — a period is never marked paid unless every salary in it actually paid (audit H-01). ERC20 payouts route through a SafeERC20 helper so false-returning tokens can't be booked as paid (M-04). Only an optional keeper-bounty leg is failable.
 - `payDayOfMonth` constrained to 1–28 to avoid month-length edge cases.
 - Calendar math via vendored BokkyPooBah DateTime library.
 - Large payrolls paginate via `executePayrollPage` (`MAX_RECIPIENTS_PER_PAGE = 100`, `MAX_RECIPIENTS = 300`); native ETH payees supported (`token = address(0)`).
@@ -261,16 +261,16 @@ sequenceDiagram
         Note over K,CR: Crank — PERMISSIONLESS
         K->>CR: processDue(offset, limit)
         CR->>CR: for each entry where block.timestamp ≥ lastPaidAt + freq*1d
-        CR->>D: execute(USDC transfers, allowFailureMap)
+        CR->>D: execute(USDC transfers, allowFailureMap=0)
         D-->>K: CostsProcessed(fromIndex, count, failureMap)
     end
 ```
 
 - Each entry pays a fixed USDC amount on its own recurring cadence (`frequencyDays`).
 - Entries pay **independently** by `lastPaidAt + frequencyDays` (no shared period).
-- `processDue(offset, limit)` is keeper-callable and paginated — `failureMap` tags page-local failures; `processAllDue()` is the offset-free convenience wrapper.
-- Same `allowFailureMap` semantics as Payroll: one payee revert doesn't block the rest.
-- Per-payment cap (`MAX_COST_USDC`) guards against typo'd amounts; payment token is migratable via the vote-gated `setPaymentToken`.
+- Keeper-callable cranks: `processDue(offset, limit)` (explicit window), `processAllDue()` (single-page registries; reverts if the registry exceeds one page), and `processDueFromCursor(limit)` (round-robin coverage of large registries).
+- Same mandatory-transfer semantics as Payroll (audit H-03): the crank runs with `allowFailureMap = 0`, so a failed transfer reverts the batch and rolls back `lastPaidAt` — no entry is ever marked paid for a payment that didn't happen. Payments route through the same SafeERC20 helper (CR-M-01).
+- Per-payment cap (`MAX_COST_USDC`) guards against typo'd amounts; the payment token is migratable via the vote-gated `setPaymentToken` (rejects a decimals mismatch — CR-M-02).
 
 ---
 

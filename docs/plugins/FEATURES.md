@@ -277,9 +277,14 @@ is a **permissionless crank** anyone can trigger on or after the pay day.
   description)` and `setRecipientDescription` attach a human label (e.g.
   "Alice — lead dev"), surfaced via `RecipientAdded` /
   `RecipientDescriptionSet` for UIs.
-- **Native ETH or ERC20** — `token = address(0)` pays ETH.
-- **Failure isolation** — per-action `allowFailureMap`; one reverting payee
-  (e.g. a frozen token) doesn't block the rest of the run.
+- **Native ETH or ERC20** — `token = address(0)` pays ETH; ERC20 payouts route
+  through a SafeERC20 helper so false-returning tokens can't be booked as paid.
+- **Mandatory salaries (audit H-01)** — salary transfers run with
+  `allowFailureMap = 0`: a failing payee reverts the whole crank and leaves the
+  period open to retry, so a period is never marked paid unless every salary
+  paid. Only an optional keeper-bounty leg is failable (success-aware events).
+- **Reactivate + recovery** — `reactivateRecipient` brings a removed payee back;
+  `executeForcePayPeriod` settles a skipped month once (double-pay-guarded).
 - **Pagination** — `executePayrollPage(maxCount)` walks large rosters
   (`MAX_RECIPIENTS_PER_PAGE = 100` per page); `payoutCursor` / `cursorPeriod`
   track progress, `PayrollPeriodCompleted` fires when the month is fully paid.
@@ -322,10 +327,10 @@ sequenceDiagram
         Note over K,PAY: Monthly payout — PERMISSIONLESS
         K->>PAY: executePayroll() (or executePayrollPage for big rosters)
         PAY->>PAY: require day ≥ payDayOfMonth AND month not yet paid
-        PAY->>D: execute(transfers, allowFailureMap = all)
+        PAY->>D: execute(salary transfers, allowFailureMap = 0)
         D-->>K: PayrollExecuted(period, count, failureMap)
-        opt keeper bounty configured
-            PAY->>D: pay capped bounty → K
+        opt keeper bounty configured (only failable leg)
+            PAY->>D: pay capped bounty → K (event only on success)
         end
     end
 ```
@@ -352,13 +357,18 @@ entries is vote-gated; disbursing due entries is a **permissionless crank**.
   and `processAllDue()` are permissionless.
 - **Clock-preserving updates** — `updateEntry` keeps `lastPaidAt`, so editing an
   amount doesn't reset the schedule or trigger an early payment.
-- **Failure isolation + pagination** — `processDue` pays a window with a
-  page-local `failureMap`; `MAX_PER_PAGE = 100` (256-bit bitmap bound).
+- **Mandatory transfers + pagination (audit H-03)** — the crank runs with
+  `allowFailureMap = 0`, so a failed/false-returning transfer reverts the batch
+  and rolls back `lastPaidAt` (no entry marked paid for a missed payment);
+  payouts route through a SafeERC20 helper (CR-M-01). `MAX_PER_PAGE = 100`;
+  `processAllDue` reverts past one page (CR-L-02) and `processDueFromCursor`
+  round-robins large registries (CR-L-03).
 - **Defense-in-depth cap** — `MAX_COST_USDC` ($1B in raw units) guards against
   a typo'd amount draining treasury.
 - **Migratable payment token** — `setPaymentToken` (separate
-  `UPDATE_PAYMENT_TOKEN_PERMISSION`); note `costUsdc` is raw units, so a decimals
-  change must be paired with `updateEntry` calls in the same proposal.
+  `UPDATE_PAYMENT_TOKEN_PERMISSION`); `costUsdc` is raw units, so a decimals
+  change is **rejected** (`PaymentTokenDecimalsMismatch`, audit CR-M-02) — only
+  a same-decimals swap is allowed.
 - **Settable cap** — `MAX_ENTRIES()` defaults to 300, raisable to 1000.
 - **Rich introspection** — `getEntry`, `getEntries` (paginated), `isDue`,
   `nextPaymentAt`, `entryCount` for UIs and keepers.
@@ -391,9 +401,9 @@ sequenceDiagram
 
     rect rgb(255, 243, 205)
         Note over K,CR: Crank — PERMISSIONLESS
-        K->>CR: processDue(offset, limit)  (or processAllDue)
+        K->>CR: processDue(offset, limit)  (or processAllDue / processDueFromCursor)
         CR->>CR: for each entry where now ≥ lastPaidAt + freq·1d
-        CR->>D: execute(token transfers, allowFailureMap)
+        CR->>D: execute(token transfers, allowFailureMap = 0)
         D-->>K: CostsProcessed(fromIndex, count, failureMap)
     end
 ```

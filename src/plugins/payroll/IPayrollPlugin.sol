@@ -57,6 +57,9 @@ interface IPayrollPlugin {
     event PayrollPeriodCompleted(uint256 indexed period);
     /// @notice The keeper bounty configuration was changed by governance.
     event KeeperBountyConfigured(address indexed token, uint256 perCrank, uint256 maxPerPeriod);
+    /// @notice A skipped month was settled via `executeForcePayPeriod`. Fires
+    ///         once per period; a second force-pay of the same period reverts.
+    event ForcePeriodPaid(uint256 indexed period);
     /// @notice A successful crank paid a keeper bounty to `msg.sender`. Fires
     ///         at most once per `executePayroll(Page)` call, only when the
     ///         period's accumulated bounty is below `maxPerPeriod` and the
@@ -99,6 +102,13 @@ interface IPayrollPlugin {
     /// @notice `previewForcePayPeriodActions` target is more than
     ///         `MAX_FORCE_BACK_MONTHS` back.
     error ForcePeriodTooOld(uint256 period);
+    /// @notice A recipient-set mutation was attempted while a paginated period
+    ///         is mid-flight. Finish the period (or wait for the next) before
+    ///         adding / removing / re-pricing recipients (M-03).
+    error PayrollMidPagination();
+    /// @notice `setKeeperBounty` was given an enabled config (`perCrank > 0`)
+    ///         whose `maxPerPeriod` can't fund a single crank (M-02 / L-04).
+    error InvalidBountyConfig(uint256 perCrank, uint256 maxPerPeriod);
 
     // --- Vote-gated mutators ---
 
@@ -117,6 +127,18 @@ interface IPayrollPlugin {
     ) external;
 
     function removeRecipient(address payee) external;
+
+    /// @notice Bring a soft-deleted (removed) payee back onto payroll, reusing
+    ///         its original slot and overwriting token / amount / description
+    ///         (L-02). Reverts `RecipientNotFound` if the payee was never added
+    ///         and `RecipientAlreadyExists` if it is currently active. Frozen
+    ///         while a paginated period is mid-flight.
+    function reactivateRecipient(
+        address payee,
+        address token,
+        uint256 amount,
+        string calldata description
+    ) external;
 
     function setAmount(address payee, uint256 newAmount) external;
 
@@ -138,8 +160,9 @@ interface IPayrollPlugin {
     /// @param token       Bounty token. `address(0)` = native ETH.
     /// @param perCrank    Amount paid to `msg.sender` per successful crank.
     /// @param maxPerPeriod Maximum total bounty paid in one period (resets per
-    ///                    period). Must be ≥ `perCrank` or the cap blocks any
-    ///                    payout — config still accepted as "off".
+    ///                    period). When `perCrank > 0` it must be ≥ `perCrank`
+    ///                    or the call reverts `InvalidBountyConfig` (L-04); pass
+    ///                    `perCrank == 0` to disable the bounty.
     function setKeeperBounty(address token, uint256 perCrank, uint256 maxPerPeriod) external;
 
     /// @notice Raise or lower the recipient-slot cap returned by
@@ -158,6 +181,18 @@ interface IPayrollPlugin {
     ///         current period and ≤ `MAX_FORCE_BACK_MONTHS` back; the active set
     ///         must fit one page. Reverts otherwise (surfaced at build/sim time).
     function previewForcePayPeriodActions(uint256 period) external view returns (Action[] memory);
+
+    /// @notice Stateful, executable recovery for a skipped month (M-02). Pays
+    ///         every active recipient once for `period` and atomically records
+    ///         the period as force-paid, so it can never be force-paid twice.
+    ///         Gated by `MANAGE_PAYROLL` (moves treasury funds outside the
+    ///         normal crank). Salary transfers are mandatory — a failed transfer
+    ///         reverts the whole call so it can be retried. Prefer this over the
+    ///         preview path, which is for off-chain simulation only.
+    function executeForcePayPeriod(uint256 period) external;
+
+    /// @notice True once `period` has been settled via `executeForcePayPeriod`.
+    function forcePaidPeriod(uint256 period) external view returns (bool);
 
     // --- Permissionless crank ---
 
@@ -178,6 +213,10 @@ interface IPayrollPlugin {
     // --- Views ---
 
     function payDayOfMonth() external view returns (uint8);
+
+    /// @notice The per-instance SafeERC20 shim every ERC20 payout is routed
+    ///         through (see `SafeTransferHelper`). Deployed at install.
+    function transferHelper() external view returns (address);
 
     function lastPayoutPeriod() external view returns (uint256);
 

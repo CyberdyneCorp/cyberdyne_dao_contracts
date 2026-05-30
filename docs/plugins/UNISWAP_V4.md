@@ -32,10 +32,12 @@ Per-plugin spec for the Cyberdyne DAO UniswapV4Plugin (TRD §6.1, ROADMAP P3).
 1. **Deadline guard.** `if (block.timestamp > deadline) revert DeadlineExpired()`.
 2. **Allowlist gate.** If `allowlistEnforced`, both `tokenIn` and `tokenOut` must be in `allowedToken`.
 3. **Snapshot `tokenOut` balance** on the DAO (`balanceBefore`).
-4. **Build a 3-action `Action[]` batch:**
+4. **Build a 5-action `Action[]` batch** (audit M-01 — explicit cleanup of **both** allowance layers, so a route that consumes less than `amountIn` leaves no residual approval):
    1. `IERC20(tokenIn).approve(permit2, amountIn)` — exact-amount ERC20 allowance, DAO → Permit2.
    2. `IPermit2.approve(tokenIn, universalRouter, uint160(amountIn), uint48(deadline))` — Permit2's internal allowance, expires at deadline.
    3. `IUniversalRouter.execute(commands, inputs, deadline)` — router executes the proposal's commands.
+   4. `IPermit2.approve(tokenIn, universalRouter, 0, 0)` — reset the Permit2-internal allowance to zero.
+   5. `IERC20(tokenIn).approve(permit2, 0)` — reset the DAO → Permit2 ERC20 allowance to zero.
 5. **Submit via `IExecutor.execute(callId, actions, 0)`** with `allowFailureMap = 0` (any sub-action revert reverts the whole batch).
 6. **Compute slippage.** `received = IERC20(tokenOut).balanceOf(dao) - balanceBefore`; revert `SlippageExceeded(received, minAmountOut)` if short.
 7. **Emit `SwapExecuted(tokenIn, amountIn, tokenOut, received)`**.
@@ -69,11 +71,12 @@ for each input currency i:
   2. Permit2 → PositionManager:   IPermit2.approve(currency, PM, maxIn[i], deadline)
 then:
   3.                              IV4PositionManager.modifyLiquidities(unlockData, deadline)
-finally, for each input currency i:
-  4. DAO → Permit2:               IERC20(currency).approve(permit2, 0)                // reset
+finally, for each input currency i (audit M-01 — reset BOTH allowance layers):
+  4. Permit2 → PositionManager:   IPermit2.approve(currency, PM, 0, 0)                 // internal reset
+  5. DAO → Permit2:               IERC20(currency).approve(permit2, 0)                 // ERC20 reset
 ```
 
-The whole batch is sent through `IExecutor.execute(callId, actions, allowFailureMap=0)`. Any sub-action failure reverts the full batch — no half-finished state, no lingering allowance.
+So the batch is `4·n + 1` actions for `n` input currencies. The whole batch is sent through `IExecutor.execute(callId, actions, allowFailureMap=0)`. Any sub-action failure reverts the full batch — no half-finished state, and no residual allowance on either layer regardless of how much the op consumed.
 
 **Output slippage guard.** Before the call, the plugin snapshots the DAO's balance of every `outputCurrencies[i]`; after the call, it asserts `received_i = balanceAfter_i - balanceBefore_i ≥ minOut[i]` (reverts `OutputShortfall` otherwise). This is the V4-LP analogue of the swap path's `minAmountOut` check.
 
@@ -81,7 +84,7 @@ The whole batch is sent through `IExecutor.execute(callId, actions, allowFailure
 
 **Why pass-through.** V4 LP ops are intentionally compositional: a single `modifyLiquidities` can chain MINT/INCREASE/DECREASE/SETTLE/TAKE actions, with hooks. Forcing the plugin to expose one signature per combination would multiply the surface area without buying more safety — every code path already routes back through `DAO.execute`, so allowlist + slippage are the meaningful guardrails. Same model the swap path already uses for `commands`/`inputs`.
 
-**Set the PositionManager.** v4PositionManager may be `address(0)` at install (LP ops revert `PositionManagerUnset` until set). Call the vote-gated `setV4PositionManager(address)` to wire it — reuses `UPDATE_ROUTER_PERMISSION` (both router and PM are external Uniswap endpoints) so the install grant list stays at 6.
+**Set the PositionManager.** v4PositionManager may be `address(0)` **at install only** (LP ops revert `PositionManagerUnset` until set) — deferred LP activation. Call the vote-gated `setV4PositionManager(address)` to wire it — reuses `UPDATE_ROUTER_PERMISSION` (both router and PM are external Uniswap endpoints) so the install grant list stays at 6. Audit **I-01**: `initialize` rejects a zero `universalRouter` / `permit2` / `poolManager`, and both `setUniversalRouter` and `setV4PositionManager` reject `address(0)` (revert `ZeroAddress`), so a governance typo can't brick a live endpoint.
 
 ### `previewModifyLiquiditiesActions(...) view returns (Action[])`
 
@@ -91,11 +94,11 @@ Helper exposed: `previewModifyLiquiditiesActions`. Swaps do **not** have a separ
 
 ## 4. Allowance lifecycle (TRD §11 security note)
 
-The plugin approves **exactly `amountIn`** to Permit2, not `type(uint256).max`. After the Universal Router pulls `amountIn` via Permit2 during step 4.iii of the batch, the DAO's ERC20 allowance to Permit2 lands at **zero**.
+The plugin approves **exactly `amountIn`** to Permit2, not `type(uint256).max`, and — after the Universal Router pulls what it needs — **explicitly resets both allowance layers to zero** within the same batch (audit M-01, steps 4.iv–4.v above). So the DAO's ERC20 allowance to Permit2 **and** the Permit2-internal `(tokenIn, router)` allowance both land at zero even if the route consumed less than `amountIn` (a partial-consumption or max-input payload).
 
-The fork test `UniswapV4Plugin.fork.test.ts` explicitly asserts `IERC20.allowance(dao, PERMIT2) == 0` after a successful swap. Anyone wishing to audit this can reproduce locally against the pinned block.
+> **Changed by audit remediation.** Earlier builds relied on the router consuming the full approved amount and on the Permit2-internal allowance "naturally expiring" at `deadline` — finding M-01 flagged that a partial-consumption route could leave residual approval on either layer. The reset actions close that gap deterministically.
 
-Permit2's internal allowance (the second-layer approval set in step 4.ii) is time-bounded to `deadline` and naturally expires; it doesn't matter what value it leaves behind on Permit2 itself because that allowance scope is `(tokenIn, router)` keyed and the router only acts on calldata it receives in `execute`.
+The fork test `UniswapV4Plugin.fork.test.ts` asserts `IERC20.allowance(dao, PERMIT2) == 0` after a successful swap against the **real** Universal Router + Permit2, and the unit suite adds a partial-consumption case that checks both layers end at zero. The `invariant_zeroResidualPermit2Allowance` invariant enforces it across 50k random sequences.
 
 ## 5. Allowlist semantics
 

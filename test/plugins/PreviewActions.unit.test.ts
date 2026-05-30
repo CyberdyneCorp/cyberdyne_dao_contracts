@@ -264,7 +264,7 @@ describe("preview…Actions: governance-path action builders", () => {
       };
     }
 
-    it("previewModifyLiquiditiesActions: approve→Permit2.approve→PM.modifyLiquidities→approve(0)", async () => {
+    it("previewModifyLiquiditiesActions: approve→Permit2.approve→modify→reset BOTH layers (M-01)", async () => {
       const {plugin, pm, permit2} = await deployV4();
       const usdc = ethers.Wallet.createRandom().address;
       const weth = ethers.Wallet.createRandom().address;
@@ -279,17 +279,21 @@ describe("preview…Actions: governance-path action builders", () => {
         [usdc, weth],
         [1000, ethers.utils.parseEther("0.5")]
       );
-      // 2 inputs → 2 approve + 2 Permit2.approve + 1 modifyLiquidities + 2 approve(0) = 7 actions
-      expect(actions.length).to.equal(7);
-      expect(actions[0][0]).to.equal(usdc);
-      expect(actions[1][0]).to.equal(permit2);
+      // M-01: per input now resets BOTH allowance layers. For 2 inputs →
+      // 2 approve + 2 Permit2.approve + 1 modifyLiquidities
+      //   + 2 (Permit2-internal reset) + 2 (ERC20 reset) = 4n + 1 = 9 actions.
+      expect(actions.length).to.equal(9);
+      expect(actions[0][0]).to.equal(usdc); // approve(permit2, maxIn)
+      expect(actions[1][0]).to.equal(permit2); // Permit2.approve(usdc, pm, maxIn)
       expect(actions[2][0]).to.equal(weth);
       expect(actions[3][0]).to.equal(permit2);
       expect(actions[4][0]).to.equal(pm); // PM.modifyLiquidities
-      expect(actions[5][0]).to.equal(usdc); // approve(0)
-      expect(actions[6][0]).to.equal(weth); // approve(0)
+      expect(actions[5][0]).to.equal(permit2); // Permit2.approve(usdc, pm, 0) — internal reset
+      expect(actions[6][0]).to.equal(usdc); // approve(permit2, 0) — ERC20 reset
+      expect(actions[7][0]).to.equal(permit2); // Permit2.approve(weth, pm, 0)
+      expect(actions[8][0]).to.equal(weth); // approve(permit2, 0)
 
-      // 4th action is PM.modifyLiquidities(bytes,uint256) — selector 0xdd46508f
+      // The modify action is PM.modifyLiquidities(bytes,uint256) — selector 0xdd46508f
       expect(actions[4][2].slice(0, 10)).to.equal("0xdd46508f");
     });
 

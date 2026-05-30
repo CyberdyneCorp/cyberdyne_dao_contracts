@@ -78,6 +78,14 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
     ) external initializer {
         __PluginUUPSUpgradeable_init(_dao);
 
+        // I-01: the swap path is unusable without these three endpoints, and a
+        // governance typo setting one to address(0) would brick it until a
+        // corrective vote — reject zero up front. `v4PositionManager` may be
+        // zero here only, to install the plugin with LP deferred.
+        if (_universalRouter == address(0)) revert ZeroAddress();
+        if (_permit2 == address(0)) revert ZeroAddress();
+        if (_poolManager == address(0)) revert ZeroAddress();
+
         universalRouter = _universalRouter;
         permit2 = _permit2;
         poolManager = _poolManager;
@@ -140,8 +148,9 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
     }
 
     /// @dev Pulled out of `swap` to relieve stack pressure (compiler hits the
-    ///      16-local limit otherwise). Returns a length-3 batch in the exact
-    ///      order required by TRD §6.1.
+    ///      16-local limit otherwise). Returns a length-5 batch in the exact
+    ///      order required by TRD §6.1, with explicit post-swap allowance
+    ///      cleanup (M-01).
     function _buildSwapActions(
         bytes calldata commands,
         bytes[] calldata inputs,
@@ -152,7 +161,7 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
         address router = universalRouter;
         address permit2_ = permit2;
 
-        actions = new Action[](3);
+        actions = new Action[](5);
         // 1) DAO approves Permit2 to pull exactly `amountIn` of tokenIn.
         //    Exact-amount (not max) per TRD §11 — leaves zero leftover after
         //    Permit2 settles into the router and into the pool.
@@ -186,12 +195,28 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
                 deadline
             )
         });
+        // M-01: explicit allowance cleanup so a route that consumes less than
+        // `amountIn` (or a max-input payload) leaves NO residual approval the
+        // router could spend later. Reset both allowance layers to zero.
+        // 4) Permit2-internal allowance (tokenIn, router) → 0.
+        actions[3] = Action({
+            to: permit2_,
+            value: 0,
+            data: abi.encodeCall(IPermit2.approve, (tokenIn, router, 0, 0))
+        });
+        // 5) DAO → Permit2 ERC20 allowance for tokenIn → 0.
+        actions[4] = Action({
+            to: tokenIn,
+            value: 0,
+            data: abi.encodeCall(IERC20.approve, (permit2_, 0))
+        });
     }
 
     /// @inheritdoc IUniswapV4Plugin
     function setUniversalRouter(
         address newRouter
     ) external override auth(UPDATE_ROUTER_PERMISSION_ID) {
+        if (newRouter == address(0)) revert ZeroAddress(); // I-01
         address previous = universalRouter;
         universalRouter = newRouter;
         emit UniversalRouterUpdated(previous, newRouter);
@@ -216,6 +241,7 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
     function setV4PositionManager(
         address newPositionManager
     ) external override auth(UPDATE_ROUTER_PERMISSION_ID) {
+        if (newPositionManager == address(0)) revert ZeroAddress(); // I-01
         address previous = v4PositionManager;
         v4PositionManager = newPositionManager;
         emit V4PositionManagerUpdated(previous, newPositionManager);
@@ -230,8 +256,9 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
     ///          2. Permit2→PositionManager: approve `maxIn[i]` until `deadline`
     ///        then:
     ///          3. PositionManager.modifyLiquidities(unlockData, deadline)
-    ///        and for each input currency:
-    ///          4. DAO→Permit2: approve 0 (reset, no residual allowance)
+    ///        and for each input currency (M-01 — reset BOTH allowance layers):
+    ///          4. Permit2→PositionManager: approve 0 (Permit2-internal reset)
+    ///          5. DAO→Permit2: approve 0 (ERC20 reset, no residual allowance)
     ///      and after `execute`, asserts each output currency's DAO balance
     ///      delta ≥ `minOut[i]` (revert OutputShortfall otherwise).
     function modifyLiquidities(
@@ -378,8 +405,10 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
         address permit2_ = permit2;
         address pm = v4PositionManager;
         uint256 n = inputCurrencies.length;
-        // 2 actions per input (approve, Permit2.approve) + 1 modify + n resets.
-        actions = new Action[](3 * n + 1);
+        // 2 actions per input (ERC20 approve, Permit2.approve) + 1 modify + 2
+        // resets per input (Permit2-internal reset + ERC20 reset) = 4n + 1
+        // (M-01: reset BOTH allowance layers, not just the ERC20 one).
+        actions = new Action[](4 * n + 1);
 
         uint256 k;
         for (uint256 i; i < n; ++i) {
@@ -404,7 +433,16 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
             data: abi.encodeCall(IV4PositionManager.modifyLiquidities, (unlockData, deadline))
         });
 
+        // M-01: cleanup per input currency — reset the Permit2-internal
+        // allowance `(currency, positionManager)` AND the DAO→Permit2 ERC20
+        // allowance to zero, so a partial-consumption LP op leaves no residual
+        // approval on either layer.
         for (uint256 i; i < n; ++i) {
+            actions[k++] = Action({
+                to: permit2_,
+                value: 0,
+                data: abi.encodeCall(IPermit2.approve, (inputCurrencies[i], pm, 0, 0))
+            });
             actions[k++] = Action({
                 to: inputCurrencies[i],
                 value: 0,

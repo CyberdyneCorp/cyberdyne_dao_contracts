@@ -407,15 +407,17 @@ function executePayroll() external {
                        data: abi.encodeCall(IERC20.transfer, (r.payee, r.amount)) });
     }
 
-    // Allow individual transfers to fail rather than blocking everyone.
-    uint256 allowFailureMap = (1 << n) - 1; // every bit set
+    // Salary transfers are MANDATORY (audit H-01): allowFailureMap = 0 so any
+    // failed transfer reverts the whole batch and rolls back lastPayoutPeriod
+    // below. (Only an optional trailing keeper-bounty action is failable.)
+    // The real impl routes ERC20 legs through a SafeERC20 helper (M-04).
+    lastPayoutPeriod = currentPeriod; // effect before interaction; rolled back on revert
     (, uint256 failureMap) = IDAO(dao()).execute(
         keccak256(abi.encodePacked("PAYROLL:", currentPeriod)),
         actions,
-        allowFailureMap
+        0
     );
 
-    lastPayoutPeriod = currentPeriod;
     emit PayrollExecuted(currentPeriod, n, failureMap);
 }
 ```
@@ -425,7 +427,7 @@ function executePayroll() external {
 **Edge cases handled**
 - Restrict `payDayOfMonth` to `1..28` to dodge February and 30/31 mismatches entirely.
 - `lastPayoutPeriod` prevents double-pay in the same month if the crank is called twice.
-- Per-transfer failure tolerance (`allowFailureMap` all-bits-set) means one bad recipient (e.g., a smart-contract wallet that reverts on receive) doesn't halt the entire payroll. The `failureMap` is emitted for observability.
+- Salary transfers are **mandatory** (audit H-01 remediation): the batch runs with `allowFailureMap = 0`, so one bad recipient (e.g. a contract wallet that reverts on receive, or a false-returning token caught by the SafeERC20 helper) reverts the whole crank and the period stays open to retry — a period is never marked paid unless every salary paid. (Earlier drafts used `allowFailureMap` all-bits-set; that "tolerance" was the accounting bug the external audit flagged.) Only an optional keeper-bounty leg is failable, and its event is success-aware.
 - If the crank is missed entirely (no one calls in a given month), that month is skipped. The next valid call pays only the current month — there is no back-pay. This is intentional: missed-month back-pay would let an attacker stack payouts. If the DAO wants to back-pay, that's a normal vote.
 
 **Permissions**
@@ -661,7 +663,7 @@ All tests in Hardhat + TypeScript under `test/` (root) and structured to mirror 
 |---|---|---|
 | UniswapV4Plugin | `mainnetFork`, `baseFork` | Real DAO with real USDC + WETH balances, real Universal Router, real PoolManager. Assert DAO balance delta = expected output within slippage tolerance. |
 | AaveLendingPlugin | `mainnetFork`, `baseFork` | Real AAVE v3 Pool. Supply USDC → assert aUSDC minted to DAO. Borrow → assert debt token issued to DAO. Withdraw → assert aTokens burned. |
-| PayrollPlugin | `mainnetFork`, `localFork` | DAO holds USDC and ETH. `vm` time-travel to payday across 3 simulated months. One recipient is a reverting contract — assert others get paid, `failureMap` set. |
+| PayrollPlugin | `mainnetFork`, `localFork` | DAO holds USDC and ETH. `vm` time-travel to payday across 3 simulated months. One recipient is a reverting contract — assert the whole crank reverts and the period stays open (audit H-01, mandatory salaries). Plus a gas benchmark for a full 100-recipient ERC20 page (~6.66M gas). |
 | End-to-end DAO bootstrap | `mainnetFork`, `baseFork`, `sepoliaFork` | Full `DAOFactory.createDao` call with all five plugins. Assert DAO permissions match §9 permission matrix. |
 
 **Time travel for payroll tests:**

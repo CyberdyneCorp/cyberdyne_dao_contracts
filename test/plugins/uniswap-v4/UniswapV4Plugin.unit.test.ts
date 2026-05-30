@@ -181,6 +181,36 @@ describe("UniswapV4Plugin", () => {
       // Default mapping returns false; no entries are added.
       expect(await plugin.allowedToken(tokenIn.address)).to.equal(false);
     });
+
+    it("I-01: rejects a zero universalRouter / permit2 / poolManager at init", async () => {
+      const impl = await new UniswapV4Plugin__factory(deployer).deploy();
+      const ProxyFactory = await ethers.getContractFactory("ERC1967Proxy", deployer);
+      const Z = ethers.constants.AddressZero;
+      const cases: [string, string, string][] = [
+        [Z, permit2.address, FAKE_POOL_MANAGER], // zero router
+        [router.address, Z, FAKE_POOL_MANAGER], // zero permit2
+        [router.address, permit2.address, Z], // zero poolManager
+      ];
+      for (const [ur, p2, poolMgr] of cases) {
+        const initData = impl.interface.encodeFunctionData("initialize", [
+          dao.address,
+          ur,
+          p2,
+          poolMgr,
+          ethers.constants.AddressZero,
+          [],
+        ]);
+        await expect(ProxyFactory.deploy(impl.address, initData)).to.be.revertedWithCustomError(
+          impl,
+          "ZeroAddress"
+        );
+      }
+    });
+
+    it("I-01: still allows a zero v4PositionManager at init (deferred LP)", async () => {
+      // deployProxied passes AddressZero for v4PositionManager — must succeed.
+      expect(await plugin.v4PositionManager()).to.equal(ethers.constants.AddressZero);
+    });
   });
 
   describe("setUniversalRouter", () => {
@@ -199,6 +229,12 @@ describe("UniswapV4Plugin", () => {
       await expect(
         plugin.connect(stranger).setUniversalRouter(ethers.Wallet.createRandom().address)
       ).to.be.reverted;
+    });
+
+    it("I-01: rejects a zero newRouter", async () => {
+      await expect(
+        plugin.connect(voter).setUniversalRouter(ethers.constants.AddressZero)
+      ).to.be.revertedWithCustomError(plugin, "ZeroAddress");
     });
   });
 
@@ -411,32 +447,34 @@ describe("UniswapV4Plugin", () => {
       expect(await plugin.swapNonce()).to.equal(1);
     });
 
-    it("approves Permit2 for exactly amountIn (not max) — TRD §11 security note", async () => {
-      // With pullTokenIn=true, MockUniversalRouter pulls `amountIn` of tokenIn
-      // from the DAO *via Permit2*, mirroring the real settlement path. The
-      // DAO's ERC20 allowance for Permit2 should be exactly amountIn before
-      // the call and zero after (since the plugin approves the exact amount,
-      // not max).
+    it("M-01: full-consumption swap leaves zero residual on BOTH allowance layers", async () => {
       const {amountIn} = await happySwap({pullTokenIn: true});
 
-      // Plugin recorded its approve via the mock Permit2 — check it was
-      // (tokenIn, router, amountIn, deadline).
-      const {amount, expiration, set} = await permit2.getApproval(tokenIn.address, router.address);
-      expect(set).to.equal(true);
-      expect(amount).to.equal(amountIn);
-      expect(expiration).to.equal(FUTURE_DEADLINE);
+      // Permit2-internal allowance (tokenIn, router) was set to amountIn then
+      // explicitly reset to 0 by the cleanup action ("last write wins" mock).
+      const {amount, expiration} = await permit2.getApproval(tokenIn.address, router.address);
+      expect(amount).to.equal(0);
+      expect(expiration).to.equal(0);
+      void amountIn;
 
-      // After the router (here: the mock) has done its Permit2.transferFrom
-      // of `amountIn`, the ERC20 allowance for Permit2 should be back to zero
-      // (we approved exactly amountIn — not max).
-      const remaining = await tokenIn.allowance(dao.address, permit2.address);
-      expect(remaining).to.equal(0);
+      // DAO → Permit2 ERC20 allowance also ends at zero.
+      expect(await tokenIn.allowance(dao.address, permit2.address)).to.equal(0);
     });
 
-    it("Permit2.approve was called exactly once per swap", async () => {
+    it("M-01: PARTIAL-consumption swap still cleans up both allowance layers", async () => {
+      // pullTokenIn=false → the router consumes NONE of the approved amountIn.
+      // Pre-fix this left a residual ERC20 + Permit2 allowance dangling; the
+      // explicit cleanup actions must zero both regardless of consumption.
+      await happySwap({pullTokenIn: false});
+      const {amount} = await permit2.getApproval(tokenIn.address, router.address);
+      expect(amount).to.equal(0);
+      expect(await tokenIn.allowance(dao.address, permit2.address)).to.equal(0);
+    });
+
+    it("M-01: Permit2.approve is called twice per swap (set + reset)", async () => {
       expect(await permit2.approveCallCount()).to.equal(0);
       await happySwap();
-      expect(await permit2.approveCallCount()).to.equal(1);
+      expect(await permit2.approveCallCount()).to.equal(2);
     });
 
     it("passes the allowlist gate when both tokens are listed", async () => {
@@ -554,6 +592,12 @@ describe("UniswapV4Plugin", () => {
         .to.emit(plugin, "V4PositionManagerUpdated")
         .withArgs(pm.address, next);
       await expect(plugin.connect(stranger).setV4PositionManager(next)).to.be.reverted;
+    });
+
+    it("I-01: setV4PositionManager rejects a zero address", async () => {
+      await expect(
+        plugin.connect(voter).setV4PositionManager(ethers.constants.AddressZero)
+      ).to.be.revertedWithCustomError(plugin, "ZeroAddress");
     });
 
     it("reverts PositionManagerUnset when never configured", async () => {
@@ -730,8 +774,11 @@ describe("UniswapV4Plugin", () => {
       expect(await tokenIn.balanceOf(dao.address)).to.equal(0);
       expect(await tokenIn.balanceOf(pm.address)).to.equal(amountIn);
       expect(await tokenIn.balanceOf(plugin.address)).to.equal(0);
-      // No residual DAO→Permit2 allowance after the reset action.
+      // M-01: BOTH allowance layers reset after the op — the DAO→Permit2 ERC20
+      // allowance AND the Permit2-internal (tokenIn, positionManager) allowance.
       expect(await tokenIn.allowance(dao.address, permit2.address)).to.equal(0);
+      const {amount: pmAllowance} = await permit2.getApproval(tokenIn.address, pm.address);
+      expect(pmAllowance).to.equal(0);
     });
 
     it("decrease/collect leg: outputs land in the DAO and pass minOut check", async () => {
