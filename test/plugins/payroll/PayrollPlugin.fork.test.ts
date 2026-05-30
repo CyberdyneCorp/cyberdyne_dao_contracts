@@ -17,7 +17,7 @@
  */
 import {expect} from "chai";
 import {ethers, network} from "hardhat";
-import type {BigNumber, Signer} from "ethers";
+import type {Signer} from "ethers";
 import {
   MinimalDAO,
   MinimalDAO__factory,
@@ -137,47 +137,30 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       expect(await plugin.lastPayoutPeriod()).to.equal(2028 * 12 + 3);
     });
 
-    it("one reverting payee does not block the others (real ETH transfers)", async () => {
+    // H-01 regression on a real fork: salary transfers are mandatory, so one
+    // reverting payee aborts the WHOLE crank — nobody is paid and the period is
+    // not locked (retryable once the bad payee is corrected). Pre-fix the batch
+    // "tolerated" the reverting payee and locked the period.
+    it("H-01: one reverting payee reverts the whole crank (real ETH)", async () => {
       const reverting = await new RevertingRecipient__factory(deployer).deploy();
       await reverting.deployed();
-      // Use a FRESH zero-balance address as the good payee. A node-prefunded
-      // account (anvil's default signers) reads its genesis balance oddly on a
-      // fork after receiving ETH; a fresh address makes the +salary assertion
-      // unambiguous.
       const bAddr = ethers.Wallet.createRandom().address;
-
       const ethSalary = ethers.utils.parseEther("0.5");
 
       await setEthBalance(dao.address, ethers.utils.parseEther("10"));
 
-      // Bad recipient first → bit 0 will be set in failureMap.
       await plugin
         .connect(voter)
         .addRecipient(reverting.address, ethers.constants.AddressZero, ethSalary, "");
       await plugin.connect(voter).addRecipient(bAddr, ethers.constants.AddressZero, ethSalary, "");
 
-      const bBefore = await ethers.provider.getBalance(bAddr);
-
       await time.setNextBlockTimestamp(utcTimestamp(2027, 9, PAY_DAY, 12));
-      const tx = await plugin.executePayroll();
-      const receipt = await tx.wait();
+      await expect(plugin.executePayroll()).to.be.reverted;
 
-      const iface = new ethers.utils.Interface([
-        "event PayrollExecuted(uint256 indexed period, uint256 recipientCount, uint256 failureMap)",
-      ]);
-      let failureMap: BigNumber | undefined;
-      for (const log of receipt.logs) {
-        try {
-          const parsed = iface.parseLog(log);
-          if (parsed.name === "PayrollExecuted") failureMap = parsed.args.failureMap;
-        } catch {
-          /* not our event */
-        }
-      }
-      expect(failureMap).to.not.be.undefined;
-      expect(failureMap!).to.equal(1); // bit 0 = bad recipient failed
-      expect(await ethers.provider.getBalance(bAddr)).to.equal(bBefore.add(ethSalary));
+      // Neither payee received anything; the period stayed open.
+      expect(await ethers.provider.getBalance(bAddr)).to.equal(0);
       expect(await ethers.provider.getBalance(reverting.address)).to.equal(0);
+      expect(await plugin.lastPayoutPeriod()).to.equal(0);
     });
 
     it("previewForcePayPeriodActions recovers a skipped month with real USDC", async () => {
@@ -197,10 +180,10 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       const period = 2030 * 12 + 2; // Feb 2030
       const raw = await plugin.previewForcePayPeriodActions(period);
       const actions = raw.map((a) => ({to: a.to, value: a.value, data: a.data}));
-      expect(actions.length).to.equal(1);
+      // M-04: the ERC20 leg is now a SafeERC20 pair (approve + helper.safeTransfer).
+      expect(actions.length).to.equal(2);
 
-      // Governance carries the batch; the DAO runs it top-level via execute
-      // (no nested dao.execute — the actions are raw DAO→payee transfers).
+      // Governance carries the batch; the DAO runs it top-level via execute.
       await dao.execute(ethers.utils.id("force-2030-02"), actions, 0);
       expect(await usdc.balanceOf(aAddr)).to.equal(salary.mul(2)); // Jan + recovered Feb
     });

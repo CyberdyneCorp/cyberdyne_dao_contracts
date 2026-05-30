@@ -10,7 +10,7 @@
  */
 import {ethers, network} from "hardhat";
 import {expect} from "chai";
-import type {BigNumber, ContractTransaction, Signer} from "ethers";
+import type {Signer} from "ethers";
 import {
   MinimalDAO,
   MinimalDAO__factory,
@@ -33,23 +33,6 @@ const WHALES: Record<ExternalChain, string> = {
 };
 
 const ERC20_ABI = ["function balanceOf(address) view returns (uint256)"];
-
-// Reads the `failureMap` from the CostsProcessed event of a processDue tx.
-async function readFailureMap(
-  plugin: CostRegistryPlugin,
-  tx: ContractTransaction
-): Promise<BigNumber> {
-  const receipt = await tx.wait();
-  for (const log of receipt.logs) {
-    try {
-      const parsed = plugin.interface.parseLog(log);
-      if (parsed.name === "CostsProcessed") return parsed.args.failureMap;
-    } catch {
-      /* not our event */
-    }
-  }
-  throw new Error("CostsProcessed not emitted");
-}
 
 async function deployProxied(
   signer: Signer,
@@ -151,25 +134,32 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       expect(await plugin.isDue(2)).to.equal(false);
     });
 
-    it("isolates a failing transfer (real USDC) via the failure map", async () => {
+    // H-03 regression on real USDC: an underfunded batch must revert wholesale
+    // and leave NOTHING marked paid (pre-fix it "isolated" the failure and
+    // advanced both clocks).
+    it("H-03: an underfunded batch reverts on real USDC — nothing marked paid", async () => {
       const payee2 = ethers.Wallet.createRandom().address;
       const cost = ethers.utils.parseUnits("100", 6);
-      // Fund the DAO for exactly ONE payment — the second transfer reverts.
+      // Fund the DAO for exactly ONE payment — the second transfer can't settle.
       await fundFromWhale(usdcAddress, WHALES[chainKey()], dao.address, cost);
 
       await plugin.connect(voter).registerEntry("first", "", cost, 10, payee);
       await plugin.connect(voter).registerEntry("second", "", cost, 10, payee2);
 
       await time.increase(11 * DAY);
-      const tx = await plugin.processDue(0, 10);
-      const failureMap = await readFailureMap(plugin, tx);
+      await expect(plugin.processDue(0, 10)).to.be.reverted;
 
-      expect(failureMap).to.equal(2); // bit 1 set → second entry's transfer failed
-      expect(await usdc.balanceOf(payee)).to.equal(cost); // first paid
-      expect(await usdc.balanceOf(payee2)).to.equal(0); // second failed
-      // Both clocks advanced — the failed one waits a period (documented).
-      expect(await plugin.isDue(0)).to.equal(false);
-      expect(await plugin.isDue(1)).to.equal(false);
+      // No funds moved, both entries still due (no clock advanced).
+      expect(await usdc.balanceOf(payee)).to.equal(0);
+      expect(await usdc.balanceOf(payee2)).to.equal(0);
+      expect(await plugin.isDue(0)).to.equal(true);
+      expect(await plugin.isDue(1)).to.equal(true);
+
+      // Fully fund → the same crank settles both on real USDC.
+      await fundFromWhale(usdcAddress, WHALES[chainKey()], dao.address, cost);
+      await expect(plugin.processDue(0, 10)).to.emit(plugin, "CostsProcessed");
+      expect(await usdc.balanceOf(payee)).to.equal(cost);
+      expect(await usdc.balanceOf(payee2)).to.equal(cost);
     });
 
     it("reflects update + remove in subsequent cranks (real USDC)", async () => {
