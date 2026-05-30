@@ -71,8 +71,14 @@ contract MockUniversalRouter is IUniversalRouter {
         _settle();
     }
 
+    /// @dev Lets the mock be pre-funded with ETH for native-output swap tests
+    ///      and receive native-input ETH the plugin attaches as msg.value.
+    receive() external payable {}
+
     function _settle() internal {
-        if (pullTokenIn && configuredInputAmount > 0) {
+        // Native-ETH input arrives as msg.value (no Permit2 pull). ERC20 input
+        // routes through Permit2 exactly like the real Universal Router.
+        if (pullTokenIn && configuredInputAmount > 0 && configuredTokenIn != address(0)) {
             // Real Universal Router → Permit2 → ERC20 settlement path. The
             // ERC20 allowance lives DAO → Permit2, so we must route through
             // Permit2's `transferFrom`, NOT call ERC20.transferFrom directly.
@@ -84,7 +90,13 @@ contract MockUniversalRouter is IUniversalRouter {
             );
         }
         if (configuredOutputAmount > 0) {
-            IERC20(configuredTokenOut).transfer(configuredRecipient, configuredOutputAmount);
+            if (configuredTokenOut == address(0)) {
+                // Native-ETH output: send ether to the DAO (mock must be funded).
+                (bool ok, ) = configuredRecipient.call{value: configuredOutputAmount}("");
+                require(ok, "MockUniversalRouter: ETH out failed");
+            } else {
+                IERC20(configuredTokenOut).transfer(configuredRecipient, configuredOutputAmount);
+            }
         }
     }
 }

@@ -9,6 +9,10 @@ on:
 env:
   FOUNDRY_PROFILE: ci
   NODE_VERSION: "20"
+  # Authenticate foundryup's GitHub API calls (release-tag lookup) so the
+  # `foundry-toolchain` install doesn't hit the unauthenticated 60-req/hr rate
+  # limit (curl 403) when several jobs install Foundry in parallel.
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   lint:

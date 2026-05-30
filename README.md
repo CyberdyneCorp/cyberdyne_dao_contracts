@@ -158,6 +158,7 @@ sequenceDiagram
 
 - Plugin holds no funds, no NFTs — DAO is `msg.sender` to the router and PM.
 - Allowlist (optional) gates `tokenIn`/`tokenOut` for swaps and every input/output currency for LP ops.
+- **Native ETH (`address(0)`) is a first-class currency** on both paths — ETH-in swaps and native-ETH LP inputs are funded via `value` (no Permit2/approve), and native outputs are slippage-checked against the DAO's ether balance — so real ETH/x pools work, not just WETH/x. See [`docs/plugins/UNISWAP_V4.md §4a`](docs/plugins/UNISWAP_V4.md).
 - Direct wrapper calls (`swap`, `modifyLiquidities`) still work for tests and alternate governance plugins — they just can't be invoked through TokenVoting because of OSx's `nonReentrant` `DAO.execute`.
 
 ### 2. Uniswap V3 Plugin (full LP lifecycle)
