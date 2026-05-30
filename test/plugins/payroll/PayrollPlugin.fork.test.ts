@@ -3,8 +3,8 @@
  *
  * Runs against a forked chain (mainnetFork or baseFork) so the DAO holds
  * REAL USDC seeded from a whale via hardhat_impersonateAccount. Validates
- * the calendar-math + per-recipient failure tolerance against real token
- * transfers + real timestamps.
+ * the calendar-math + mandatory-salary semantics (audit H-01) against real
+ * token transfers + real timestamps.
  *
  * Scope deviation from ROADMAP P2: we use the MinimalDAO mock rather than
  * the live DAOFactory. End-to-end bootstrap via DAOFactory belongs to P5's
