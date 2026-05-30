@@ -78,6 +78,11 @@ Gates two distinct Uniswap V4 capabilities behind DAO governance:
 2. **Full LP lifecycle** (mint / increase / decrease / collect / burn) through
    the v4-periphery PositionManager via a `modifyLiquidities` pass-through.
 
+**Native ETH (`address(0)`) is a first-class currency** on both paths: ETH-in
+swaps and native-ETH LP inputs are funded by attaching `value` (no Permit2/
+approve), and native outputs are slippage-checked against the DAO's ether
+balance — so the DAO can use real ETH/x pools, not only WETH/x.
+
 ### Feature highlights
 
 - **Exact-amount Permit2 approval** — approves precisely `amountIn`, never
