@@ -23,9 +23,9 @@ These are the highest-risk invariants for this plugin — confirm each explicitl
 
 1. Independent per-entry cadence (`lastPaidAt + frequencyDays`) cannot be made to back-pay or stack a missed period.
 2. `updateEntry` preserves `lastPaidAt` (no schedule reset / early payment).
-3. `MAX_COST_USDC` cap blocks typo'd amounts; `setPaymentToken` decimals migration risk is documented.
-4. `processDue` pagination + page-local `failureMap` isolate a bad payee.
-5. `initializeV2` reinitializer seeds `_maxEntries` safely on upgrade (idempotent, write-only-when-zero).
+3. `MAX_COST_USDC` cap blocks typo'd amounts; `setPaymentToken` **rejects a decimals mismatch** (audit CR-M-02) so a migration can't silently re-price entries.
+4. The crank runs with `allowFailureMap = 0` (audit CR-H-01): a failed/false-returning transfer reverts the batch and rolls back `lastPaidAt`, so no entry is marked paid for a payment that didn't happen and `CostPaid` fires only on success. Confirm payouts route through `SafeTransferHelper` (CR-M-01), `processAllDue` reverts past one page (CR-L-02), and `processDueFromCursor` covers large registries (CR-L-03).
+5. `initializeV2`/`initializeV3` reinitializers seed `_maxEntries` / `_transferHelper` safely on upgrade (idempotent, write-only-when-zero).
 
 ### Security review checklist
 

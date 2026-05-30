@@ -79,9 +79,10 @@ Signatures freeze at **P1**. Any change after P5 (bootstrap) is breaking for the
 | `PayrollExecuted` | `(uint256 period, uint256 recipientCount, uint256 failureMap)` | `period` | `PayrollPayout` (per batch) + N×`PayrollPayoutItem` (one per recipient, `failed` derived from `failureMap`) | Payroll schedule screen → per-month execution log |
 | `PayrollPeriodCompleted` | `(uint256 period)` | `period` | marks the `period`'s payout as complete (final page) | Payroll execution log — "period closed" marker |
 | `KeeperBountyConfigured` | `(address token, uint256 perCrank, uint256 maxPerPeriod)` | `token` | `PayrollConfig` (bounty fields) | Payroll admin: keeper-bounty config |
-| `KeeperBountyPaid` | `(address keeper, address token, uint256 amount, uint256 period)` | `keeper`, `token`, `period` | `KeeperBountyPayment` | Payroll execution log — bounty line |
+| `KeeperBountyPaid` | `(address keeper, address token, uint256 amount, uint256 period)` | `keeper`, `token`, `period` | `KeeperBountyPayment` | Payroll execution log — bounty line. Fires **only when the bounty leg succeeded** (audit H-02). |
+| `ForcePeriodPaid` | `(uint256 period)` | `period` | `PayrollForcePay` (skipped-month recovery) | Payroll execution log — "skipped month recovered" marker (`executeForcePayPeriod`, audit M-02) |
 
-> **Pagination note:** a large payroll fires `PayrollExecuted` **once per page** (not once per period); `recipientCount` and `failureMap` are page-local — bit `i` of `failureMap` is the `i`-th recipient *of that page*. Aggregate batches by `period`, and treat `PayrollPeriodCompleted(period)` as the "period fully paid" signal. A payroll that fits one page fires a single `PayrollExecuted` followed by `PayrollPeriodCompleted`, identical to the v1 single-batch shape plus the completion marker.
+> **Pagination note:** a large payroll fires `PayrollExecuted` **once per page** (not once per period); `recipientCount` and `failureMap` are page-local. Since salary transfers are now mandatory (audit H-01 — batch runs with `allowFailureMap = 0`), a salary failure reverts the whole crank, so `failureMap` only ever carries the optional keeper-bounty bit. Aggregate batches by `period`, and treat `PayrollPeriodCompleted(period)` as the "period fully paid" signal. A payroll that fits one page fires a single `PayrollExecuted` followed by `PayrollPeriodCompleted`.
 
 **Read-side joins:** `PayrollPlugin.allActiveRecipients()` is the canonical single-RPC fetch for the schedule screen (TRD §3a calls this out — view sized for one round-trip per UI screen).
 
@@ -99,7 +100,7 @@ Signatures freeze at **P1**. Any change after P5 (bootstrap) is breaking for the
 | `PaymentTokenUpdated` | `(address previous, address current)` | `previous`, `current` | `PaymentTokenMigration` + `CostRegistryPlugin.paymentToken` | Inspector: token-migration history |
 | `MaxEntriesUpdated` | `(uint256 oldMax, uint256 newMax)` | — | `CostRegistryConfig` (`maxEntries` field) | Cost-registry admin: entry-cap config |
 
-> **Pagination note:** `processDue(offset, limit)` (and the offset-free `processAllDue()` convenience wrapper) fire `CostPaid` per paid entry and one `CostsProcessed` per batch. `failureMap` is page-local — bit `i` = the `i`-th paid entry of that batch reverted. Entries are idempotent per their own `lastPaidAt`, so there is no period/cursor to aggregate (unlike Payroll).
+> **Pagination note:** `processDue(offset, limit)`, the offset-free `processAllDue()`, and the round-robin `processDueFromCursor(limit)` all fire `CostPaid` per paid entry and one `CostsProcessed` per batch. Since the crank now runs with `allowFailureMap = 0` (audit H-03 — a failed transfer reverts the batch), `CostsProcessed` only ever carries `failureMap == 0`, and every `CostPaid` reflects funds that actually moved. Entries are idempotent per their own `lastPaidAt`, so there is no period to aggregate (unlike Payroll).
 
 **Read-side joins:** `CostRegistryPlugin.getEntries(offset, limit)` returns a page of entries plus the total count, sized for the operating-costs screen.
 

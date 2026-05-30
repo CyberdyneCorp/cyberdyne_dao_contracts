@@ -23,10 +23,10 @@
 These are the highest-risk invariants for this plugin — confirm each explicitly:
 
 1. Permissionless `executePayroll` / `executePayrollPage` crank cannot be abused to double-pay a period or skip the once-per-month idempotency guard.
-2. `allowFailureMap` correctly isolates a reverting payee without aborting the batch, and cannot be gamed to mark a real payment as failed.
-3. Pagination cursor (`payoutCursor`/`cursorPeriod`) is monotonic and cannot strand or replay recipients across pages.
-4. Keeper-bounty accounting respects `bountyMaxPerPeriod` and cannot drain the treasury.
-5. Force-pay recovery is bounded by `MAX_FORCE_BACK_MONTHS` and vote-gated.
+2. Salary transfers are mandatory (audit H-01): the batch runs with `allowFailureMap = 0`, a failed/false-returning salary reverts the whole crank, and the period is never marked complete unless every salary paid. Confirm the bounty is the only failable leg and `KeeperBountyPaid` is success-aware (H-02), and that ERC20 payouts route through `SafeTransferHelper` (M-04).
+3. Pagination cursor (`payoutCursor`/`cursorPeriod`) is monotonic and cannot strand or replay recipients across pages; recipient-set mutations are frozen mid-pagination (M-03).
+4. Keeper-bounty accounting respects `bountyMaxPerPeriod`, is awarded only on a full/final page (L-01), and `setKeeperBounty` rejects an unfundable config (L-04).
+5. Force-pay recovery (`executeForcePayPeriod`) is bounded by `MAX_FORCE_BACK_MONTHS`, vote-gated, and guarded against double-pay via `forcePaidPeriod` (M-02).
 6. Vendored BokkyPooBah date library matches upstream byte-for-byte (no tampering).
 
 ### Security review checklist

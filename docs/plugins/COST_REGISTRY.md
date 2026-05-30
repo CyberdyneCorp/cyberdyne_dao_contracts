@@ -24,8 +24,10 @@ services…) that also disburses them in USDC.
 - `setMaxEntries(newMax)` raises/lowers the entry-slot cap (`MAX_ENTRIES()`,
   default 300), bounded above by `MAX_ENTRIES_CEILING` (1000) and below by the
   live slot count — lets a DAO grow past 300 without a plugin upgrade.
-- A **permissionless** `processDue(offset, limit)` crank disburses the USDC cost
-  to each entry's payee once its period has elapsed.
+- A **permissionless** crank disburses the USDC cost to each entry's payee once
+  its period has elapsed — `processDue(offset, limit)` for an explicit window,
+  `processAllDue()` for a single-page registry, or `processDueFromCursor(limit)`
+  for round-robin coverage of a large one (see §4).
 - Entries are publicly readable with **pagination** (`getEntries(offset, limit)`).
 
 ## 2. Trust + custody model
@@ -37,7 +39,8 @@ services…) that also disburses them in USDC.
 - The crank is the only `processDue` call site; the DAO is the only caller of the
   vote-gated mutators (`MANAGE_COSTS_PERMISSION`).
 - UUPS upgrades require `UPGRADE_PLUGIN_PERMISSION`, granted only to the DAO.
-- The payment token is **migratable** via the vote-gated `setPaymentToken(address)` (permission ID `UPDATE_PAYMENT_TOKEN_PERMISSION`). Existing entries' `costUsdc` is stored as raw token units, so a migration to a token with different decimals (e.g. USDC 6dp → DAI 18dp) **must be paired with `updateEntry` calls in the same proposal** to avoid silent value drift on the next crank.
+- ERC20 payments route through a per-instance **`SafeTransferHelper`** (`src/common/SafeTransferHelper.sol`), deployed in `initialize`: the DAO `approve`s the helper for the exact amount and the helper does `SafeERC20.safeTransferFrom(dao → payee)`, so a token that returns `false` without reverting can't be booked as paid (audit CR-M-01). The helper is stateless, holds no funds, and grants no authority.
+- The payment token is **migratable** via the vote-gated `setPaymentToken(address)` (permission ID `UPDATE_PAYMENT_TOKEN_PERMISSION`). Existing entries' `costUsdc` is stored as raw token units, so to prevent silent re-pricing the migration is **hard-gated on a decimals match**: `setPaymentToken` reverts `PaymentTokenDecimalsMismatch` if the new token's `decimals()` differs from the current one (audit CR-M-02). A same-decimals swap (e.g. one 6-dp USD stablecoin to another) is allowed; a cross-decimals move (e.g. 6-dp → 18-dp) must instead be done by a plugin upgrade that rescales entries atomically.
 
 > **No `preview…Actions` helpers needed.** Like Payroll, the fund-moving entry (`processDue`) is **permissionless** (keeper-callable), not governance-routed — it never participates in the nested-`dao.execute` reentrancy issue that motivated [TRD §9a](../TRD.md#9a-governance-path-action-builders-previewactions). Entry-management mutators (`registerEntry` / `updateEntry` / `removeEntry` / `setMaxEntries`) are single-action plugin calls and ride through TokenVoting as one-action proposals directly.
 
@@ -61,26 +64,34 @@ services…) that also disburses them in USDC.
 ## 4. The crank — `processDue(offset, limit)`
 
 - Scans the entry window `[offset, offset+limit)` (`limit` clamped to
-  `MAX_PER_PAGE = 100`), collects the active + due entries, and pays each via a
-  USDC `transfer(payee, costUsdc)` action batched through `DAO.execute`.
+  `MAX_PER_PAGE = 100`), collects the active + due entries, and pays each as a
+  **SafeERC20 pair** — `token.approve(helper, costUsdc)` + `helper.safeTransfer(token, payee, costUsdc)` (see §2) — batched through `DAO.execute`.
 - **Pagination:** large registries are processed across multiple calls by
-  walking `offset`. No global cursor is needed — idempotency is per-entry via
-  `lastPaidAt`, so a re-run on the same window only pays whatever has since come
-  due (nothing, if just paid).
-- **`processAllDue()` convenience:** equivalent to `processDue(0, MAX_PER_PAGE)`
-  — pays the first page of due entries without the keeper tracking an offset.
-  Genuinely "all due" for any registry with `entryCount() <= MAX_PER_PAGE`;
-  larger registries still need paginated `processDue` for entries past the
-  first page. Both entry points share the private `_processDue(offset, limit)`.
-- **Per-entry failure tolerance:** `allowFailureMap = (1 << count) - 1`, so one
-  payee whose transfer reverts (e.g. the DAO ran out of USDC mid-batch) never
-  blocks the rest. `CostsProcessed(fromIndex, count, failureMap)` surfaces the
-  page-local bitmap; `CostPaid` fires per entry.
+  walking `offset`. Idempotency is per-entry via `lastPaidAt`, so a re-run on
+  the same window only pays whatever has since come due (nothing, if just paid).
+- **`processAllDue()` convenience:** pays every due entry from index 0 in a
+  single page **and reverts `RegistryExceedsSinglePage` when the registry has
+  more than `MAX_PER_PAGE` slots** (audit CR-L-02) — so an operator can never
+  mistake a partial first-page run for a full sweep. Larger registries must
+  paginate.
+- **`processDueFromCursor(limit)` (audit CR-L-03):** a round-robin crank that
+  processes the page starting at a persistent `_dueCursor`, then advances the
+  cursor by `limit` (wrapping at the end). Repeated permissionless calls cover
+  every entry of a multi-page registry without keepers coordinating offsets.
+  `dueCursor()` exposes the current offset. All three entry points share the
+  private `_processDue(offset, limit)`.
+- **Failed transfers revert the whole batch (audit H-03 / CR-M-01).** Earlier
+  builds set `allowFailureMap = (1 << count) - 1` (every transfer failable) and
+  *still* marked each entry paid — the report-missed accounting bug. The crank
+  now runs with **`allowFailureMap = 0`**: any failing transfer (insufficient
+  USDC, paused token, blocked payee, or a false-returning token caught by the
+  SafeERC20 helper — see §2) reverts the entire batch, rolling back every
+  `lastPaidAt` write. So an entry is never marked paid for a payment that didn't
+  happen, and `CostPaid` is emitted only on full success.
 - **Reentrancy:** each paid entry's `lastPaidAt` is advanced **before** the
   external `execute` (effects-before-interactions), so a payee that reenters the
-  crank cannot trigger a second payment for the same entry. A transfer that then
-  fails leaves the entry marked paid — it waits one more period (same trade-off
-  as Payroll).
+  crank sees the entry as not-due; if the batch then reverts, that write is
+  rolled back with the transaction.
 
 ## 5. Soft-delete preservation
 
@@ -101,7 +112,11 @@ services…) that also disburses them in USDC.
 | `CostsProcessed(fromIndex, count, failureMap)` | `processDue` (per batch) | — |
 
 `failureMap` in `CostsProcessed` is **page-local**: bit `i` = the `i`-th paid
-entry of that batch reverted.
+entry of that batch reverted. Since the crank now runs with
+`allowFailureMap = 0` (§4), any failure reverts the batch — so a `CostsProcessed`
+event is only ever emitted with `failureMap == 0` (all paid).
+`setPaymentToken` additionally emits `PaymentTokenUpdated(previous, current)`;
+`setMaxEntries` emits `MaxEntriesUpdated(oldMax, newMax)`.
 
 ## 7. Storage layout (UUPS upgrade safety)
 
@@ -113,10 +128,17 @@ after the inherited gap chain:
 ```
 slot 301: _token (IERC20)
 slot 302: _entries (CostEntry[])
-slot 303..349: __gap[47]
+slot 303: _maxEntries (uint256)     — added with the MAX_ENTRIES storage migration (initializeV2)
+slot 304: _transferHelper (address) — added by audit remediation (CR-M-01 SafeERC20 helper)
+slot 305: _dueCursor (uint256)      — added by audit remediation (CR-L-03 round-robin cursor)
+slot 306..350: __gap[45]
 ```
 
-`CostEntry` packs `payee(20)+costUsdc(uint96,12)` into one slot and
+All additions are append-only (slots 301..303 untouched); the remediation slots
+304/305 came from `__gap` (`__gap[47]` → `__gap[45]`). Instances installed before
+the helper slot existed run `initializeV3()` (`reinitializer(3)`) once, atomically
+with the upgrade, to deploy the per-instance `SafeTransferHelper` (permissionless +
+idempotent). `CostEntry` packs `payee(20)+costUsdc(uint96,12)` into one slot and
 `frequencyDays(uint32)+lastPaidAt(uint64)+active(bool)` into the next; `name` and
 `description` are dynamic. `costUsdc` is stored as `uint96` (≈7.9e28 max) but
 the **runtime cap is `MAX_COST_USDC = 1_000_000_000_000_000`** (= $1B USDC at 6
@@ -143,11 +165,13 @@ CI gate: `slither --fail-high`. None of the above are high-severity.
 
 ## 9. Tests
 
-- Unit: `test/plugins/cost-registry/CostRegistryPlugin.unit.test.ts` — 30 cases
-  (CRUD validations + events, `MAX_COST_USDC` cap, `setPaymentToken` migration,
-  paginated `getEntries`, crank due/not-due/inactive, `processAllDue`, no
-  back-pay, per-entry failure isolation, windowing, `isDue`/`nextPaymentAt`).
-  ≥90% coverage on `src/plugins/cost-registry/**`.
+- Unit: `test/plugins/cost-registry/CostRegistryPlugin.unit.test.ts` — CRUD
+  validations + events, `MAX_COST_USDC` cap, `setPaymentToken` migration +
+  decimals-mismatch guard, paginated `getEntries`, crank due/not-due/inactive,
+  `processAllDue` single-page guard, `processDueFromCursor` round-robin, no
+  back-pay, and the audit regressions (H-03 underfunded-batch revert,
+  CR-M-01 false-returning token, CR-I-01/I-02). ≥90% coverage on
+  `src/plugins/cost-registry/**`.
 - Invariant: `test/invariants/CostRegistry.invariant.t.sol` — plugin holds no
   token / no ETH, `entryCount` bounded, `lastPaidAt` never set into the future.
 - Fork: `test/plugins/cost-registry/CostRegistryPlugin.fork.test.ts` — pays real
