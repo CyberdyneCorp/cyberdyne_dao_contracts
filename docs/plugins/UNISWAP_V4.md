@@ -100,6 +100,17 @@ The plugin approves **exactly `amountIn`** to Permit2, not `type(uint256).max`, 
 
 The fork test `UniswapV4Plugin.fork.test.ts` asserts `IERC20.allowance(dao, PERMIT2) == 0` after a successful swap against the **real** Universal Router + Permit2, and the unit suite adds a partial-consumption case that checks both layers end at zero. The `invariant_zeroResidualPermit2Allowance` invariant enforces it across 50k random sequences.
 
+## 4a. Native ETH (`address(0)`)
+
+Native ETH is a **first-class V4 currency** (`CurrencyLibrary.NATIVE == address(0)`), and the plugin supports it on both the swap and LP paths — so the DAO can use real ETH/x pools, not just WETH/x:
+
+- **Swap, ETH in** (`tokenIn == address(0)`): the batch is a **single** action — `UniversalRouter.execute(...)` with `value = amountIn` attached. No Permit2/ERC20 approve dance (you can't approve native ETH). The DAO's ether funds the swap directly.
+- **Swap, ETH out** (`tokenOut == address(0)`): the post-swap slippage check is measured against the **DAO's ether balance** (`address(dao).balance`) instead of an ERC20 balance.
+- **LP, ETH input currency**: that currency contributes **no** approve/Permit2/reset actions; instead its `maxIn` is summed and attached as `value` on the `modifyLiquidities` call. ERC20 inputs in the same op still get the full 4-action approve/reset treatment, so a mixed `[ETH, USDC]` op works. (Batch size = `4 × (#ERC20 inputs) + 1`.)
+- **LP, ETH output currency**: slippage-checked against the DAO's ether balance, same as ETH-out swaps.
+- The native sentinel goes through the **allowlist** like any token — when enforcement is on, governance must `setAllowedToken(address(0), true)` to permit native-ETH ops.
+- **Operator note:** for a native-ETH input, the proposal's command/action stream should **SWEEP any unspent ETH back to the DAO** (the same way it must encode `SETTLE_PAIR` / `TAKE_PAIR`). The plugin sends exactly `maxIn`/`amountIn`; it can't pull more than that, but it relies on the route to return dust.
+
 ## 5. Allowlist semantics
 
 - **Empty allowlist at install** → `allowlistEnforced = false`. Any token pair is fair game (proposal review is the only gate).

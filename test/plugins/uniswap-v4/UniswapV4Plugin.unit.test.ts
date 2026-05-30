@@ -486,6 +486,90 @@ describe("UniswapV4Plugin", () => {
     });
   });
 
+  // Native-ETH (address(0)) is a first-class V4 currency. tokenIn == 0 funds the
+  // swap via msg.value (no Permit2/approve); tokenOut == 0 is slippage-checked
+  // against the DAO's ether balance.
+  describe("swap: native ETH", () => {
+    const ETH = ethers.constants.AddressZero;
+    async function setEth(addr: string, wei: ReturnType<typeof ethers.BigNumber.from>) {
+      await ethers.provider.send("hardhat_setBalance", [addr, ethers.utils.hexValue(wei)]);
+    }
+
+    it("swaps native ETH in → ERC20 out (value attached, no approve)", async () => {
+      const amountIn = ethers.utils.parseEther("1");
+      const delivered = ethers.utils.parseUnits("2500", 6);
+      await setEth(dao.address, amountIn); // DAO funds the swap from its ETH
+      await tokenOut.mint(router.address, delivered);
+      await router.setPullTokenIn(false); // native input: no Permit2 pull
+      await router.setSwap(ETH, 0, tokenOut.address, delivered, dao.address, dao.address);
+
+      const before = await permit2.approveCallCount();
+      await expect(
+        plugin
+          .connect(voter)
+          .swap(DUMMY_COMMANDS, DUMMY_INPUTS, FUTURE_DEADLINE, ETH, amountIn, tokenOut.address, 0)
+      )
+        .to.emit(plugin, "SwapExecuted")
+        .withArgs(ETH, amountIn, tokenOut.address, delivered);
+
+      expect(await tokenOut.balanceOf(dao.address)).to.equal(delivered);
+      expect(await ethers.provider.getBalance(dao.address)).to.equal(0); // ETH spent
+      expect(await ethers.provider.getBalance(router.address)).to.equal(amountIn);
+      // No Permit2 approve for a native input.
+      expect(await permit2.approveCallCount()).to.equal(before);
+    });
+
+    it("swaps ERC20 in → native ETH out (slippage checked on ether balance)", async () => {
+      const amountIn = ethers.utils.parseUnits("2500", 6);
+      const ethOut = ethers.utils.parseEther("1");
+      await tokenIn.mint(dao.address, amountIn);
+      await setEth(router.address, ethOut); // router pays ETH out
+      await router.setPullTokenIn(true);
+      await router.setSwap(tokenIn.address, amountIn, ETH, ethOut, dao.address, dao.address);
+      await setEth(dao.address, 0);
+
+      await expect(
+        plugin
+          .connect(voter)
+          .swap(
+            DUMMY_COMMANDS,
+            DUMMY_INPUTS,
+            FUTURE_DEADLINE,
+            tokenIn.address,
+            amountIn,
+            ETH,
+            ethOut
+          )
+      )
+        .to.emit(plugin, "SwapExecuted")
+        .withArgs(tokenIn.address, amountIn, ETH, ethOut);
+
+      expect(await ethers.provider.getBalance(dao.address)).to.equal(ethOut);
+    });
+
+    it("reverts SlippageExceeded when native-ETH output falls short", async () => {
+      const amountIn = ethers.utils.parseUnits("2500", 6);
+      const ethOut = ethers.utils.parseEther("0.5");
+      await tokenIn.mint(dao.address, amountIn);
+      await setEth(router.address, ethOut);
+      await router.setPullTokenIn(true);
+      await router.setSwap(tokenIn.address, amountIn, ETH, ethOut, dao.address, dao.address);
+      await setEth(dao.address, 0);
+
+      await expect(
+        plugin.connect(voter).swap(
+          DUMMY_COMMANDS,
+          DUMMY_INPUTS,
+          FUTURE_DEADLINE,
+          tokenIn.address,
+          amountIn,
+          ETH,
+          ethers.utils.parseEther("1") // demand more than delivered
+        )
+      ).to.be.revertedWithCustomError(plugin, "SlippageExceeded");
+    });
+  });
+
   describe("swap: nonce uniqueness across runs", () => {
     it("produces different callIds for two sequential swaps", async () => {
       const amountIn = ethers.utils.parseUnits("100", 6);
@@ -806,6 +890,88 @@ describe("UniswapV4Plugin", () => {
       )
         .to.be.revertedWithCustomError(plugin, "OutputShortfall")
         .withArgs(tokenOut.address, got, want);
+    });
+
+    // Native-ETH (address(0)) LP: a native input funds the PM call via value
+    // (no approve/Permit2/reset); a native output is slippage-checked on ether.
+    it("native-ETH input leg: funds the PM via value, no approve actions", async () => {
+      const ETH = ethers.constants.AddressZero;
+      const ethIn = ethers.utils.parseEther("1");
+      await ethers.provider.send("hardhat_setBalance", [dao.address, ethers.utils.hexValue(ethIn)]);
+      await pm.addPullLeg(ETH, ethIn, dao.address); // native pull = arrives as msg.value
+
+      const before = await permit2.approveCallCount();
+      await expect(
+        plugin
+          .connect(voter)
+          .modifyLiquidities(DUMMY_UNLOCK, FUTURE_DEADLINE, [ETH], [ethIn], [], [])
+      ).to.emit(plugin, "LiquidityModified");
+
+      expect(await ethers.provider.getBalance(dao.address)).to.equal(0); // ETH sent to PM
+      expect(await ethers.provider.getBalance(pm.address)).to.equal(ethIn);
+      expect(await permit2.approveCallCount()).to.equal(before); // no Permit2 approve for ETH
+    });
+
+    it("mixed native-ETH + ERC20 inputs in one op", async () => {
+      const ETH = ethers.constants.AddressZero;
+      const ethIn = ethers.utils.parseEther("1");
+      const usdcIn = ethers.utils.parseUnits("1000", 6);
+      await ethers.provider.send("hardhat_setBalance", [dao.address, ethers.utils.hexValue(ethIn)]);
+      await tokenIn.mint(dao.address, usdcIn);
+      await pm.addPullLeg(ETH, ethIn, dao.address);
+      await pm.addPullLeg(tokenIn.address, usdcIn, dao.address);
+
+      await expect(
+        plugin
+          .connect(voter)
+          .modifyLiquidities(
+            DUMMY_UNLOCK,
+            FUTURE_DEADLINE,
+            [ETH, tokenIn.address],
+            [ethIn, usdcIn],
+            [],
+            []
+          )
+      ).to.emit(plugin, "LiquidityModified");
+
+      expect(await ethers.provider.getBalance(pm.address)).to.equal(ethIn);
+      expect(await tokenIn.balanceOf(pm.address)).to.equal(usdcIn);
+      // ERC20 leg's DAO→Permit2 allowance reset to zero (native leg has none).
+      expect(await tokenIn.allowance(dao.address, permit2.address)).to.equal(0);
+    });
+
+    it("native-ETH output leg: ether lands in the DAO and passes minOut", async () => {
+      const ETH = ethers.constants.AddressZero;
+      const ethOut = ethers.utils.parseEther("2");
+      await ethers.provider.send("hardhat_setBalance", [pm.address, ethers.utils.hexValue(ethOut)]);
+      await ethers.provider.send("hardhat_setBalance", [dao.address, "0x0"]);
+      await pm.addPushLeg(ETH, ethOut, dao.address);
+
+      await plugin
+        .connect(voter)
+        .modifyLiquidities(DUMMY_UNLOCK, FUTURE_DEADLINE, [], [], [ETH], [ethOut]);
+      expect(await ethers.provider.getBalance(dao.address)).to.equal(ethOut);
+    });
+
+    it("reverts OutputShortfall when native-ETH output falls short", async () => {
+      const ETH = ethers.constants.AddressZero;
+      const got = ethers.utils.parseEther("0.5");
+      await ethers.provider.send("hardhat_setBalance", [pm.address, ethers.utils.hexValue(got)]);
+      await ethers.provider.send("hardhat_setBalance", [dao.address, "0x0"]);
+      await pm.addPushLeg(ETH, got, dao.address);
+
+      await expect(
+        plugin
+          .connect(voter)
+          .modifyLiquidities(
+            DUMMY_UNLOCK,
+            FUTURE_DEADLINE,
+            [],
+            [],
+            [ETH],
+            [ethers.utils.parseEther("1")]
+          )
+      ).to.be.revertedWithCustomError(plugin, "OutputShortfall");
     });
 
     it("lpNonce increments per successful op, separate from swapNonce", async () => {

@@ -33,6 +33,14 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
     bytes32 public constant MANAGE_POSITIONS_PERMISSION_ID =
         keccak256("MANAGE_POSITIONS_PERMISSION");
 
+    /// @dev Native-ETH sentinel for `tokenIn` / `tokenOut` / LP input+output
+    ///      currencies, matching Uniswap v4's `CurrencyLibrary.NATIVE`
+    ///      (= `address(0)`). A native leg skips the ERC20 + Permit2 approve
+    ///      dance entirely and is instead funded by attaching `value` (msg.value)
+    ///      to the router / PositionManager call; slippage is measured against
+    ///      the DAO's ether balance rather than an ERC20 balance.
+    address private constant _NATIVE = address(0);
+
     address public override universalRouter;
     address public override permit2;
     address public override poolManager;
@@ -125,7 +133,7 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
         }
 
         address daoAddr = address(dao());
-        uint256 balanceBefore = IERC20(tokenOut).balanceOf(daoAddr);
+        uint256 balanceBefore = _balanceOf(tokenOut, daoAddr);
 
         Action[] memory actions = _buildSwapActions(commands, inputs, deadline, tokenIn, amountIn);
 
@@ -141,7 +149,7 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
         // failed) would leave Permit2 with a non-zero allowance hanging.
         IExecutor(daoAddr).execute(callId, actions, 0);
 
-        uint256 received = IERC20(tokenOut).balanceOf(daoAddr) - balanceBefore;
+        uint256 received = _balanceOf(tokenOut, daoAddr) - balanceBefore;
         if (received < minAmountOut) revert SlippageExceeded(received, minAmountOut);
 
         emit SwapExecuted(tokenIn, amountIn, tokenOut, received);
@@ -160,6 +168,25 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
     ) private view returns (Action[] memory actions) {
         address router = universalRouter;
         address permit2_ = permit2;
+
+        // Native-ETH input: no Permit2/ERC20 approve dance — the DAO funds the
+        // swap by attaching `amountIn` as msg.value on the router call. (The
+        // proposal's commands should SWEEP any unspent ETH back to the DAO; an
+        // exact-in route consumes it all.)
+        if (tokenIn == _NATIVE) {
+            actions = new Action[](1);
+            actions[0] = Action({
+                to: router,
+                value: amountIn,
+                data: abi.encodeWithSignature(
+                    "execute(bytes,bytes[],uint256)",
+                    commands,
+                    inputs,
+                    deadline
+                )
+            });
+            return actions;
+        }
 
         actions = new Action[](5);
         // 1) DAO approves Permit2 to pull exactly `amountIn` of tokenIn.
@@ -261,6 +288,12 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
     ///          5. DAO→Permit2: approve 0 (ERC20 reset, no residual allowance)
     ///      and after `execute`, asserts each output currency's DAO balance
     ///      delta ≥ `minOut[i]` (revert OutputShortfall otherwise).
+    ///
+    ///      Native ETH (`address(0)`) is a first-class currency: a native input
+    ///      skips steps 1/2/4/5 and instead funds the PM call by attaching its
+    ///      `maxIn` as `value`; a native output is slippage-checked against the
+    ///      DAO's ether balance. (The proposal's action stream should SWEEP any
+    ///      unspent native ETH back to the DAO.)
     function modifyLiquidities(
         bytes calldata unlockData,
         uint256 deadline,
@@ -317,7 +350,31 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
         snap = new uint256[](currencies.length);
         address daoAddr = address(dao());
         for (uint256 i; i < currencies.length; ++i) {
-            snap[i] = IERC20(currencies[i]).balanceOf(daoAddr);
+            snap[i] = _balanceOf(currencies[i], daoAddr);
+        }
+    }
+
+    /// @dev DAO balance of `token`, treating the native sentinel as ether.
+    function _balanceOf(address token, address who) private view returns (uint256) {
+        return token == _NATIVE ? who.balance : IERC20(token).balanceOf(who);
+    }
+
+    /// @dev Number of non-native input currencies (each needs a 4-action
+    ///      approve/reset pair); native inputs need none.
+    function _erc20InputCount(address[] calldata currencies) private pure returns (uint256 c) {
+        for (uint256 i; i < currencies.length; ++i) {
+            if (currencies[i] != _NATIVE) ++c;
+        }
+    }
+
+    /// @dev Total `maxIn` across native-ETH inputs — attached as `value` on the
+    ///      PositionManager call.
+    function _nativeInputValue(
+        address[] calldata currencies,
+        uint256[] calldata maxIn
+    ) private pure returns (uint256 v) {
+        for (uint256 i; i < currencies.length; ++i) {
+            if (currencies[i] == _NATIVE) v += maxIn[i];
         }
     }
 
@@ -328,7 +385,7 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
     ) private view {
         address daoAddr = address(dao());
         for (uint256 i; i < currencies.length; ++i) {
-            uint256 received = IERC20(currencies[i]).balanceOf(daoAddr) - before_[i];
+            uint256 received = _balanceOf(currencies[i], daoAddr) - before_[i];
             if (received < minOut[i]) revert OutputShortfall(currencies[i], received, minOut[i]);
         }
     }
@@ -394,8 +451,13 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
 
     /// @dev Pulled out of `modifyLiquidities` to relieve stack pressure (the
     ///      compiler hits the 16-local limit otherwise). Builds the
-    ///      `approve → Permit2.approve → PM.modifyLiquidities → approve(0)`
-    ///      batch for an arbitrary number of input currencies.
+    ///      `approve → Permit2.approve → PM.modifyLiquidities → reset` batch.
+    ///      ERC20 input currencies get the 4-action approve/reset treatment;
+    ///      a native-ETH input (`address(0)`) gets NO approve actions and is
+    ///      instead funded by attaching its `maxIn` as `value` (msg.value) on
+    ///      the `modifyLiquidities` call — so the batch is `4 * (#ERC20 inputs)
+    ///      + 1`. The proposal's action stream should SWEEP any unspent native
+    ///      ETH back to the DAO (same way it must encode SETTLE/TAKE).
     function _buildLpActions(
         bytes calldata unlockData,
         uint256 deadline,
@@ -405,13 +467,15 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
         address permit2_ = permit2;
         address pm = v4PositionManager;
         uint256 n = inputCurrencies.length;
-        // 2 actions per input (ERC20 approve, Permit2.approve) + 1 modify + 2
-        // resets per input (Permit2-internal reset + ERC20 reset) = 4n + 1
-        // (M-01: reset BOTH allowance layers, not just the ERC20 one).
-        actions = new Action[](4 * n + 1);
+
+        // Native inputs add no surrounding actions; they fund the modify call
+        // via `value`. Size the batch off the ERC20-input count. (Counting is
+        // done in helper frames to stay under the stack-slot limit.)
+        actions = new Action[](4 * _erc20InputCount(inputCurrencies) + 1);
 
         uint256 k;
         for (uint256 i; i < n; ++i) {
+            if (inputCurrencies[i] == _NATIVE) continue;
             actions[k++] = Action({
                 to: inputCurrencies[i],
                 value: 0,
@@ -427,17 +491,19 @@ contract UniswapV4Plugin is PluginUUPSUpgradeable, IUniswapV4Plugin {
             });
         }
 
+        // The native ETH (if any) rides along as msg.value on the PM call.
         actions[k++] = Action({
             to: pm,
-            value: 0,
+            value: _nativeInputValue(inputCurrencies, maxIn),
             data: abi.encodeCall(IV4PositionManager.modifyLiquidities, (unlockData, deadline))
         });
 
-        // M-01: cleanup per input currency — reset the Permit2-internal
+        // M-01: cleanup per ERC20 input currency — reset the Permit2-internal
         // allowance `(currency, positionManager)` AND the DAO→Permit2 ERC20
         // allowance to zero, so a partial-consumption LP op leaves no residual
-        // approval on either layer.
+        // approval on either layer. Native inputs have no allowance to reset.
         for (uint256 i; i < n; ++i) {
+            if (inputCurrencies[i] == _NATIVE) continue;
             actions[k++] = Action({
                 to: permit2_,
                 value: 0,

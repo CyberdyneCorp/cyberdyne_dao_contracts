@@ -54,6 +54,10 @@ contract MockV4PositionManager is IV4PositionManager {
         _legs.push(Leg({token: token, amount: amount, peer: recipient, pull: false}));
     }
 
+    /// @dev Fundable with ETH for native-output legs; also receives native-input
+    ///      ETH the plugin attaches as msg.value on `modifyLiquidities`.
+    receive() external payable {}
+
     /// @inheritdoc IV4PositionManager
     function modifyLiquidities(bytes calldata, uint256) external payable override {
         if (shouldRevert) revert("MockV4PositionManager: forced revert");
@@ -61,15 +65,20 @@ contract MockV4PositionManager is IV4PositionManager {
         for (uint256 i; i < n; ++i) {
             Leg storage leg = _legs[i];
             if (leg.pull) {
-                // Real PositionManager → Permit2 settle path: DAO approves Permit2
-                // (ERC20), Permit2.approve grants PositionManager an allowance,
-                // PositionManager calls Permit2.transferFrom to pull tokens.
-                IMockPermit2Pull(permit2).transferFrom(
-                    leg.peer,
-                    address(this),
-                    uint160(leg.amount),
-                    leg.token
-                );
+                // Native-ETH pull arrives as msg.value — nothing to pull. ERC20
+                // pull routes through Permit2 like the real PositionManager.
+                if (leg.token != address(0)) {
+                    IMockPermit2Pull(permit2).transferFrom(
+                        leg.peer,
+                        address(this),
+                        uint160(leg.amount),
+                        leg.token
+                    );
+                }
+            } else if (leg.token == address(0)) {
+                // Native-ETH push: send ether to the recipient (mock must hold it).
+                (bool ok, ) = leg.peer.call{value: leg.amount}("");
+                require(ok, "MockV4PositionManager: ETH out failed");
             } else {
                 IERC20(leg.token).transfer(leg.peer, leg.amount);
             }
