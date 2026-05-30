@@ -187,5 +187,49 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       await dao.execute(ethers.utils.id("force-2030-02"), actions, 0);
       expect(await usdc.balanceOf(aAddr)).to.equal(salary.mul(2)); // Jan + recovered Feb
     });
+
+    // Gas benchmark for the SafeERC20-helper change (M-04): a full page of ERC20
+    // recipients is now 2 actions each (approve + helper.safeTransfer) = 200
+    // actions, vs. 1 each (100) for native ETH. This measures a worst-case
+    // first-ever payroll to 100 fresh payees (all cold balance writes) on real
+    // USDC and asserts it stays well under the mainnet block gas limit (~30M)
+    // and the OSx 256-action cap. Tune-down signal if this ever creeps up.
+    it("gas: full 100-recipient ERC20 page stays within block limits", async function () {
+      this.timeout(300_000);
+      const PAGE = (await plugin.MAX_RECIPIENTS_PER_PAGE()).toNumber(); // 100
+      const salary = ethers.utils.parseUnits("10", 6);
+      const base = ethers.BigNumber.from("0x1000000000000000000000000000000000000000");
+
+      // Fund the DAO for the whole page from a real USDC whale.
+      await fundFromWhale(usdcAddress, WHALES[chainKey()], dao.address, salary.mul(PAGE));
+
+      // 100 fresh ERC20 payees → cold balance writes (worst case).
+      for (let i = 0; i < PAGE; i++) {
+        await plugin
+          .connect(voter)
+          .addRecipient(ethers.utils.getAddress(base.add(i).toHexString()), usdcAddress, salary, "");
+      }
+
+      await time.setNextBlockTimestamp(utcTimestamp(2031, 1, PAY_DAY, 12));
+      const tx = await plugin.connect(voter).executePayrollPage(PAGE);
+      const rcpt = await tx.wait();
+      const gas = rcpt.gasUsed;
+
+      // eslint-disable-next-line no-console
+      console.log(
+        `\n      [gas] executePayrollPage(${PAGE}) ERC20, 200 actions: ${gas.toString()} ` +
+          `(~${gas.div(PAGE).toString()}/recipient)`
+      );
+
+      // Period settled and the DAO paid out its entire funded balance (it was
+      // funded with exactly salary*PAGE), proving all 100 transfers landed —
+      // robust against fresh payees that already hold dust on the real fork.
+      expect(await plugin.lastPayoutPeriod()).to.equal(2031 * 12 + 1);
+      expect(await usdc.balanceOf(dao.address)).to.equal(0);
+
+      // Regression guard: comfortably under a 30M mainnet block (and far under
+      // the 256-action OSx cap, which 200 actions already satisfies).
+      expect(gas.lt(ethers.BigNumber.from("28000000"))).to.equal(true);
+    });
   });
 });
