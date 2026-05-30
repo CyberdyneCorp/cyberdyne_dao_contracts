@@ -66,7 +66,11 @@ and **CR-M-01 / M-06**.
 | `npx hardhat test --grep '^(?!.*\[fork\])'` | ✅ 245 passing |
 | `FOUNDRY_PROFILE=ci forge test --match-path 'test/invariants/*.t.sol'` | ✅ 25 invariants, 50k sequences |
 | `node scripts/check-coverage.js` | ✅ all enforced plugin paths ≥ 90% on every metric |
+| `hardhat test *.fork.test.ts --network mainnetFork` | ✅ 35 passing, 0 failing (fresh anvil fork) |
 
-Fork tests (`mainnetFork` / `baseFork`) were not re-run here (no RPC in this
-environment); they should be re-run against the remediation commit before the
-final RC tag, per the report's Final Verdict.
+The mainnet fork run exercises the fixes against live protocol contracts —
+notably M-01 against the real Universal Router + Permit2 ("leaves zero leftover
+allowance … after a successful swap"), and H-01 / H-03 against real ETH / USDC.
+`baseFork` was not re-run here (its suites self-gate to that network and the
+report already notes a stale Base USDC whale); it should be refreshed and run
+before the final RC tag, per the report's Final Verdict.
