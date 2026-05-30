@@ -207,7 +207,12 @@ onlyOn(["mainnetFork", "baseFork"], () => {
       for (let i = 0; i < PAGE; i++) {
         await plugin
           .connect(voter)
-          .addRecipient(ethers.utils.getAddress(base.add(i).toHexString()), usdcAddress, salary, "");
+          .addRecipient(
+            ethers.utils.getAddress(base.add(i).toHexString()),
+            usdcAddress,
+            salary,
+            ""
+          );
       }
 
       await time.setNextBlockTimestamp(utcTimestamp(2031, 1, PAY_DAY, 12));
