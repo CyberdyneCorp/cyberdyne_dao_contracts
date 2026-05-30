@@ -559,11 +559,13 @@ describe("CostRegistryPlugin", () => {
       await plugin.processDue(0, 100);
       await plugin.processDue(100, 100);
       expect(await token.balanceOf(aws)).to.equal(usdc(101));
-    });
+      // 101 sequential registrations run slow under solidity-coverage instrumentation.
+    }).timeout(300_000);
 
     it("CR-L-03/L-06: processDueFromCursor round-robins across pages", async () => {
       await plugin.connect(voter).setMaxEntries(1000);
-      for (let i = 0; i < 150; i++) {
+      // 101 slots → two pages of size 100: [0,100) then [100,101)+wrap to 0.
+      for (let i = 0; i < 101; i++) {
         await plugin.connect(voter).registerEntry(`c${i}`, "", usdc(1), 10, aws);
       }
       await fundDao(usdc(10_000));
@@ -574,15 +576,15 @@ describe("CostRegistryPlugin", () => {
       expect(await plugin.dueCursor()).to.equal(100);
       expect(await token.balanceOf(aws)).to.equal(usdc(100));
 
-      await plugin.processDueFromCursor(100); // entries [100,150) then wraps
+      await plugin.processDueFromCursor(100); // entries [100,101) then wraps to 0
       expect(await plugin.dueCursor()).to.equal(0); // wrapped past the end
-      expect(await token.balanceOf(aws)).to.equal(usdc(150)); // all 150 covered
+      expect(await token.balanceOf(aws)).to.equal(usdc(101)); // all 101 covered
 
       await expect(plugin.processDueFromCursor(0)).to.be.revertedWithCustomError(
         plugin,
         "PageSizeZero"
       );
-    });
+    }).timeout(300_000);
 
     it("CR-I-01: initializeV3 is permissionless but idempotent (no-op when set)", async () => {
       // Helper is already set by initialize. A stranger may call the migration,

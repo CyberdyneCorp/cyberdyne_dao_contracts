@@ -753,7 +753,8 @@ describe("PayrollPlugin", () => {
       const tx2 = await plugin.executePayrollPage(perPage);
       expect((await readPayrollExecuted(tx2)).recipientCount).to.equal(1);
       expect(await plugin.lastPayoutPeriod()).to.equal(2029 * 12 + 1);
-    }).timeout(120_000);
+      // 101 sequential addRecipient txs run slow under solidity-coverage.
+    }).timeout(300_000);
   });
 
   describe("executePayroll: salary transfers are mandatory (H-01)", () => {
