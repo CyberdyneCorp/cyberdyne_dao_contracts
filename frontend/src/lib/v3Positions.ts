@@ -31,6 +31,8 @@ const V3_POOL_ABI = [
   "function token1() view returns (address)",
 ];
 
+const ERC20_BALANCE_ABI = ["function balanceOf(address account) view returns (uint256)"];
+
 export type V3PositionRead = {
   tokenId: ethers.BigNumber;
   token0: string;
@@ -91,6 +93,10 @@ export type V3PoolState = {
   liquidity: ethers.BigNumber;
   /** Decimal price expressed as token1 per 1 token0 (raw units, no decimals applied). */
   rawPriceToken1PerToken0: number;
+  /** Whole-pool ERC20 reserves (raw integer units). The V3 pool contract custodies
+   *  its tokens directly, so `balanceOf(pool)` is the canonical TVL source. */
+  reserve0?: ethers.BigNumber;
+  reserve1?: ethers.BigNumber;
   /** Whether `[tickLower, tickUpper]` contains the current tick. */
   inRange: (tickLower: number, tickUpper: number) => boolean;
 };
@@ -121,7 +127,17 @@ export async function readV3PoolState(
     throw new Error(`No V3 pool for ${token0} / ${token1} / fee=${fee}`);
   }
   const pool = new ethers.Contract(poolAddress, V3_POOL_ABI, provider);
-  const [slot0, liquidity] = await Promise.all([pool.slot0(), pool.liquidity()]);
+  const t0 = new ethers.Contract(token0, ERC20_BALANCE_ABI, provider);
+  const t1 = new ethers.Contract(token1, ERC20_BALANCE_ABI, provider);
+  // Reserves are best-effort (balanceOf on the pool) — a flaky read shouldn't
+  // sink the price/tick the form actually depends on, so they resolve to
+  // undefined on failure rather than rejecting the whole call.
+  const [slot0, liquidity, reserve0, reserve1] = await Promise.all([
+    pool.slot0(),
+    pool.liquidity(),
+    t0.balanceOf(poolAddress).catch(() => undefined),
+    t1.balanceOf(poolAddress).catch(() => undefined),
+  ]);
   // price = (sqrtPriceX96 / 2^96) ** 2. JS float is fine for a UI preview —
   // any operational proposal still uses the on-chain math via NPM.mint.
   const sqrtPriceX96 = slot0.sqrtPriceX96 as ethers.BigNumber;
@@ -136,6 +152,8 @@ export async function readV3PoolState(
     tick: currentTick,
     liquidity,
     rawPriceToken1PerToken0,
+    reserve0,
+    reserve1,
     inRange: (tickLower: number, tickUpper: number) =>
       currentTick >= tickLower && currentTick < tickUpper,
   };

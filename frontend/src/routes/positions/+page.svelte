@@ -12,13 +12,41 @@
   import TokenSelect from "$lib/components/TokenSelect.svelte";
   import FeeSelect from "$lib/components/FeeSelect.svelte";
   import ConnectPrompt from "$lib/components/ConnectPrompt.svelte";
+  import PriceRangeSelector from "$lib/components/PriceRangeSelector.svelte";
   import {
     formatPair,
     formatFeePct,
     formatCompact,
     formatRange,
     formatPairAmounts,
+    shouldInvertPrice,
   } from "$lib/positionsFormat";
+  import {resolveToken} from "$lib/format";
+  import {
+    buildPoolGroups,
+    positionUnderlying,
+    usdValue,
+    formatUsd,
+    formatAmt,
+    spotPriceLabel,
+    tokenUsdPrices,
+  } from "$lib/poolStats";
+  import {
+    fetchUniswapPoolStats,
+    uniswapStatsEnabled,
+    formatUsdCompact,
+    formatPct,
+    sparklinePoints,
+    orientedPrices,
+    pctChange,
+    fetchPriceHistory,
+    orientedSeries,
+    avgDailyFeesUSD,
+    fetchPoolTicks,
+    buildDepthBars,
+    type UniswapPoolStats,
+    type PriceHistory,
+  } from "$lib/uniswapPoolStats";
 
   const vm = createPositionsVM();
   const {
@@ -40,6 +68,115 @@
   let v4PoolAdvOpen = false;
 
   $: cfg = $wallet.status === "connected" ? chainConfig($wallet.chainId) : undefined;
+
+  // Uniswap-style per-pool roll-up of every DAO position, hydrated with the live
+  // pool state ($v3PoolStates / $v4PoolStates) the VM loads alongside the lists.
+  $: poolGroups = buildPoolGroups(cfg, $v3Positions ?? [], $v4Positions ?? [], $v3PoolStates, $v4PoolStates);
+  $: daoTvlUsd = poolGroups.reduce((s, g) => s + (g.daoUsd ?? 0), 0);
+  $: pricedAll = poolGroups.length > 0 && poolGroups.every((g) => g.daoUsd !== null);
+
+  /** Human "1,234 USDC / 0.5 WETH" for a position's underlying token amounts. */
+  function underlyingLabel(addr0: string, addr1: string, tick: number, tickLower: number, tickUpper: number, liquidity: any): string {
+    const t0 = resolveToken(cfg, addr0);
+    const t1 = resolveToken(cfg, addr1);
+    const {amount0, amount1} = positionUnderlying(tick, tickLower, tickUpper, liquidity, t0.decimals, t1.decimals);
+    return `${formatAmt(amount0)} ${t0.symbol} / ${formatAmt(amount1)} ${t1.symbol}`;
+  }
+  function underlyingUsd(addr0: string, addr1: string, tick: number, tickLower: number, tickUpper: number, liquidity: any, rawPrice: number): number | null {
+    const t0 = resolveToken(cfg, addr0);
+    const t1 = resolveToken(cfg, addr1);
+    const {amount0, amount1} = positionUnderlying(tick, tickLower, tickUpper, liquidity, t0.decimals, t1.decimals);
+    return usdValue(cfg, addr0, addr1, amount0, amount1, rawPrice);
+  }
+
+  // Whole-pool market stats (volume / fees / APR / 30d history) from Uniswap's
+  // subgraph, keyed by V3 pool address / V4 poolId. Feature-flagged: when no
+  // PUBLIC_UNISWAP_*_SUBGRAPH_URL is set the cards simply omit these. Fetch is
+  // fired once per pool key (guarded by `uniRequested`) as groups hydrate, so
+  // the reactive re-renders don't re-query.
+  let uniStats: Record<string, UniswapPoolStats | null | "loading"> = {};
+  let uniRequested = new Set<string>();
+  // Per-card sparkline mode toggle (Uniswap-style Vol / Price switch).
+  let chartMode: Record<string, "vol" | "price"> = {};
+  function setChartMode(key: string, mode: "vol" | "price"): void {
+    chartMode[key] = mode;
+    chartMode = chartMode;
+  }
+
+  // --- Mint range chart (Uniswap-style draggable min/max picker) ---
+  const FEE_TO_SPACING: Record<string, number> = {"100": 1, "500": 10, "3000": 60, "10000": 200};
+
+  // V3 mint: the price history feeding the range chart is fetched once a quote
+  // lands (the quote gives us the pool address + current tick).
+  $: v3Quote = $mintQuote && typeof $mintQuote === "object" && !("error" in $mintQuote) ? $mintQuote : null;
+  let v3MintHistory: PriceHistory | null = null;
+  let v3MintStats: UniswapPoolStats | null = null;
+  let v3MintTicks: {tickIdx: number; liquidityNet: string}[] | null = null;
+  let v3MintFetchedFor = "";
+  $: if (v3Quote?.poolAddress && uniswapStatsEnabled("v3") && v3MintFetchedFor !== v3Quote.poolAddress) {
+    v3MintFetchedFor = v3Quote.poolAddress;
+    fetchPriceHistory("v3", v3Quote.poolAddress).then((h) => (v3MintHistory = h));
+    fetchUniswapPoolStats("v3", v3Quote.poolAddress).then((s) => (v3MintStats = s));
+    fetchPoolTicks("v3", v3Quote.poolAddress, v3Quote.tick).then((t) => (v3MintTicks = t));
+  }
+  $: v3MintInvert = v3Quote ? shouldInvertPrice(cfg, $mToken0, $mToken1, v3Quote.tick) : false;
+  $: v3MintSeries = orientedSeries(v3MintHistory, v3MintInvert);
+  $: v3UsdPrices = v3Quote ? tokenUsdPrices(cfg, $mToken0, $mToken1, v3Quote.rawPriceToken1PerToken0) : null;
+  $: v3MintBars = v3Quote ? buildDepthBars(v3MintTicks, v3Quote.tick, parseFloat(v3Quote.liquidity.toString())) : [];
+  function onV3Range(e: CustomEvent<{tickLower: number; tickUpper: number; full: boolean}>): void {
+    $mFull = e.detail.full;
+    $mLower = String(e.detail.tickLower);
+    $mUpper = String(e.detail.tickUpper);
+  }
+
+  // V4 mint: same, keyed by poolId via the V4 subgraph.
+  $: v4Quote = $v4MintQuote && typeof $v4MintQuote === "object" && !("error" in $v4MintQuote) ? $v4MintQuote : null;
+  let v4MintHistory: PriceHistory | null = null;
+  let v4MintStats: UniswapPoolStats | null = null;
+  let v4MintTicks: {tickIdx: number; liquidityNet: string}[] | null = null;
+  let v4MintFetchedFor = "";
+  $: if (v4Quote?.poolId && uniswapStatsEnabled("v4") && v4MintFetchedFor !== v4Quote.poolId) {
+    v4MintFetchedFor = v4Quote.poolId;
+    fetchPriceHistory("v4", v4Quote.poolId).then((h) => (v4MintHistory = h));
+    fetchUniswapPoolStats("v4", v4Quote.poolId).then((s) => (v4MintStats = s));
+    fetchPoolTicks("v4", v4Quote.poolId, v4Quote.tick).then((t) => (v4MintTicks = t));
+  }
+  // V4 pool tokens are sorted in the PoolKey; sort here too for correct orientation/decimals.
+  $: v4Sorted =
+    $v4PoolToken0 && $v4PoolToken1
+      ? $v4PoolToken0.toLowerCase() < $v4PoolToken1.toLowerCase()
+        ? {c0: $v4PoolToken0, c1: $v4PoolToken1}
+        : {c0: $v4PoolToken1, c1: $v4PoolToken0}
+      : {c0: $v4PoolToken0, c1: $v4PoolToken1};
+  $: v4MintInvert = v4Quote ? shouldInvertPrice(cfg, v4Sorted.c0, v4Sorted.c1, v4Quote.tick) : false;
+  $: v4MintSeries = orientedSeries(v4MintHistory, v4MintInvert);
+  $: v4UsdPrices = v4Quote ? tokenUsdPrices(cfg, v4Sorted.c0, v4Sorted.c1, v4Quote.rawPriceToken1PerToken0) : null;
+  $: v4MintBars = v4Quote ? buildDepthBars(v4MintTicks, v4Quote.tick, parseFloat(v4Quote.liquidity.toString())) : [];
+  function onV4Range(e: CustomEvent<{tickLower: number; tickUpper: number; full: boolean}>): void {
+    $vmTickLower = String(e.detail.tickLower);
+    $vmTickUpper = String(e.detail.tickUpper);
+  }
+  $: hydrateUniStats(poolGroups);
+  function hydrateUniStats(groups: typeof poolGroups): void {
+    for (const g of groups) {
+      if (uniRequested.has(g.key)) continue;
+      if (!uniswapStatsEnabled(g.version)) continue;
+      const ref = g.version === "v3" ? g.poolAddress : g.poolId;
+      if (!ref) continue; // pool state not hydrated yet — retry on next tick
+      uniRequested.add(g.key);
+      uniStats[g.key] = "loading";
+      uniStats = uniStats;
+      fetchUniswapPoolStats(g.version, ref)
+        .then((s) => {
+          uniStats[g.key] = s;
+          uniStats = uniStats;
+        })
+        .catch(() => {
+          uniStats[g.key] = null;
+          uniStats = uniStats;
+        });
+    }
+  }
 
   // Sensible defaults once the chain config is known: pre-pick USDC/WETH in
   // every token slot that's still empty, so the user sees a ready-to-build
@@ -87,12 +224,106 @@
     </button>
   </div>
   {#if $v3Positions !== null || $v4Positions !== null}
+    {#if poolGroups.length > 0}
+      <div class="pools-head">
+        <h3 class="sub">Pools ({poolGroups.length})</h3>
+        {#if pricedAll || daoTvlUsd > 0}
+          <span class="tvl-badge" title="Sum of the DAO's position value across pools with a stablecoin leg">
+            DAO TVL <strong>{formatUsd(daoTvlUsd)}</strong>{#if !pricedAll}<span class="muted small-sub"> (priced pools only)</span>{/if}
+          </span>
+        {/if}
+      </div>
+      <div class="pool-grid">
+        {#each poolGroups as g}
+          {@const t0 = resolveToken(cfg, g.token0)}
+          {@const t1 = resolveToken(cfg, g.token1)}
+          <div class="pool-card">
+            <div class="pc-head">
+              <span class="pc-pair">{t0.symbol} / {t1.symbol}</span>
+              <span class="pill ver-pill">{g.version}</span>
+              <span class="pill fee-pill">{formatFeePct(g.fee)}</span>
+            </div>
+            <div class="pc-price">
+              {#if g.tick !== undefined}
+                {spotPriceLabel(cfg, g.token0, g.token1, g.tick)}
+              {:else}
+                <span class="muted">price unavailable</span>
+              {/if}
+            </div>
+            <dl class="pc-stats">
+              {#if g.version === "v3" && g.reserve0 !== undefined && g.reserve1 !== undefined}
+                <dt>Pool TVL</dt>
+                <dd>
+                  {#if g.poolTvlUsd != null}<strong>{formatUsd(g.poolTvlUsd)}</strong><br />{/if}
+                  <span class="muted small-sub">{formatAmt(g.reserve0)} {t0.symbol} · {formatAmt(g.reserve1)} {t1.symbol}</span>
+                </dd>
+              {/if}
+              <dt>DAO position{g.positionCount === 1 ? "" : "s"}</dt>
+              <dd>{g.positionCount}</dd>
+              <dt>DAO value</dt>
+              <dd>
+                {#if g.daoUsd != null}<strong>{formatUsd(g.daoUsd)}</strong><br />{/if}
+                <span class="muted small-sub">{formatAmt(g.daoAmount0)} {t0.symbol} · {formatAmt(g.daoAmount1)} {t1.symbol}</span>
+              </dd>
+            </dl>
+            {#if uniswapStatsEnabled(g.version)}
+              {@const s = uniStats[g.key]}
+              <div class="pc-market">
+                {#if s === "loading" || s === undefined}
+                  <span class="muted small-sub">loading market data…</span>
+                {:else if s === null}
+                  <span class="muted small-sub">not indexed on mainnet subgraph</span>
+                {:else}
+                  <div class="pc-metrics">
+                    <div class="metric"><span class="m-val">{formatPct(s.aprPct)}</span><span class="m-lbl">APR</span></div>
+                    <div class="metric"><span class="m-val">{formatUsdCompact(s.volume1dUSD)}</span><span class="m-lbl">1D vol</span></div>
+                    <div class="metric"><span class="m-val">{formatUsdCompact(s.volume30dUSD)}</span><span class="m-lbl">30D vol</span></div>
+                    <div class="metric"><span class="m-val">{formatUsdCompact(s.tvlUSD)}</span><span class="m-lbl">pool TVL</span></div>
+                  </div>
+                  {@const mode = chartMode[g.key] ?? "vol"}
+                  {@const invert = shouldInvertPrice(cfg, g.token0, g.token1, g.tick ?? 0)}
+                  {@const prices = orientedPrices(s.days, invert)}
+                  <div class="spark-toggle">
+                    <button class="seg" class:on={mode === "vol"} on:click={() => setChartMode(g.key, "vol")}>Volume</button>
+                    <button class="seg" class:on={mode === "price"} on:click={() => setChartMode(g.key, "price")} disabled={prices.length < 2}>Price</button>
+                  </div>
+                  {#if mode === "price"}
+                    {@const pts = sparklinePoints(prices)}
+                    {#if pts}
+                      {@const chg = pctChange(prices)}
+                      <svg class="spark" viewBox="0 0 96 24" preserveAspectRatio="none" role="img" aria-label="30-day price">
+                        <polyline points={pts} fill="none" stroke="#2563eb" stroke-width="1.4" />
+                      </svg>
+                      <span class="muted spark-cap">
+                        30D price{#if chg != null} · <span class={chg >= 0 ? "ok" : "warn"}>{chg >= 0 ? "+" : ""}{chg.toFixed(2)}%</span>{/if} · Uniswap subgraph
+                      </span>
+                    {:else}
+                      <span class="muted spark-cap">no price history</span>
+                    {/if}
+                  {:else}
+                    {@const pts = sparklinePoints(s.days.map((d) => d.volumeUSD))}
+                    {#if pts}
+                      <svg class="spark" viewBox="0 0 96 24" preserveAspectRatio="none" role="img" aria-label="30-day volume">
+                        <polyline points={pts} fill="none" stroke="#c026d3" stroke-width="1.4" />
+                      </svg>
+                      <span class="muted spark-cap">30D volume · Uniswap subgraph</span>
+                    {/if}
+                  {/if}
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {/if}
+
     <h3 class="sub">Uniswap V3 ({$v3Positions?.length ?? 0})</h3>
     {#if $v3Positions && $v3Positions.length > 0}
       <table class="positions">
         <thead>
           <tr>
             <th>tokenId</th><th>pair</th><th>fee tier</th><th>price range</th><th>liquidity</th>
+            <th title="token0/token1 the position's liquidity maps to at the current pool price">underlying</th>
             <th title="tokensOwed[0/1] from positions() — stale until next on-chain op">owed (stale)</th>
             <th title="Live pending fees via NPM.callStatic.collect">live fees</th>
             <th>actions</th>
@@ -120,6 +351,15 @@
                 <span class="muted small-sub">{range.secondary}</span>
               </td>
               <td title={`raw L: ${p.liquidity.toString()}`}>{formatCompact(p.liquidity)}</td>
+              <td>
+                {#if pool}
+                  {underlyingLabel(p.token0, p.token1, pool.tick, p.tickLower, p.tickUpper, p.liquidity)}
+                  {@const usd = underlyingUsd(p.token0, p.token1, pool.tick, p.tickLower, p.tickUpper, p.liquidity, pool.rawPriceToken1PerToken0)}
+                  {#if usd != null}<br /><span class="muted small-sub">{formatUsd(usd)}</span>{/if}
+                {:else}
+                  <span class="muted">—</span>
+                {/if}
+              </td>
               <td>{formatPairAmounts(cfg, p.tokensOwed0, p.tokensOwed1, p.token0, p.token1)}</td>
               <td>
                 {#if live === undefined}
@@ -149,7 +389,9 @@
         <thead>
           <tr>
             <th>tokenId</th><th>pair</th><th>fee tier</th><th>price range</th>
-            <th>liquidity</th><th>hooks</th><th>actions</th>
+            <th>liquidity</th>
+            <th title="currency0/currency1 the position's liquidity maps to at the current pool price">underlying</th>
+            <th>hooks</th><th>actions</th>
           </tr>
         </thead>
         <tbody>
@@ -178,6 +420,15 @@
                 <span class="muted small-sub">{range.secondary}</span>
               </td>
               <td title={`raw L: ${p.liquidity.toString()}`}>{formatCompact(p.liquidity)}</td>
+              <td>
+                {#if pool}
+                  {underlyingLabel(p.poolKey.currency0, p.poolKey.currency1, pool.tick, p.tickLower, p.tickUpper, p.liquidity)}
+                  {@const usd = underlyingUsd(p.poolKey.currency0, p.poolKey.currency1, pool.tick, p.tickLower, p.tickUpper, p.liquidity, pool.rawPriceToken1PerToken0)}
+                  {#if usd != null}<br /><span class="muted small-sub">{formatUsd(usd)}</span>{/if}
+                {:else}
+                  <span class="muted">—</span>
+                {/if}
+              </td>
               <td>
                 {#if p.poolKey.hooks === ethers.constants.AddressZero}
                   <span class="muted">none</span>
@@ -231,6 +482,27 @@
     <button class="chip-btn" on:click={() => vm.applyMintRangePreset(50)}>±50%</button>
     <span class="muted">(needs Quote pool first)</span>
   </div>
+  {#if v3Quote}
+    <PriceRangeSelector
+      currentTick={v3Quote.tick}
+      tickSpacing={FEE_TO_SPACING[$mFee] ?? 60}
+      dec0={resolveToken(cfg, $mToken0).decimals}
+      dec1={resolveToken(cfg, $mToken1).decimals}
+      sym0={resolveToken(cfg, $mToken0).symbol}
+      sym1={resolveToken(cfg, $mToken1).symbol}
+      invert={v3MintInvert}
+      series={v3MintSeries}
+      bars={v3MintBars}
+      usd0={v3UsdPrices?.usd0 ?? null}
+      usd1={v3UsdPrices?.usd1 ?? null}
+      tvlUSD={v3MintStats?.tvlUSD ?? 0}
+      feesUSD24h={v3MintStats ? avgDailyFeesUSD(v3MintStats) : null}
+      tickLower={$mFull ? FULL_LOWER : parseInt($mLower, 10) || FULL_LOWER}
+      tickUpper={$mFull ? FULL_UPPER : parseInt($mUpper, 10) || FULL_UPPER}
+      full={$mFull}
+      on:change={onV3Range}
+    />
+  {/if}
   {#if $mintQuote !== null}
     {#if $mintQuote === "loading"}
       <p class="muted">Loading pool state…</p>
@@ -406,6 +678,27 @@
     <button class="chip-btn" on:click={() => vm.applyV4MintRangePreset(50)}>±50%</button>
     <span class="muted">(needs Quote pool first)</span>
   </div>
+  {#if v4Quote}
+    <PriceRangeSelector
+      currentTick={v4Quote.tick}
+      tickSpacing={parseInt($v4PoolTickSpacing, 10) || 60}
+      dec0={resolveToken(cfg, v4Sorted.c0).decimals}
+      dec1={resolveToken(cfg, v4Sorted.c1).decimals}
+      sym0={resolveToken(cfg, v4Sorted.c0).symbol}
+      sym1={resolveToken(cfg, v4Sorted.c1).symbol}
+      invert={v4MintInvert}
+      series={v4MintSeries}
+      bars={v4MintBars}
+      usd0={v4UsdPrices?.usd0 ?? null}
+      usd1={v4UsdPrices?.usd1 ?? null}
+      tvlUSD={v4MintStats?.tvlUSD ?? 0}
+      feesUSD24h={v4MintStats ? avgDailyFeesUSD(v4MintStats) : null}
+      tickLower={parseInt($vmTickLower, 10) || FULL_LOWER}
+      tickUpper={parseInt($vmTickUpper, 10) || FULL_UPPER}
+      full={(parseInt($vmTickLower, 10) || 0) <= FULL_LOWER + 1 && (parseInt($vmTickUpper, 10) || 0) >= FULL_UPPER - 1}
+      on:change={onV4Range}
+    />
+  {/if}
   {#if $v4MintQuote !== null}
     {#if $v4MintQuote === "loading"}
       <p class="muted">Reading pool state…</p>
@@ -563,5 +856,134 @@
     background: #fdf3e7;
     color: #8a4a00;
     border: 1px solid #f0d9b9;
+  }
+  .pools-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .tvl-badge {
+    font-size: 0.85rem;
+    color: #555;
+  }
+  .tvl-badge strong {
+    color: #1a1a2e;
+  }
+  .pool-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 0.75rem;
+    margin: 0.5rem 0 1rem;
+  }
+  .pool-card {
+    border: 1px solid #e3e7f0;
+    border-radius: 12px;
+    padding: 0.75rem 0.85rem;
+    background: #fff;
+  }
+  .pc-head {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .pc-pair {
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+  .ver-pill {
+    background: #eef1f8;
+    color: #444;
+    border: 1px solid #d8deea;
+    margin-left: auto;
+  }
+  .fee-pill {
+    background: #f3f5fa;
+    color: #555;
+    border: 1px solid #d8deea;
+    margin-left: 0;
+  }
+  .pc-price {
+    font-size: 0.82rem;
+    color: #333;
+    margin: 0.35rem 0 0.5rem;
+  }
+  .pc-stats {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.15rem 0.6rem;
+    margin: 0;
+    font-size: 0.8rem;
+  }
+  .pc-stats dt {
+    color: #777;
+  }
+  .pc-stats dd {
+    margin: 0;
+    text-align: right;
+  }
+  .pc-market {
+    margin-top: 0.6rem;
+    padding-top: 0.55rem;
+    border-top: 1px solid #eef1f8;
+  }
+  .pc-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.3rem;
+    text-align: center;
+  }
+  .metric {
+    display: flex;
+    flex-direction: column;
+  }
+  .m-val {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #1a1a2e;
+  }
+  .m-lbl {
+    font-size: 0.66rem;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .spark {
+    display: block;
+    width: 100%;
+    height: 26px;
+    margin-top: 0.45rem;
+  }
+  .spark-cap {
+    font-size: 0.66rem;
+  }
+  .spark-toggle {
+    display: flex;
+    gap: 0;
+    margin-top: 0.5rem;
+  }
+  .seg {
+    padding: 0.08rem 0.5rem;
+    font-size: 0.68rem;
+    background: #fff;
+    border: 1px solid #d8deea;
+    color: #666;
+    cursor: pointer;
+  }
+  .seg:first-child {
+    border-radius: 6px 0 0 6px;
+  }
+  .seg:last-child {
+    border-radius: 0 6px 6px 0;
+    border-left: none;
+  }
+  .seg.on {
+    background: #eef1f8;
+    color: #1a1a2e;
+    font-weight: 600;
+  }
+  .seg:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
 </style>
